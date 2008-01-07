@@ -1,4 +1,5 @@
 typedef enum { ABSOLUTE_mode, APPEND_mode, BAR_mode } addr_modes_t;
+typedef enum { NORMAL_mode, PRIV_mode } instr_modes_t;
 
 addr_modes_t addr_mode = examine indicator register (IR)
 

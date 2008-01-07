@@ -50,7 +50,8 @@ const char *sim_stop_messages[] = {
    The load starts at the current value of the PC.
 */
 
-int32 sim_load (FILE *fileref, char *cptr, char *fnam, int flag)
+t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int flag)
 {
     abort();
 }
+
