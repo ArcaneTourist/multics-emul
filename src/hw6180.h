@@ -1,8 +1,20 @@
 #include "sim_defs.h"
 
-/* For efficiency, we use full ints instead of bit fields for the flags
-   and other field of most of the register typdefs
+/*
+        For efficiency, we mostly use full ints instead of bit fields for
+    the flags and other fields of most of the typedefs here.  When necessary,
+    such as when an instruction saves a control register to memory, the more
+    efficient variables are copied into appropriate bit fields.
+        Also note that we only represent selected fields of some of the
+    registers.  The simulator doesn't need some of the various scratches
+    and the OS doesn't need them either.
 */
+
+
+/* Misc enum typdefs */
+
+typedef enum { ABSOLUTE_mode, APPEND_mode, BAR_mode } addr_modes_t;
+typedef enum { NORMAL_mode, PRIV_mode } instr_modes_t;
 
 
 /* Format of a 36 bit instruction word */
@@ -29,6 +41,7 @@ typedef struct {
 
 /* Fault register (72 bits) */
 typedef struct {
+    // Multics never examines this (just the CPU) -- multicians.org glossary
     unsigned int ill_op:1;      /* 1 bit at 0 */
     unsigned int ill_mod:1;     /* 1 bit at 1 */
     unsigned int ill_slv:1;     /* 1 bit at 2 */
@@ -36,14 +49,17 @@ typedef struct {
     /* ... */
 } fault_reg_t;
 
+
 /* Control unit data (288 bits) */
 typedef struct {
-    /*    This is a collection of flags and registers from the
-       appending unit and the control unit.  The scu and rcu
-       instructions store and load these values to an 8 word
-       memory block.
-          Ints are mostly used here.   Comments indicate format as
-       stored in 8 words by the scu instruction.
+    /*      This is a collection of flags and registers from the
+        appending unit and the control unit.  The scu and rcu
+        instructions store and load these values to an 8 word
+        memory block.
+            The CU data may only be valid for use with the scu and
+        rcu instructions.
+            Comments indicate format as stored in 8 words by the scu
+        instruction.
     */
 
     /* word 0 */
@@ -75,7 +91,9 @@ typedef struct {
 
 
 /*  Extract (i)th bit of a 36 bit word (held in a uint64).  Bit 35 is the
+    rightmost bit. */
 #define bitval36(word,i) ( ((word)>>(35-i)) & 1 )
 
+// obsolete typedef -- hold named register sub-fields in their inefficient
+// native format.
 /* #define CU_PPR_P(CU) (bitval36(CU.word0bits, 18)) */
-    rightmost bit. */

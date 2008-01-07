@@ -9,7 +9,6 @@ extern DEVICE ptr_dev;
 extern DEVICE ptp_dev;
 extern DEVICE lpt_dev;
 extern t_uint64 M[];
-extern int32 saved_PC;
 
 /* SCP data structures
 
@@ -21,11 +20,11 @@ extern int32 saved_PC;
    sim_load             binary loader
 */
 
-char sim_name[] = "hw6180";
+static char sim_name[] = "hw6180";
 
-REG *sim_PC = &cpu_reg[0];
+static REG *sim_PC = &cpu_reg[0];
 
-int32 sim_emax = 4;
+static int32 sim_emax = 4;
 
 /* Multics allows up to 7 CPUs... */
 
@@ -46,12 +45,47 @@ const char *sim_stop_messages[] = {
     "Invalid Opcode"
 };
 
-/* This is the binary loader.
-   The load starts at the current value of the PC.
+
+// One-time-only initialization for emulator
+static void hw6180_init(void);
+void (*sim_vm_init)(void) = hw6180_init;
+
+/*
+    Variables custom to HW6180 that aren't normally present in other
+    SIMH emulators.
+*/
+int bootimage_loaded = 0;
+
+
+/*  SIMH binary loader.
+        The load normally starts at the current value of the PC.
+    Args
+        fileref -- file opened by SIMH
+        cptr -- VM specific args (from cmd line?)
+        fnam -- filename
+        write_flag -- indicates whether to load or write
+    
 */
 
-t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int flag)
+t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
 {
-    abort();
+    todo: ...
+    /*  Maybe:
+            This emulator will load boot tape format files starting
+            at location 30 as an emulation of the physical boot loaders.
+        Or:
+            Define a boot procedure so the user can use the "boot" command.
+            However, the boot command may not allow specification of a
+            command.
+    */
+    bootimage_loaded = 1;
 }
 
+
+static void hw6180_init(void)
+{
+    debug_msg("SYS::init", "Once-only initialization running.\n");
+    // todo: sim_brk_types = ...
+    // todo: sim_brk_dflt = ...
+
+}
