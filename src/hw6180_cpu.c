@@ -13,9 +13,13 @@ static t_uint64 PC; /* probably wrong size */
 IR_t IR;    // indicator register
 
 // SIMH gets a copy of all registers
+// todo: modify simh to take a PV_LSBLEFT flag (leftmost bit is bit 0)
 REG cpu_reg[] = {
     // name="PC", loc=PC, radix=<8>, width=36, offset=<0>, depth=<1>, flags=, qptr=
     { ORDATA (PC, PC, 36) },
+    { FLDATA (IR.Z, IR.zero, 0) },
+#define FLDATA(nm,loc,pos) #nm, &(loc), 2, 1, (pos), 1
+
     { NULL }
 };
 

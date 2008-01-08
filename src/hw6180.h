@@ -30,12 +30,12 @@ typedef struct {
 
 /* Indicator register */
 typedef struct {
-    uint32 zero;                /* 1 bit at 18 */
+    uint64 zero;                /* 1 bit at 18 */
     /* ... */
-    uint32 not_bar_mode;        /* 1 bit at 28 */
+    uint64 not_bar_mode;        /* 1 bit at 28 */
     /* ... */
-    uint32 mid_instr_intr_fault;/* 1 bit at 30 */
-    uint32 abs_mode;            /* 1 bit at 31 */
+    uint64 mid_instr_intr_fault;/* 1 bit at 30 */
+    uint64 abs_mode;            /* 1 bit at 31 */
 } IR_t;
 
 
@@ -92,7 +92,11 @@ typedef struct {
 
 /*  Extract (i)th bit of a 36 bit word (held in a uint64).  Bit 35 is the
     rightmost bit. */
-#define bitval36(word,i) ( ((word)>>(35-i)) & 1 )
+#define bitval36(word,i) ( ((word)>>(35-i)) & (uint64_t) 1 )
+/*  Value of a 36bit word (held in a uint64) after setting or clearing the
+    the (i)th bit. */
+#define bitset36(word,i) ( (word) | ( (uint64_t) 1 << (35 - i)) )
+#define bitclear36(word,i) ( (word) & ~ ( (uint64_t) 1 << (35 - i)) )
 
 // obsolete typedef -- hold named register sub-fields in their inefficient
 // native format.
