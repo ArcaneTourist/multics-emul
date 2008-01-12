@@ -1,0 +1,44 @@
+# Opcode map, for bit 27 = 0
+# Best viewed at tabstops = 6 (note that longest mnemonic is 5 chars)
+# Corresponding numeric values start at zero and increase left to right, top to bottom
+# Dash indicates numeric positions for which there is no opcode
+
+-	mme	drl	-	mme2	mme3	-	mme4	-	nop	puls1	puls2	-	cioc	-	- 
+adlx0	adlx1	adlx2	adlx3	adlx4	adlx5	adlx6	adlx7	-	-	ldqc	adl	ldac	adla	adlq	adlaq
+asx0	asx1	asx2	asx3	asx4	asx5	asx6	asx7	adwp0	adwp1	adwp2	adwp3	aos	asa	asq	sscr
+adx0	adx1	adx2	adx3	adx4	adx5	adx6	adx7	-	awca	awcq	lreg	-	ada	adq	adaq
+
+cmpx0	cmpx1	cmpx2	cmpx3	cmpx4	cmpx5	cmpx6	cmpx7	-	cwl	-	-	-	cmpa	cmpq	cmpaq
+sblx0	sblx1	sblx2	sblx3	sblx4	xblx5	slbx6	sblx7	-	-	-	-	-	sbla	sblq	sblaq
+ssx0	ssx1	ssx2	ssx3	ssx4	ssx5	ssx6	ssx7	adwp4	adwp5	adwp6	adwp7	sdbr	ssa	ssq	-
+sbx0	sbx1	sbx2	sbx3	sbx4	sbx5	sbx6	sbx7	-	swca	swcq	lpri	-	sba	sbq	sbaq
+
+cnax0	cnax1	cnax2	cnax3	cnax4	cnax5	cnax6	cnax7	-	cmk	absa	epaq	sznc	cnaa	cnaq	cnaaq
+ldx0	ldx1	ldx2	ldx3	ldx4	ldx5	ldx6	ldx7	lbar	rsw	ldbr	rmcm	szn	lda	ldq	ldaq
+orsx0	orsx1	orsx2	orsx3	orsx4	orsx5	orsx6	orsx7	spri0	spbp1	spri2	spbp3	spri	orsa	orsq	lsdp
+orx0	orx1	orx2	orx3	orx4	orx5	orx6	orx7	tsp0	tsp1	tsp2	tsp3	-	ora	orq	oraq
+
+canx0	canx1	canx2	canx3	canx4	canx5	canx6	canx7	eawp0	easp0	eawp2	easp2	-	cana	canq	canaq
+lcx0	lcx1	lcx2	lcx3	lcx4	lcx5	lcx6	lcx7	eawp4	easp4	eawp6	easp6	-	lca	lcq	lcaq
+ansx0	ansx1	ansx2	ansx3	ansx4	ansx5	ansx6	ansx7	epp0	epbp1	epp2	epbp3	stac	ansa	ansq	stcd
+anx0	anx1	anx2	anx3	anx4	anx5	anx6	anx7	epp4	epbp5	epp6	epbp7	-	ana	anq	anaq
+
+-	mpf	mpy	-	-	cmg	-	-	-	lde	-	rscr	-	ade	-	-
+-	ufm	-	dufm	-	fcmg	-	dfcmg	fszn	fld	-	dfld	-	ufa	-	dufa
+sxl0	sxl1	sxl2	sxl3	sxl4	sxl5	sxl6	sxl7	stz	smic	scpr	-	stt	fst	ste	dfst
+-	fmp	-	dfmp	-	-	-	-	fstr	frd	dfstr	dfrd	-	fad	-	dfad
+
+rpl	-	-	-	-	bcd	div	dvf	-	-	-	fneg	-	fcmp	-	dfcmp
+fpt	-	-	-	-	fdi	-	dfdi	-	neg	cams	negl	-	ufs	-	dufs
+sprp0	sprp1	sprp2	sprp3	sprp4	sprp5	sprp6	sprp7	sbar	stba	stbq	smcm	stcl	-	-	ssdp
+rpd	-	-	-	-	fdv	-	dfdv	-	-	-	fno	-	fsb	-	dfsb
+
+txe	tnz	tnc	trc	tmi	tpl	-	ttf	rtcd	-	-	rcu	teo	teu	dis	tov
+eax0	eax1	eax2	eax3	eax4	eax5	eax6	eax7	ret	-	-	rccl	ldi	eaa	eaq	ldt
+ersx0	ersx1	ersx2	ersx3	ersx4	ersx5	ersx6	ersx7	spri4	spbp5	spri6	spbp7	stacq	ersa	ersq	scu
+erx0	erx1	erx2	erx3	erx4	erx5	erx6	erx7	tsp4	tsp5	tsp6	tsp7	lcpr	era	erq	eraq
+
+tsx0	tsx1	tsx2	tsx3	tsx4	tsx5	tsx6	tsx7	tra	-	-	call6	-	tss	xec	xed
+lxl0	lxl1	lxl2	lxl3	lxl4	lxl5	lxl6	lxl7	-	ars	qrs	lrs	-	als	qls	lls
+stx0	stx1	stx2	stx3	stx4	stx5	stx6	stx7	stc2	stca	stcq	sreg	sti	sta	stq	staq
+lprp0	lprp1	lprp2	lprp3	lprp4	lprp5	lprp6	lprp7	-	arl	qrl	lrl	gtb	alr	qlr	llr

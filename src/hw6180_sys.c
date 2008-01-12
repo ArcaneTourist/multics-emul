@@ -1,4 +1,4 @@
-#include "hw_6180.h"
+#include "hw6180.h"
 
 extern DEVICE cpu_dev;
 extern DEVICE dsk_dev;
@@ -20,29 +20,31 @@ extern t_uint64 M[];
    sim_load             binary loader
 */
 
-static char sim_name[] = "hw6180";
+char sim_name[] = "hw6180";
 
-static REG *sim_PC = &cpu_reg[0];
+REG *sim_PC = &cpu_reg[0];
 
-static int32 sim_emax = 4;
+int32 sim_emax = 4;
 
 /* Multics allows up to 7 CPUs... */
 
 DEVICE *sim_devices[] = {
     &cpu_dev,
+#if 0
     &sio_dev,
     &ptr_dev,
     &ptp_dev,
     &dsk_dev,
+#endif
     NULL
 };
 
 const char *sim_stop_messages[] = {
-    "Unknown error",
-    "Unknown I/O Instruction",
-    "HALT instruction",
+    "Memory is empty",
+    "BUG-STOP -- Internal error",
+    "Fetch on Odd address",
     "Breakpoint",
-    "Invalid Opcode"
+    // "Invalid Opcode"
 };
 
 
@@ -56,7 +58,6 @@ void (*sim_vm_init)(void) = hw6180_init;
 */
 int bootimage_loaded = 0;
 
-
 /*  SIMH binary loader.
         The load normally starts at the current value of the PC.
     Args
@@ -69,7 +70,6 @@ int bootimage_loaded = 0;
 
 t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
 {
-    todo: ...
     /*  Maybe:
             This emulator will load boot tape format files starting
             at location 30 as an emulation of the physical boot loaders.
@@ -79,6 +79,7 @@ t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
             command.
     */
     bootimage_loaded = 1;
+    abort();
 }
 
 
@@ -88,4 +89,14 @@ static void hw6180_init(void)
     // todo: sim_brk_types = ...
     // todo: sim_brk_dflt = ...
 
+}
+
+extern t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
+{
+    abort();
+}
+
+extern t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
+{
+    abort();
 }

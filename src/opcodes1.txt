@@ -1,0 +1,44 @@
+# Opcode map, for bit 27 = 1
+# Best viewed at tabstops = 6 (note that longest mnemonic is 5 chars)
+# Corresponding numeric values start at zero and increase left to right, top to bottom
+# Dash indicates numeric positions for which there is no opcode
+
+-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+mve	-	-	-	mvne	-	-	-	-	-	-	-	-	-	-	-
+-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+csl	csr	-	-	sztl	sztr	cmpb	-	-	-	-	-	-	-	-	-
+
+mlr	mrl	-	-	-	-	cmpc	-	-	-	-	-	-	-	-	-
+scd	scdr	-	-	scm	scmr	-	-	-	-	-	-	-	-	-	-
+-	-	-	-	-	-	-	-	-	-	-	-	sptr	-	-	-
+mvt	-	-	-	tct	tctr	-	-	-	-	-	lptr	-	-	-	-
+
+-	-	ad2d	sb2d	-	-	mp2d	dv2d	-	-	-	-	-	-	-	-
+-	-	ad3d	sb3d	-	-	mp3d	dv3d	-	-	lsdr	-	-	-	-	-
+-	-	-	-	-	-	-	-	spbp0	spri1	spbp2	spri3	ssdr	-	-	lptp
+-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+
+mvn	btd	-	cmpn	-	dtb	-	-	easp1	eawp1	easp3	eawp3	-	-	-	-
+-	-	-	-	-	-	-	-	easp5	eawp5	easp7	eawp7	-	-	-	-
+-	-	-	-	-	-	-	-	epbp0	epp1	epbp2	epp3	-	-	-	-
+-	-	-	-	-	-	-	-	epbp4	epp5	epbp6	epp7	-	-	-	-
+
+-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+-	-	-	sareg	-	-	-	spl	-	-	-	-	-	-	-	-
+-	-	-	lareg	-	-	-	lpl	-	-	-	-	-	-	-	-
+
+a9bd	a6bd	a4bd	abd	-	-	-	awd	-	-	-	-	-	-	-	-
+s9bd	s6bd	s4bd	sbd	-	-	-	swd	-	-	camp	-	-	-	-	-
+ara0	ara1	ara2	ara3	ara4	ara5	ara6	ara7	-	-	-	-	-	-	-	sptp
+aar0	aar1	aar2	aar3	aar4	aar5	aar6	aar7	-	-	-	-	-	-	-	-
+
+trtn	trtf	-	-	tmoz	tpnz	ttn	-	-	-	-	-	-	-	-	-
+-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+arn0	arn1	arn2	arn3	arn4	arn5	arn6	arn7	spbp4	spri5	spbp6	spri7	-	-	-	-
+nar0	nar1	nar2	nar3	nar4	nar5	nar6	nar7	-	-	-	-	-	-	-	-
+
+-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+sar0	sar1	sar2	sar3	sar4	sar5	sar6	sar7	-	-	-	-	sra	-	-	-
+lar0	lar1	lar2	lar3	lar4	lar5	lar6	lar7	-	-	-	-	lra	-	-	-
