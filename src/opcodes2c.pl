@@ -12,15 +12,19 @@ print "\n";
 
 print "// Opcodes with low bit (bit 27) == 0.  Enum value is value of upper 9 bits.\n";
 printf "typedef enum {\n";
-dump_enums(0, @ops0);
+dump_enums(0, '0', @ops0);
 print "} opcode0_t;\n";
 print "\n";
 
 print "// Opcodes with low bit (bit 27) == 1.  Enum value is value of upper 9 bits.\n";
 printf "typedef enum {\n";
-dump_enums(0, @ops1);
+dump_enums(0, '1', @ops1);
 print "} opcode1_t;\n";
 print "\n";
+
+printf "#ifndef NULL\n";
+printf "#define NULL ((void*) 0)\n";
+printf "#endif\n";
 
 print "char *op0text[512] = {\n";
 print "\t// index by upper 9 bits of those opcodes with bit 27 == 0\n";
@@ -46,6 +50,7 @@ exit;
 
 sub dump_enums {
 	my $show_unused = shift;
+	my $tag = shift;
 	my @ops = @_;
 	my $i = 0;
 	foreach my $op (@ops) {
@@ -55,8 +60,8 @@ sub dump_enums {
 				printf "\t\t     // 0%03o unused (%d decimal)\n", $i, $i;
 			}
 		} else {
-			printf "\topcode_%s%*s = 0%03o, // (%d decimal)\n",
-				$op, 6-length($op), "", $i, $i;
+			printf "\topcode%s_%s%*s = 0%03o, // (%d decimal)\n",
+				$tag, $op, 6-length($op), "", $i, $i;
 		}
 		++ $i;
 	}

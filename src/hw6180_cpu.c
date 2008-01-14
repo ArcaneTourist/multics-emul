@@ -4,6 +4,7 @@
 #include <fcntl.h>
 
 #include "hw6180.h"
+#include "bits.h"
 
 
 //-----------------------------------------------------------------------------
@@ -176,6 +177,8 @@ void set_addr_mode(addr_modes_t mode);
 addr_modes_t get_addr_mode(void);
 void decode_instr(instr_t *ip, t_uint64 word);
 
+void tape_block(unsigned char *p, uint32 len);
+
 
 //=============================================================================
 
@@ -186,7 +189,15 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
 
     // quick & dirty
 
+    // from the web site:
+    //      tape image format:
+    //      <32 bit little-endian blksiz> <data> <32bit little-endian blksiz>
+    //      a single 32 bit word of zero represents a file mark
+    // question
+    //      What type of data does blksiz measure?  Count of 32bit words?  Count of 9 bit "bytes" ?
+    
     char *fname = "boot.tape";
+    printf("Loading file %s\n", fname);
     int fd;
     if ((fd = open(fname, O_RDONLY)) == -1) {
         perror(fname);  // BUG
@@ -194,7 +205,7 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
     }
     uint addr = 0;
     uint nblocks = 0;
-    int read_unit = 36; // 8, 9, 32, 36
+    int read_unit = 8;  // 8, 9, 18, 32, 36, 288, 9216, etc
     int invert = 0;
     uint totread = 0;
     for(;;) {
@@ -203,25 +214,21 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
         uint32 n;
         uint32 nalt;
         // stats
-        if (read_unit == 36) 
-            printf ("%u (%d) bytes read (%d 36bit data words and %d 32bit counts)\n",
-                totread, addr * 36/32, + nblocks * 4, addr, nblocks);
-        else if (read_unit == 32) 
-            printf ("%u (%d) bytes read (%d 32bit data words and %d 32bit counts)\n",
-                totread, addr *4, + nblocks * 4, addr, nblocks);
-        else if (read_unit == 1) 
-            printf ("%u (%d) bytes read (%d data bytes and %d 32bit counts)\n",
-                totread, addr + nblocks * 4, addr, nblocks);
-        else
-            printf ("%u bytes read (incl %d 32bit counts)\n",
-                totread, nblocks);
+        // printf ("%u bytes read (incl %d 32bit counts)\n", totread, nblocks);
         // read 32bit count
         int i;
         if (1) {
             if ((nread = read(fd, word, 4)) != 4) {
-                perror("count read");   // BUG
-                close(fd);
-                return STOP_BUG;
+                if (nread == 0) {
+                    printf("EOF at index %d\n", i);
+                    close(fd);
+                    return STOP_BUG;    // BUG: bogus, but prevents "go"
+                    return 0;
+                } else {
+                    perror("begin count read"); // BUG
+                    close(fd);
+                    return STOP_BUG;
+                }
             }
             n = (word[0]) | (word[1] << 8) | (word[2] << 16) | (word[3] << 24);
             nalt = (word[3]) | (word[2] << 8) | (word[1] << 16) | (word[0] << 24);
@@ -265,7 +272,7 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
             if ((n * read_unit) % 8  == 0) {
                 uint32 nold = n;
                 n = n * read_unit / 8;
-                printf("Block size %u is a multiple of %d/8 ==> %u\n", nold, read_unit, n);
+                // printf("Block size %u is a multiple of %d/8 ==> %u\n", nold, read_unit, n);
             } else {
                 printf("Block size %lu (oct %lo) is *not* a multiple of 8\n", (unsigned long) n, (unsigned long) n);
                 close(fd);
@@ -273,14 +280,31 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
             }
         }
         // read block
-        if (read_unit == 36)
-            printf("Start read block of %lu 32-bit encoded 36-bit words\n", (unsigned long) n);
-        else if (read_unit == 32)
-            printf("Start read block of %lu 32-bit words (%lu)\n", (unsigned long) n, (unsigned long) nalt);
-        else if (read_unit = 1)
-            printf("Start read block of %lu bytes (%lu)\n", (unsigned long) n, (unsigned long) nalt);
-        else
-            printf("Start read block of %lu bytes (%lu) for %d-bit units\n", (unsigned long) n, read_unit);
+        //printf("Start read block of %lu bytes for %d-bit units\n", (unsigned long) n, read_unit);
+        if(1) {
+            unsigned char *bufp = malloc(n);
+            if (bufp == NULL) {
+                perror("malloc");
+                close(fd);
+                return STOP_BUG;
+            }
+            if ((nread = read(fd, bufp, n)) != n) {
+                if (nread < 0) {
+                    perror("block read");
+                } else if (nread == 0) {
+                    printf("Unexpected EOF\n");
+                } else {
+                    printf("Short read of %u bytes (expecting %u)\n", nread, n);
+                }
+                close(fd);
+                return STOP_BUG;
+            }
+            // use bytes
+            tape_block(bufp, n);
+            bootimage_loaded = 1;
+            // Only read one record
+            return STOP_BUG;
+        } else {
         for (i = 0; i < n; ++i) {
             ++addr;
             unsigned char byte;
@@ -298,6 +322,20 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
                 close(fd);
                 return STOP_BUG;
             }
+        }
+        }
+        if ((nread = read(fd, word, 4)) != 4) {
+            perror("end-of-block count read");  // BUG
+            close(fd);
+            return STOP_BUG;
+        }
+        uint32 n2 = (word[0]) | (word[1] << 8) | (word[2] << 16) | (word[3] << 24);
+        if (n == n2) {
+            // printf("End block count %d matches begin block count\n", n2);
+        } else {
+            printf("End block count %d does not matche begin block count %u.\n", n2, n);
+            close(fd);
+            return STOP_BUG;
         }
     }
 abort();
@@ -423,10 +461,15 @@ t_stat control_unit(void)
 
     switch(cycle) {
         case FETCH_cycle:
-            debug_msg("CPU::CU", "Cycle = FETCH\n");
+            debug_msg("CPU::CU", "Cycle = FETCH; IC = %u\n", PPR.IC);
             // If execution of the current pair is complete, the processor
             // checks two? internal flags for group 7 faults and/or interrupts.
             if (events.any) {
+                if (events.low_group != 0) {
+                    // BUG: don't need test below now that we detect 1-6 here
+                    cycle = FAULT_cycle;
+                    break;
+                }
                 if (events.group7 != 0) {
                     // Group 7 -- See tally runout in IR, connect fields of the
                     // fault register.  DC power off must come via an interrupt?
@@ -514,7 +557,7 @@ t_stat control_unit(void)
             // Force computed addr and xed opcode into the instruction
             // register and execute (during FAULT CYCLE not EXECUTE CYCLE).
             cu.IR.offset = addr;
-            cu.IR.opcode = (opcode_xed << 1);
+            cu.IR.opcode = (opcode0_xed << 1);
             cu.IR.inhibit = 1;
             cu.IR.pr_bit = 0;
             cu.IR.tag = 0;
@@ -799,3 +842,92 @@ int decode_addr(instr_t* ip, t_uint64* addrp)
 
 
 //=============================================================================
+
+void anal36 (const char* tag, t_uint64 word);
+char *bin(t_uint64 word, int n);
+#include <ctype.h>
+
+void tape_block(unsigned char *p, uint32 len)
+{
+    static size_t hack = 0;
+    bitstream_t *bp = bitstm_new(p, len);
+    if ((len * 8) % 36 != 0) {
+        complain_msg("CPU::boot", "Length %u bytes is not a multiple of 36 bits.\n");
+    }
+    printf("Tape block: %u bytes, %u 36-bit words\n", len, len*8/36);
+    uint32 nbits = len * 8;
+    while (nbits >= 36) {
+        bitstm_get(bp, 36, &M[hack++]);
+        nbits -= 36;
+    }
+    if (nbits != 0) {
+        complain_msg("CPU::boot", "Internal error getting bits from tape\n");
+    }
+#if 0
+    t_uint64 word;
+    word = 0670314355245;   // magic
+    anal36("magic", word);
+    printf("\n");
+    uint32 nbits = len * 8;
+    int j;
+    for (j = 0; nbits >= 36 && j < 256; ++ j) {
+        bitstm_get(bp, 36, &word);
+        //bitstm_get(bp, 9, &word);
+        //printf("9bit: %030lu oct, %lu decimal\n", word, word);
+        nbits -= 36;
+        anal36("WORD", word);
+        if ((word >> 36) != 0) {
+            complain_msg("CPU::boot", "bitstm_get() is broken\n");
+        }
+        t_uint64 rev = 0;
+        if (0) {
+            // test reveals string MULTICS w/o reversing
+            int i;
+            for (i = 0; i < 36; ++i) {
+                rev <<= 1;
+                if (word % 2 == 1)
+                    rev |= 1;
+                word >>= 1;
+            }
+            anal36("REV", rev); printf("\n");
+        }
+    }
+
+    complain_msg("CPU::boot", "bye!\n"); exit(1);
+#endif
+}
+
+void anal36 (const char* tag, t_uint64 word)
+{
+    unsigned char nines[4];
+    nines[3] = word & 0777;
+    nines[2] = (word >> 9) & 0777;
+    nines[1] = (word >> 18) & 0777;
+    nines[0] = (word >> 27) & 0777;
+    printf("%s: %012Lo octal, %Lu decimal\n", tag, word, word);
+    printf("bin64: %s\n", bin(word, 64));
+    printf("bin36: %s\n", bin(word, 36));
+    printf("9bits(oct): %03o %03o %03o %03o\n", nines[0], nines[1], nines[2], nines[3]);
+    printf("9bits(ascii):");
+    int i;
+    for (i = 0; i < 4; ++ i) {
+        if (isprint(nines[i])) {
+            printf(" '%c'", nines[i]);
+        } else {
+            printf(" \\%03o", nines[i]);
+        }
+    }
+    printf("\n");
+}
+
+char *bin(t_uint64 word, int n)
+{
+    static char str[65];
+    str[n] = 0;
+    int i;
+    for (i = 0; i < n; ++ i) {
+        str[n-i-1] = ((word % 2) == 1) ? '1' : '0';
+        word >>= 1;
+    }
+    return str;
+}

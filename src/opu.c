@@ -24,11 +24,16 @@ static int do_op(instr_t *ip)
         debug_msg("OPU", "Illegal opcode 0%0o(%d)\n", op, bit27);
         fault_gen(illproc_fault);
         return 1;
+    } else {
+        debug_msg("OPU", "Opcode 0%0o(%d) -- %s\n", op, bit27, opname);
     }
     
     if (bit27 == 0) {
         switch (op) {
-            case opcode_xed: {
+            case opcode0_adx1:  // Add to X[n]
+                op_add(instr_t, &X[1]);
+                break;
+            case opcode0_xed: {
                 // todo: re-implement via setting flags and return to control_unit()
                 // todo: fault if xed invokes xed
                 // todo: handle rpd repeats
