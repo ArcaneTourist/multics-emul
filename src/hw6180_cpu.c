@@ -55,13 +55,13 @@ extern uint32 sim_brk_summ;
     
 
 
-static t_uint64 A;  // Accumulator, 36 bits
-static t_uint64 Q;  // Quotient, 36 bits
+t_uint64 reg_A; // Accumulator, 36 bits
+t_uint64 reg_Q; // Quotient, 36 bits
 // Note: AQ register is just a combination of the A and Q registers
-static t_uint64 E;  // Exponent
+t_uint64 reg_E; // Exponent
 // Note: EAQ register is just a combination of the E, A, and Q registers
-static t_uint64 X[8];   // Index Registers
-static IR_t IR;     // indicator register
+t_uint64 reg_X[8];  // Index Registers
+IR_t IR;        // Indicator register
 static t_uint64 saved_IR;
 // static int32 IC; // APU (appending unit) Instruction Counter, 18 bits -- see PPR.IC !!!
 static t_uint64 saved_IC;
@@ -70,12 +70,12 @@ static t_uint64 TR;     // Timer Reg, 27 bits
 static t_uint64 RALR;   // Ring Alarm Reg, 3 bits
 static t_uint64 PR[8];  // Pointer Registers, 42 bits
 static t_uint64 AR[8];  // Address Registers, 24 bits
-static PPR_t PPR;       // Procedure Pointer Reg, 37 bits, internal only
-static TPR_t TPR;       // Temporary Pointer Reg, 42 bits, internal only
+PPR_t PPR;      // Procedure Pointer Reg, 37 bits, internal only
+TPR_t TPR;      // Temporary Pointer Reg, 42 bits, internal only
 // DSBR;    // Descriptor Segment Base Register, 51 bits
 // SDWAM[16];   // Segment Descriptor Word Associative Memory, 88 bits
 // PTWAM[16];   // Page Table Word Associative Memory, 51 bits
-static fault_reg_t FR;  // Fault Register, 35 bits
+// static fault_reg_t FR;   // Fault Register, 35 bits
 // CMR;     // Cache Mode Register, 28 bits
 // CU_hist[16];     // 72 bits
 // OU_hist[16];     // 72 bits
@@ -170,11 +170,8 @@ static int fault2prio[32] = {
 
 t_stat control_unit(void);
 int fetch_instr(uint IC, instr_t *ip);
-int fetch_word(uint IC, t_uint64 *wordp);
 void execute_ir(void);
 void fault_gen(enum faults f);
-void set_addr_mode(addr_modes_t mode);
-addr_modes_t get_addr_mode(void);
 void decode_instr(instr_t *ip, t_uint64 word);
 
 void tape_block(unsigned char *p, uint32 len);
@@ -406,11 +403,19 @@ t_stat sim_instr(void)
         // return STOP_MEMCLEAR;
     }
 
+    // BUG: todo: load registers that SIMH user might have modified
+
     int reason = 0;
     while (reason == 0) {   /* loop until halted */
+printf "SIM INTERVAL: %d\n", sim_interval);
         if (sim_interval <= 0) { /* check clock queue */
+            //int quit = sim_interval <= -100;  // BUG: HACK
             // process any SIMH timed events including keyboard halt
             if ((reason = sim_process_event()) != 0) break;
+            //if (quit) {
+            //  reason = STOP_BUG;
+            //  break;
+            //}
         }
         reason = control_unit();
         sim_interval--; // todo: maybe only per instr or by brkpoint type?
@@ -461,22 +466,25 @@ t_stat control_unit(void)
 
     switch(cycle) {
         case FETCH_cycle:
-            debug_msg("CPU::CU", "Cycle = FETCH; IC = %u\n", PPR.IC);
+            debug_msg("CPU::CU", "Cycle = FETCH; IC = %0o (%dd)\n", PPR.IC, PPR.IC);
             // If execution of the current pair is complete, the processor
             // checks two? internal flags for group 7 faults and/or interrupts.
             if (events.any) {
                 if (events.low_group != 0) {
                     // BUG: don't need test below now that we detect 1-6 here
+                debug_msg("CPU::CU", "Fault detected prior to FETCH\n");
                     cycle = FAULT_cycle;
                     break;
                 }
                 if (events.group7 != 0) {
                     // Group 7 -- See tally runout in IR, connect fields of the
                     // fault register.  DC power off must come via an interrupt?
+                    debug_msg("CPU::CU", "Fault detected prior to FETCH\n");
                     cycle = FAULT_cycle;
                     break;
                 }
                 if (events.int_pending) {
+                debug_msg("CPU::CU", "Interrupt detected prior to FETCH\n");
                     cycle = INTERRUPT_cycle;
                     break;
                 }
@@ -488,6 +496,7 @@ t_stat control_unit(void)
                 cpu.ic_odd = 0; // execute even instr of current pair
                 // todo:  Is cpu.ic_odd unnecessary?  Can we just look at
                 // the IC to determine which to execute?
+                // AL39, 1-13: for fetches, procedure pointer reg (PPR) is ignored. [PPR IC is a dup of IC]
                 if (fetch_instr(PPR.IC, &cu.IR) != 0 || fetch_word(PPR.IC + 1, &cu.IRODD) != 0)
                     cycle = FAULT_cycle;
                 else
@@ -509,6 +518,7 @@ t_stat control_unit(void)
 #endif
 
         case FAULT_cycle:
+            // BUG: low_group not used/maintained
             {
             debug_msg("CPU::CU", "Cycle = FAULT\n");
             addr_modes_t saved_addr_mode = get_addr_mode();
@@ -551,6 +561,18 @@ t_stat control_unit(void)
             }
 
             // BUG: clear fault?  Or does scr instr do that?
+            int next_fault = 0;
+            if (fault == 7) {
+                // BUG: clear group 7 fault
+                complain_msg("CPU::CU", "BUG: Fault group-7\n");
+            } else {
+                events.fault[fault] = 0;
+                for (i = 0; i <= 6; ++ i) {
+                    if ((fault = events.fault[i]) != 0)
+                        break;
+                }
+            }
+            events.any = 0;
 
             PPR.PRR = 0;    // set ring zero
             uint addr = switches.FLT_BASE + 2 * fault; // ABSOLUTE mode
@@ -568,6 +590,7 @@ t_stat control_unit(void)
             // todo: Check for SIMH breakpoint on execution for that addr or
             // maybe in the code for the xed opcode.
             debug_msg("CPU::CU", "calling execute_ir() for xed\n");
+            uint IC_temp = PPR.IC;
             execute_ir();   // executing in FAULT CYCLE, not EXECUTE CYCLE
             if (events.any && events.fault[fault2group[trouble_fault]] == trouble_fault) {
                 // Fault occured during execution, so fault_gen() flagged
@@ -575,10 +598,17 @@ t_stat control_unit(void)
                 // Stay in FAULT CYCLE
                 debug_msg("CPU::CU", "re-faulted, remaining in fault cycle\n");
             } else {
-                if (!cpu.xfr) {
+                // BUG: track events.any
+                if (next_fault == 0 && events.group7 == 0) {
+                    events.any = events.int_pending;
+                    cycle = FETCH_cycle;    // BUG: is this right?
+                }
+                // BUG: kill cpu.xfr
+                if (!cpu.xfr && PPR.IC == IC_temp) {
                     debug_msg("CPU::CU", "no re-fault, no transfer -- incrementing IC\n");
                     // BUG: Faulted instr doesn't get re-invoked?
                             sim_interval = 0;   // force return
+                            (void) sim_cancel_step();
                     ++ PPR.IC;
                     if (cpu.ic_odd) {
                         if (PPR.IC % 2 != 0) { complain_msg("CPU::CU", "Fault on odd half of instr pair results in next instr being at an odd IC\n"); }
@@ -688,7 +718,8 @@ void fault_gen(enum faults f)
     if (f == oob_fault) {
         complain_msg("CPU::fault", "Faulting for internal bug\n");
         f = trouble_fault;
-        sim_interval = 0;   // insufficient
+        // sim_interval = -100; // insufficient
+        (void) sim_cancel_step();
     }
 
     if (f < 1 || f > 32) {
@@ -729,31 +760,6 @@ void fault_gen(enum faults f)
 
 //=============================================================================
 
-void set_addr_mode(addr_modes_t mode)
-{
-    if (mode == ABSOLUTE_mode) {
-        IR.abs_mode = 1;
-    } else if (mode == APPEND_mode) {
-        abort();
-    } else if (mode == BAR_mode) {
-        abort();
-    } else {
-        complain_msg("CPU", "Unable to determine address mode.\n");
-        abort();
-    }
-}
-
-addr_modes_t get_addr_mode()
-{
-    // this function should be replaced
-    if (IR.abs_mode)
-        return ABSOLUTE_mode;
-    complain_msg("CPU", "Unknown address mode\n");
-    abort();
-}
-
-//=============================================================================
-
 int fetch_instr(uint IC, instr_t *ip)
 {
     // returns non-zero if fault detected
@@ -769,30 +775,35 @@ int fetch_instr(uint IC, instr_t *ip)
     return 0;
 }
 
+//=============================================================================
 
-int fetch_word(uint IC, t_uint64 *wordp)
+int fetch_word(uint addr, t_uint64 *wordp)
 {
-    // returns non-zero if fault in groups 1-6 detected
-    // WAS returns non-zero if fault detected
-
-    if (get_addr_mode() != ABSOLUTE_mode) {
-        // BUG: IC needs conversion to abs mem addr
-        abort();
-    }
+    // Fetch word at 24-bit absolute address addr.
+    // Eeturns non-zero if fault in groups 1-6 detected
 
     // todo: check for read breakpoints
 
-    *wordp = M[IC];
+    *wordp = M[addr];
     return 0;
 }
 
-int fetch_pair(uint IC, t_uint64* word0p, t_uint64* word1p)
+
+int store_word(uint addr, t_uint64 word)
 {
-    // Fetch even and odd words at Y-pair given by IC
-    // returns non-zero if fault in groups 1-6 detected
+    // Store word to location given by 24bit abs memory addr
+    M[addr] = word;
+    return 0;
+}
+
+
+int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
+{
+    // Fetch even and odd words at Y-pair given by 24-bit absolute address addr.
+    // Returns non-zero if fault in groups 1-6 detected
 
     int ret;
-    uint Y = (IC % 2 == 0) ? IC : IC - 1;
+    uint Y = (addr % 2 == 0) ? addr : addr - 1;
 
     if ((ret = fetch_word(Y, word0p) != 0)) {
         return ret;
@@ -803,6 +814,8 @@ int fetch_pair(uint IC, t_uint64* word0p, t_uint64* word1p)
     return 0;
 }
 
+//=============================================================================
+
 void decode_instr(instr_t *ip, t_uint64 word)
 {
     ip->offset = getbits36(word, 0, 18);
@@ -812,44 +825,15 @@ void decode_instr(instr_t *ip, t_uint64 word)
     ip->tag = getbits36(word, 30, 6);
 }
 
-int decode_ypair_addr(instr_t* ip, t_uint64* addrp)
-{
-    // returns non-zero if fault in groups 1-6 detected
-    if (get_addr_mode() != ABSOLUTE_mode) {
-        // BUG: IC needs conversion to abs mem addr
-        abort();
-    }
-
-    t_uint64 addr = ip->offset;
-    if (addr % 2 == 1)
-        -- addr;
-    *addrp = addr;
-
-    return 0;
-}
-
-
-int decode_addr(instr_t* ip, t_uint64* addrp)
-{
-    // returns non-zero if fault in groups 1-6 detected
-    if (get_addr_mode() != ABSOLUTE_mode) {
-        // BUG: IC needs conversion to abs mem addr
-        abort();
-    }
-    *addrp = ip->offset;
-    return 0;
-}
-
-
 //=============================================================================
 
 void anal36 (const char* tag, t_uint64 word);
-char *bin(t_uint64 word, int n);
 #include <ctype.h>
 
 void tape_block(unsigned char *p, uint32 len)
 {
-    static size_t hack = 0;
+    // static size_t hack = 0;
+    static size_t hack = 030;
     bitstream_t *bp = bitstm_new(p, len);
     if ((len * 8) % 36 != 0) {
         complain_msg("CPU::boot", "Length %u bytes is not a multiple of 36 bits.\n");
@@ -905,8 +889,8 @@ void anal36 (const char* tag, t_uint64 word)
     nines[1] = (word >> 18) & 0777;
     nines[0] = (word >> 27) & 0777;
     printf("%s: %012Lo octal, %Lu decimal\n", tag, word, word);
-    printf("bin64: %s\n", bin(word, 64));
-    printf("bin36: %s\n", bin(word, 36));
+    printf("bin64: %s\n", bin2text(word, 64));
+    printf("bin36: %s\n", bin2text(word, 36));
     printf("9bits(oct): %03o %03o %03o %03o\n", nines[0], nines[1], nines[2], nines[3]);
     printf("9bits(ascii):");
     int i;
@@ -920,8 +904,9 @@ void anal36 (const char* tag, t_uint64 word)
     printf("\n");
 }
 
-char *bin(t_uint64 word, int n)
+char *bin2text(t_uint64 word, int n)
 {
+    // WARNING: static buffer
     static char str[65];
     str[n] = 0;
     int i;

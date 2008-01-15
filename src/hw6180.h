@@ -1,7 +1,5 @@
 #include "sim_defs.h"
 
-typedef unsigned int uint;  // efficient unsigned int, at least 16 or 32 bits
-
 /*
         For efficiency, we mostly use full ints instead of bit fields for
     the flags and other fields of most of the typedefs here.  When necessary,
@@ -13,8 +11,10 @@ typedef unsigned int uint;  // efficient unsigned int, at least 16 or 32 bits
         Descriptions of registers may be found in AN87 and AL39.
 */
 
+typedef unsigned int uint;  // efficient unsigned int, at least 32 bits
 
-/* Misc enum typdefs */
+// ============================================================================
+// === Misc enum typdefs
 
 typedef enum { ABSOLUTE_mode, APPEND_mode, BAR_mode } addr_modes_t;
 typedef enum { NORMAL_mode, PRIV_mode } instr_modes_t;
@@ -25,7 +25,9 @@ typedef enum {
 } cycles_t;
 
 enum faults {
-    shutdown_fault = 0, timer_fault = 4, connect_fault = 8, illproc_fault = 10, startup_fault = 12, trouble_fault = 31,
+    shutdown_fault = 0, timer_fault = 4, connect_fault = 8, illproc_fault = 10,
+    startup_fault = 12, overflow_fault = 13, trouble_fault = 31,
+    //
     oob_fault=32    // out-of-band, simulator only
 };
 
@@ -39,6 +41,9 @@ enum sim_stops {
 };
 
 
+// ============================================================================
+// === Struct typdefs
+
 /* Format of a 36 bit instruction word */
 typedef struct {
     /* uint32 addr; /* 18 bits at 0..17 */
@@ -50,14 +55,23 @@ typedef struct {
 } instr_t;
 
 
-/* Indicator register (14 bits) */
+/* Indicator register (14 bits [only positions 18..32 have meaning]) */
 typedef struct {
-    uint zero;              /* 1 bit at 18 */
-    /* ... */
-    uint not_bar_mode;      /* 1 bit at 28 */
-    /* ... */
-    uint mid_instr_intr_fault;/* 1 bit at 30 */
-    uint abs_mode;          /* 1 bit at 31 */
+    uint zero;              // bit 18
+    uint neg;               // bit 19
+    uint carry;             // bit 20; see AL39, 3-6
+    uint overflow;          // bit 21
+    // exp_overflow;        // bit 22
+    // exp_underflow;       // bit 23
+    uint overflow_mask;     // bit 24
+    // tally_runout;        // bit 25
+    // parity_error;        // bit 26
+    // parity_mask;         // bit 27
+    uint not_bar_mode;      // bit 28
+    // truncation;          // bit 29
+    uint mid_instr_intr_fault;  // bit 30
+    uint abs_mode;          // bit 31
+    uint hex_mode;          // bit 32
 } IR_t;
 
 // more simulator state variables for the cpu
@@ -69,6 +83,7 @@ typedef struct {
 
 
 /* Fault register (72 bits) */
+#if 0
 typedef struct {
     // Multics never examines this (just the CPU) -- multicians.org glossary
     uint ill_op:1;      /* 1 bit at 0 */
@@ -77,6 +92,7 @@ typedef struct {
     uint ill_proc:1;    /* 1 bit at 3 */
     /* ... */
 } fault_reg_t;
+#endif
 
 // Simulator-only interrupt and fault info
 // tentative
@@ -89,8 +105,9 @@ typedef struct {
     t_bool interrupts[32];
 } events_t;
 
+
 // PPR Procedure Pointer Register (pseudo register)
-//      Use: Holds infor relative to the location in main memory of the
+//      Use: Holds info relative to the location in main memory of the
 //      procedure segment in execution and the location of the current
 //      instruction within that segment
 typedef struct {
@@ -188,6 +205,8 @@ typedef struct {
 } switches_t;
 
 
+// ============================================================================
+// === Operations on 36-bit pseudo words
 /*
     Operations on 36-bit pseudo words
 
@@ -214,7 +233,23 @@ typedef struct {
 #define bitclear36(word,i) ( (word) & ~ ( (uint64_t) 1 << (35 - i)) )
 static t_uint64 getbits36(t_uint64 x, int i, int n) {
     // bit 35 is right end, bit zero is 36th from the left
-    return (x >> (35-i+n-1)) & ~ (~0 << n);
+    return (x >> (35-i-n+1)) & ~ (~0 << n);
+}
+static t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
+{
+    // return x with n bits starting at p set to n lowest bits of val 
+    // return (x & ((~0 << (p + 1)) | (~(~0 << (p + 1 - n))))) | ((val & ~(~0 << n)) << (p + 1 - n));
+
+    t_uint64 mask = ~ (~0<<n);  // n low bits on
+        // 1 => ...1
+        // 2 => ..11
+    mask <<= 36 - p - n;    // shift 1s to proper position; result 0*1{n}0*
+            // 0,1 => 35 => 1000... (35 zeros)
+            // 1,1 => 34 => 0100... (34 z)
+            // 0,2 = 34 => 11000 (34 z)
+            // 1,2 = 33 => 011000 (33 z)
+            // 35,1 => 0 => 0001 (0 z)
+    return (x & ~ mask) | (val << (36 - p - n));
 }
 
 // obsolete typedef -- hold named register sub-fields in their inefficient
@@ -222,6 +257,21 @@ static t_uint64 getbits36(t_uint64 x, int i, int n) {
 /* #define CU_PPR_P(CU) (bitval36(CU.word0bits, 18)) */
 
 // ============================================================================
+// === Variables
+
+extern t_uint64 reg_A;      // Accumulator, 36 bits
+extern t_uint64 reg_Q;      // Quotient, 36 bits
+extern t_uint64 reg_E;      // Quotient, 36 bits
+extern t_uint64 reg_X[8];   // Index Registers
+extern IR_t IR;             // Indicator Register
+extern PPR_t PPR;           // Procedure Pointer Reg, 37 bits, internal only
+extern TPR_t TPR;           // Temporary Pointer Reg, 42 bits, internal only
+
+extern ctl_unit_data_t cu;
+extern cpu_state_t cpu;
+
+// ============================================================================
+// === Functions
 
 extern void debug_msg(const char* who, const char* format, ...);
 extern void complain_msg(const char* who, const char* format, ...);
@@ -229,9 +279,16 @@ extern void execute_instr(void);
 extern void fault_gen(enum faults);
 extern int decode_addr(instr_t* ip, t_uint64* addrp);
 extern int decode_ypair_addr(instr_t* ip, t_uint64* addrp);
-extern int fetch_pair(uint IC, t_uint64* word0p, t_uint64* word1p);
-int fetch_instr(uint IC, instr_t *ip);
+extern int fetch_instr(uint IC, instr_t *ip);
+extern char *bin2text(t_uint64 word, int n);
 
+int fetch_word(uint addr, t_uint64 *wordp);
+int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p);
+int store_word(uint addr, t_uint64 word);
 
+void set_addr_mode(addr_modes_t mode);
+addr_modes_t get_addr_mode(void);
+
+// ============================================================================
 
 #include "opcodes.h"

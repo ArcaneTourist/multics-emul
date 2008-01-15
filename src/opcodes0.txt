@@ -29,7 +29,7 @@ sxl0	sxl1	sxl2	sxl3	sxl4	sxl5	sxl6	sxl7	stz	smic	scpr	-	stt	fst	ste	dfst
 -	fmp	-	dfmp	-	-	-	-	fstr	frd	dfstr	dfrd	-	fad	-	dfad
 
 rpl	-	-	-	-	bcd	div	dvf	-	-	-	fneg	-	fcmp	-	dfcmp
-fpt	-	-	-	-	fdi	-	dfdi	-	neg	cams	negl	-	ufs	-	dufs
+rpt	-	-	-	-	fdi	-	dfdi	-	neg	cams	negl	-	ufs	-	dufs
 sprp0	sprp1	sprp2	sprp3	sprp4	sprp5	sprp6	sprp7	sbar	stba	stbq	smcm	stcl	-	-	ssdp
 rpd	-	-	-	-	fdv	-	dfdv	-	-	-	fno	-	fsb	-	dfsb
 

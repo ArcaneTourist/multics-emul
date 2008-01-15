@@ -40,6 +40,7 @@ DEVICE *sim_devices[] = {
 };
 
 const char *sim_stop_messages[] = {
+    "<error zero>",
     "Memory is empty",
     "BUG-STOP -- Internal error",
     "Fetch on Odd address",
