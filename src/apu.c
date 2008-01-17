@@ -8,10 +8,21 @@
 
 //=============================================================================
 
+static uint32 sign18(t_uint64 x)
+{
+    if (bit18_is_neg(x))
+        return - ((1<<18) - x);
+    else
+        return x;
+}
+
+//=============================================================================
+
 #if 0
     NOTES
 
 #endif
+
 
 void set_addr_mode(addr_modes_t mode)
 {
@@ -26,8 +37,8 @@ void set_addr_mode(addr_modes_t mode)
         IR.abs_mode = 0;    // BUG: is this correct?
         IR.not_bar_mode = 0;
     } else {
-        complain_msg("CPU", "Unable to determine address mode.\n");
-        abort();
+        complain_msg("APU", "Unable to determine address mode.\n");
+        cancel_run(STOP_BUG);
     }
 }
 
@@ -42,11 +53,11 @@ addr_modes_t get_addr_mode()
     // BUG: addr mode depends upon instr's operand
 
     if (IR.not_bar_mode == 0) {
-        complain_msg("CPU", "Unsure of mode -- seems to be BAR\n");
+        complain_msg("APU", "Unsure of mode -- seems to be BAR\n");
         return BAR_mode;
     }
 
-    complain_msg("CPU", "Unsure of mode -- seems to be APPEND\n");
+    complain_msg("APU", "Unsure of mode -- seems to be APPEND\n");
     return APPEND_mode;
 }
 
@@ -58,7 +69,8 @@ int decode_addr(instr_t* ip, t_uint64* addrp)
     // returns non-zero if fault in groups 1-6 detected
     if (get_addr_mode() != ABSOLUTE_mode) {
         // BUG: IC needs conversion to abs mem addr
-        abort();
+        complain_msg("APU", "Only ABS mode implemented.\n");
+        cancel_run(STOP_BUG);
     }
     *addrp = ip->offset;
     return 0;
@@ -72,7 +84,8 @@ int decode_ypair_addr(instr_t* ip, t_uint64* addrp)
     // returns non-zero if fault in groups 1-6 detected
     if (get_addr_mode() != ABSOLUTE_mode) {
         // BUG: IC needs conversion to abs mem addr
-        abort();
+        complain_msg("APU", "Only ABS mode implemented.\n");
+        cancel_run(STOP_BUG);
     }
 
     t_uint64 addr = ip->offset;
@@ -96,10 +109,10 @@ int addr_mod(instr_t *ip)
     address (TPR.CA) from addr prep becomes the main memory addr.
 
     ...
-    [Various constucts] in abs mode places the processor in append
-    mode for orne or more addr preparation cycles.  If a transfer of
-    control is make with any of the above constructs, the proc remains
-    in append mode after the xfer.
+    Two modes -- absolute mode or appending mode.  [Various constucts] in
+    absolute mode places the processor in append mode for one or more addr
+    preparation cycles.  If a transfer of control is make with any of the
+    above constructs, the proc remains in append mode after the xfer.
 */
 
     // BUG: do reg and indir word stuff first?
@@ -114,12 +127,83 @@ int addr_mod(instr_t *ip)
 
     // see AL39, 4-7
 
+    // BUG: if (appropriate instr)
+    //  18bit offset rel to current val of instr counter
+    uint tm = (ip->tag >> 4) & 03;  // the and is a hint to the compiler for the following switch...
+    uint td = ip->tag & 017;
+
+    switch(tm) {
+        case 0: {   // register (r)
+            if (td == 0)
+                break;
+            int off = sign18(ip->offset);
+            switch(td) {
+                case 0:
+                    break;  // no mod (can't get here anyway)
+                case 1: // ,au
+                    TPR.CA = off + sign18(getbits36(reg_A, 0, 18));
+                    break;
+                case 2: // ,qu
+                    TPR.CA = off + sign18(getbits36(reg_Q, 0, 18));
+                    break;
+                case 3: // ,du
+                    ip->is_value = 1;
+                    //ip->value = offset << 18;
+                    TPR.CA = (t_uint64) ip->offset << 18;
+                    debug_msg("APU", "Mod du: Value from offset 0%o; TPR.CA now 0%Lo\n", ip->offset, TPR.CA);
+                    break;
+                case 4: // PPR.IC
+                    TPR.CA = off + PPR.IC;  // BUG: IC assumed to be unsigned
+                    break;
+                case 5:
+                    TPR.CA = off + sign18(getbits36(reg_A, 18, 18));
+                    break;
+                case 6:
+                    TPR.CA = off + sign18(getbits36(reg_Q, 18, 18));
+                    break;
+                case 7: // ,dl
+                    ip->is_value = 1;
+                    // ip->value = offset;
+                    TPR.CA = ip->offset;
+                    debug_msg("APU", "Mod dl: Value from offset 0%o; TPR.CA now 0%o\n", ip->offset, TPR.CA);
+                    break;
+                case 010:
+                case 011:
+                case 012:
+                case 013:
+                case 014:
+                case 015:
+                case 016:
+                case 017:
+                    TPR.CA = off + sign18(reg_X[td&07]);
+                    break;
+            }
+            break;
+        }
+        case 1: {   // register then indirect (ri)
+            complain_msg("APU", "this addr mod not implemented.\n");
+            cancel_run(STOP_BUG);
+            break;
+        }
+        case 2: {   // indirect then tally (it)
+            complain_msg("APU", "this addr mod not implemented.\n");
+            cancel_run(STOP_BUG);
+            break;
+        }
+        case 3: {   // indirect then register (ir)
+            complain_msg("APU", "this addr mod not implemented.\n");
+            cancel_run(STOP_BUG);
+            break;
+        }
+    }
+
     if (addr_mode == ABSOLUTE_mode && ptr_reg_flag == 0) {
         // TPR.CA is the 18-bit absolute main memory addr
         return 0;
     }
 
-    abort();
+    complain_msg("APU", "Only ABS mode implemented.\n");
+    cancel_run(STOP_BUG);
 #if 0
     if (addr_mode == BAR_mode && ptr_reg_flag == 0)
         // 18bit offset rel to the BAR

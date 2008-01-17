@@ -10,6 +10,11 @@ extern DEVICE ptp_dev;
 extern DEVICE lpt_dev;
 extern t_uint64 M[];
 
+extern UNIT TR_clk_unit;
+extern switches_t switches;
+extern cpu_ports_t cpu_ports;
+extern scu_t scu;
+
 /* SCP data structures
 
    sim_name             simulator name string
@@ -42,10 +47,12 @@ DEVICE *sim_devices[] = {
 const char *sim_stop_messages[] = {
     "<error zero>",
     "Memory is empty",
-    "BUG-STOP -- Internal error",
+    "BUG-STOP -- Internal error, further execution probably pointless",
+    "WARN-STOP -- Internal error, further processing might be ok",
     "Fetch on Odd address",
     "Breakpoint",
     // "Invalid Opcode"
+    0
 };
 
 
@@ -90,6 +97,24 @@ static void hw6180_init(void)
     // todo: sim_brk_types = ...
     // todo: sim_brk_dflt = ...
 
+    // Hardware config -- should be based on config cards!
+
+    // CPU port 'a' connected to SCU port '7'
+    memset(&cpu_ports, 0, sizeof(cpu_ports));
+    cpu_ports.scu_port = 7; // arbitrary
+    cpu_ports.ports[0] = cpu_ports.scu_port;
+
+    memset(&switches, 0, sizeof(switches));
+    // multics uses same vector for interrupts & faults?
+    // OTOH, AN87, 1-41 claims faults are at 100o ((flt_base=1)<<5)
+    switches.FLT_BASE = 0;  // multics uses same vector for interrupts & faults?
+
+    // Only one SCU, connected as described above
+    memset(&scu, 0, sizeof(scu));
+    scu.ports[cpu_ports.scu_port] = 0;  // port '7' connected to CPU port 'a'
+    
+    // GB61, page 9-1
+    scu.mask_assign[0] = 1 << cpu_ports.scu_port;
 }
 
 extern t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
@@ -100,4 +125,54 @@ extern t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, in
 extern t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
 {
     abort();
+}
+
+activate_timer()
+{
+    uint32 t;
+    debug_msg("SYS::clock", "TR is %Ld 0%Lo.\n", reg_TR, reg_TR);
+    if (bit27_is_neg(reg_TR)) { // BUG: 27bit reg -- should check bit 26?
+        if ((t = sim_is_active(&TR_clk_unit)) != 0)
+            debug_msg("SYS::clock", "TR cancelled with %d time units left.\n", t);
+        else
+            debug_msg("SYS::clock", "TR loaded with negative value, but it was alread stopped.\n", t);
+        sim_cancel(&TR_clk_unit);
+        return;
+    }
+    if ((t = sim_is_active(&TR_clk_unit)) != 0) {
+        debug_msg("SYS::clock", "TR was still running with %d time units left.\n", t);
+        sim_cancel(&TR_clk_unit);   // BUG: do we need to cancel?
+    }
+
+    (void) sim_rtcn_init(CLK_TR_HZ, TR_CLK);
+    sim_activate(&TR_clk_unit, reg_TR);
+    if ((t = sim_is_active(&TR_clk_unit)) == 0)
+        debug_msg("SYS::clock", "TR is not running\n", t);
+    else
+        debug_msg("SYS::clock", "TR is now running with %d time units left.\n", t);
+}
+
+
+t_stat clk_svc(UNIT *up)
+{
+    // only valid for TR
+    (void) sim_rtcn_calb (CLK_TR_HZ, TR_CLK);   // calibrate clock
+    uint32 t = sim_is_active(&TR_clk_unit);
+    printf("SYS::clock::service", "TR has %d time units left\n");
+}
+
+t_stat XX_clk_svc(UNIT *up)
+{
+    // only valid for TR
+#if 0
+    tmr_poll = sim_rtcn_calb (clk_tps, TMR_CLK);            /* calibrate clock */
+    sim_activate (&clk_unit, tmr_poll);                     /* reactivate unit */
+    tmxr_poll = tmr_poll * TMXR_MULT;                       /* set mux poll */
+    todr_reg = todr_reg + 1;                                /* incr TODR */
+    if ((tmr_iccs & TMR_CSR_RUN) && tmr_use_100hz)          /* timer on, std intvl? */
+        tmr_incr (TMR_INC);                                 /* do timer service */
+    return 0;
+#else
+    return 2;
+#endif
 }

@@ -23,9 +23,10 @@ void complain_msg(const char* who, const char* format, ...)
 static void msg(const char* tag, const char *who, const char* format, va_list ap)
 {
     fflush(stdout);
-    printf("%s: %s: ", who, tag);
+    printf("%s:%*s %s: ", who, 15-strlen(who), "", tag);
     vprintf(format, ap);
-    if (*(format + strlen(format) - 1) == '\n')
+    if (*(format + strlen(format) - 1) == '\n') {
         printf("\r");
+    }
     fflush(stdout);
 }

@@ -25,7 +25,8 @@ typedef enum {
 } cycles_t;
 
 enum faults {
-    shutdown_fault = 0, timer_fault = 4, connect_fault = 8, illproc_fault = 10,
+    shutdown_fault = 0, store_fault = 1, timer_fault = 4, connect_fault = 8,
+    illproc_fault = 10,
     startup_fault = 12, overflow_fault = 13, trouble_fault = 31,
     //
     oob_fault=32    // out-of-band, simulator only
@@ -35,10 +36,25 @@ enum faults {
 //      Zero and values above 63 reserved by SIMH
 enum sim_stops {
     STOP_MEMCLEAR = 1,  // executing empty memory; zero reserved by SIMH
-    STOP_BUG,           // impossible conditions, coding error
+    STOP_BUG,           // impossible conditions, coding error;
+    STOP_WARN,          // something odd or interesting; further exec might possible
     STOP_ODD_FETCH,
     STOP_IBKPT,         // breakpoint
 };
+
+
+// ============================================================================
+// === Misc constants
+
+// Clocks
+#define CLK_TR_HZ (512*1) /* should be 512 kHz, but we'll use 512 Hz for now */
+#define TR_CLK 1 /* SIMH allows clock ids 0..7 */
+
+// Memory
+#define IOM_MBX_LOW 01200
+#define IOM_MBX_LEN 02200
+#define DN355_MBX_LOW 03400
+#define DN355_MBX_LEN 03000
 
 
 // ============================================================================
@@ -52,6 +68,8 @@ typedef struct {
     uint inhibit;   /* 1 bit at 28 */
     uint pr_bit;    // 1 bit at 29; use offset[0..2] as pointer reg?
     uint tag;       /* 6 bits at 30..35 */
+    uint is_value;  // is offset a value or an address? (du or dl modifiers)
+    //t_uint64 value;   // 36bit value from opcode constant via du/dl
 } instr_t;
 
 
@@ -127,7 +145,7 @@ typedef struct {
     uint TRR;   // Current effective ring number, 3 bits
     uint TSR;   // Current effective segment number, 15 bits
     uint TBR;   // Current bit offset as calculated from ITS and ITP
-    uint CA;    // Current computed addr relative to the segment in TPR.TSR
+    t_uint64 CA;// Current computed addr relative to the segment in TPR.TSR; Normally 24? bits but sized to hold 36bit non-address operands
 } TPR_t;
 
 
@@ -199,11 +217,78 @@ typedef struct {
 } ctl_unit_data_t;
 
 
+// PTWAM registers, 51 bits each
+typedef struct {
+    //uint addr;        // 18 bits; upper 18 bits of 24bit main memory addr of page
+    //uint modified;    // flag
+    //uint ptr;     // 15 bits; effective segment #
+    //uint pageno;  // 12 bits; 12 high order bits of CA used to fetch this PTW from mem
+    uint is_full;   // flag; PTW is valid
+    uint use;       // counter, 4 bits
+    uint enabled;   // internal flag, not part of the register
+} PTWAM_t;
+
+// SDWAM registers, 88 bits each
+typedef struct {
+    //uint addr;        // 24bit main memory addr -- page table or page segment
+    //uint r1;          // 3 bits
+    //uint r2;          // 3 bits
+    //uint r3;          // 3 bits
+    //uint bound;       // 14 bits; 14 high order bits of furtherest Y-block16
+    //uint r;           // flag; read perm
+    //uint e;           // flag; exec perm
+    //uint w;           // flag; write perm
+    //uint p;           // flag; priv
+    //uint u;           // flag; unpaged
+    //uint g;           // flag; gate control
+    //uint c;           // flag; cache control
+    //uint cl;          // 14 bits; (inbound) call limiter
+    //uint modified;    // flag
+    //uint ptr;         // 15 bits; effective segment #
+    uint is_full;   // flag; PTW is valid
+    uint use;       // counter, 4 bits
+    uint enabled;   // internal flag, not part of the register
+} SDWAM_t;
+
+
+
 // Physical Switches
 typedef struct {
     int FLT_BASE;   // normally 7 MSB of 12bit fault base addr
 } switches_t;
 
+typedef struct {
+    uint ports[8];  // SCU connectivity; designated a..h
+    int scu_port;   // What port num are we connected to (same for all SCUs)
+} cpu_ports_t;
+
+typedef struct {
+    // int interrupts[32];
+    // uint mem_base;   // zero on boot scu
+    // mode reg: see AN87 2-2 -- 2 bit ID
+#if 0
+    struct {
+        unsigned mode_a:3;  // online, test, or offline
+        unsigned bdry_a:3;  // size of memory
+        unsigned mode_a:3;
+        unsigned bdry_b:3;
+        unsigned interlace:1;
+        unsigned lwr:1;     // controls whether A or B is low order memory
+        unsigned addr_offset:2;
+        unsigned port_no:4; // port from which rscr instr was received
+        struct {
+            unsigned flag:2;
+        } port_enabled[8];
+        struct {
+            unsigned value:9;
+        } pima[4];      // each bit indicates an assigned port (matches 4 rotary switches [initally?])
+    } config_switches;
+#endif
+    t_uint64 masks[8];  // port assignements
+    uint ports[8];  // CPU/IOM connectivity; designated 0..7; negative to disable
+    int mask_assign[4]; //  Bit masks.  Which port(s) is each PIMA reg assigned to?
+    
+} scu_t;
 
 // ============================================================================
 // === Operations on 36-bit pseudo words
@@ -231,11 +316,11 @@ typedef struct {
     the (i)th bit. */
 #define bitset36(word,i) ( (word) | ( (uint64_t) 1 << (35 - i)) )
 #define bitclear36(word,i) ( (word) & ~ ( (uint64_t) 1 << (35 - i)) )
-static t_uint64 getbits36(t_uint64 x, int i, int n) {
+static inline t_uint64 getbits36(t_uint64 x, int i, int n) {
     // bit 35 is right end, bit zero is 36th from the left
     return (x >> (35-i-n+1)) & ~ (~0 << n);
 }
-static t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
+static inline t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
 {
     // return x with n bits starting at p set to n lowest bits of val 
     // return (x & ((~0 << (p + 1)) | (~(~0 << (p + 1 - n))))) | ((val & ~(~0 << n)) << (p + 1 - n));
@@ -252,6 +337,12 @@ static t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
     return (x & ~ mask) | (val << (36 - p - n));
 }
 
+
+// #define bit36_is_neg(x) ( ((x)>>35) == 1 )
+#define bit36_is_neg(x) (((x) & (((t_uint64)1)<<35)) != 0)
+#define bit27_is_neg(x) (((x) & (((t_uint64)1)<<26)) != 0)
+#define bit18_is_neg(x) (((x) & (((t_uint64)1)<<17)) != 0)
+
 // obsolete typedef -- hold named register sub-fields in their inefficient
 // native format.
 /* #define CU_PPR_P(CU) (bitval36(CU.word0bits, 18)) */
@@ -262,10 +353,13 @@ static t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
 extern t_uint64 reg_A;      // Accumulator, 36 bits
 extern t_uint64 reg_Q;      // Quotient, 36 bits
 extern t_uint64 reg_E;      // Quotient, 36 bits
-extern t_uint64 reg_X[8];   // Index Registers
+extern t_uint64 reg_X[8];   // Index Registers, 18 bits
 extern IR_t IR;             // Indicator Register
+extern t_uint64 reg_TR;     // Timer Reg, 27 bits -- only valid after calls to SIMH clock routines
 extern PPR_t PPR;           // Procedure Pointer Reg, 37 bits, internal only
 extern TPR_t TPR;           // Temporary Pointer Reg, 42 bits, internal only
+extern PTWAM_t PTWAM[16];   // Page Table Word Associative Memory, 51 bits
+extern SDWAM_t SDWAM[16];   // Segment Descriptor Word Associative Memory, 88 bits
 
 extern ctl_unit_data_t cu;
 extern cpu_state_t cpu;
