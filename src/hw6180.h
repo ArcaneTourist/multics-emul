@@ -26,8 +26,8 @@ typedef enum {
 
 enum faults {
     shutdown_fault = 0, store_fault = 1, timer_fault = 4, connect_fault = 8,
-    illproc_fault = 10,
-    startup_fault = 12, overflow_fault = 13, trouble_fault = 31,
+    illproc_fault = 10, startup_fault = 12, overflow_fault = 13,
+    div_fault = 14, trouble_fault = 31,
     //
     oob_fault=32    // out-of-band, simulator only
 };
@@ -82,7 +82,7 @@ typedef struct {
     // exp_overflow;        // bit 22
     // exp_underflow;       // bit 23
     uint overflow_mask;     // bit 24
-    // tally_runout;        // bit 25
+    uint tally_runout;      // bit 25
     // parity_error;        // bit 26
     // parity_mask;         // bit 27
     uint not_bar_mode;      // bit 28

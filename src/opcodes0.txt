@@ -33,7 +33,7 @@ rpt	-	-	-	-	fdi	-	dfdi	-	neg	cams	negl	-	ufs	-	dufs
 sprp0	sprp1	sprp2	sprp3	sprp4	sprp5	sprp6	sprp7	sbar	stba	stbq	smcm	stcl	-	-	ssdp
 rpd	-	-	-	-	fdv	-	dfdv	-	-	-	fno	-	fsb	-	dfsb
 
-txe	tnz	tnc	trc	tmi	tpl	-	ttf	rtcd	-	-	rcu	teo	teu	dis	tov
+tze	tnz	tnc	trc	tmi	tpl	-	ttf	rtcd	-	-	rcu	teo	teu	dis	tov
 eax0	eax1	eax2	eax3	eax4	eax5	eax6	eax7	ret	-	-	rccl	ldi	eaa	eaq	ldt
 ersx0	ersx1	ersx2	ersx3	ersx4	ersx5	ersx6	ersx7	spri4	spbp5	spri6	spbp7	stacq	ersa	ersq	scu
 erx0	erx1	erx2	erx3	erx4	erx5	erx6	erx7	tsp4	tsp5	tsp6	tsp7	lcpr	era	erq	eraq

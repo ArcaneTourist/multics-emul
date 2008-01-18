@@ -538,18 +538,20 @@ t_stat control_unit(void)
                 }
             }
             // fetch a pair of words
-            if (PPR.IC % 2 != 0) {
-                reason = STOP_ODD_FETCH;
-            } else {
-                cpu.ic_odd = 0; // execute even instr of current pair
-                // todo:  Is cpu.ic_odd unnecessary?  Can we just look at
-                // the IC to determine which to execute?
-                // AL39, 1-13: for fetches, procedure pointer reg (PPR) is ignored. [PPR IC is a dup of IC]
-                if (fetch_instr(PPR.IC, &cu.IR) != 0 || fetch_word(PPR.IC + 1, &cu.IRODD) != 0)
-                    cycle = FAULT_cycle;
-                else
-                    cycle = EXEC_cycle;
-            }
+            // todo:  Is cpu.ic_odd unnecessary?  Can we just look at
+            // the IC to determine which to execute?
+            // AL39, 1-13: for fetches, procedure pointer reg (PPR) is ignored. [PPR IC is a dup of IC]
+            cpu.ic_odd = PPR.IC % 2;    // won't exec even if fetch from odd
+            // BUG: Fetch both words because if we fault on fetch of even word, we'll
+            // handle the fault at the even word and then an EXEC cycle will want to
+            // later execute junk from cu.IRODD.   Actually, perhaps fault should always lead to
+            // a fetch rather than an EXEC.  On the other hand, our fetch_instr and fetch_word
+            // can never fault anyway.
+            cycle = EXEC_cycle;
+            if (fetch_instr(PPR.IC - PPR.IC % 2, &cu.IR) != 0)
+                cycle = FAULT_cycle;
+            if (fetch_word(PPR.IC - PPR.IC % 2 + 1, &cu.IRODD) != 0)
+                cycle = FAULT_cycle;
             break;
 
 #if 0
@@ -834,7 +836,7 @@ int fetch_instr(uint IC, instr_t *ip)
 
     // todo: check for read breakpoints
 
-    decode_instr(ip, M[IC]);
+    decode_instr(ip, M[IC]);    // BUG: skips fetch_word
     return 0;
 }
 

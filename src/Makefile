@@ -17,3 +17,4 @@ bit-test: bit-test.o bits.o
 
 clean:
 	rm *.o
+	rm -f bits bit-test tst test-op scan-tape

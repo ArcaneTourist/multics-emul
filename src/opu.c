@@ -4,7 +4,21 @@
 
 // ============================================================================
 
+const t_uint64 MASK36 = ~(~((t_uint64)0)<<36);  // lower 36 bits all ones
+const t_uint64 MASK18 = ~(~((t_uint64)0)<<18);  // lower 18 bits all ones
+
+static inline t_uint64 lrotate36(t_uint64 x, unsigned n);
+static inline void lrotate72(t_uint64* ap, t_uint64* bp, unsigned n);
+static inline t_int64 negate36(t_uint64 x);
+static inline int negate72(t_uint64* a, t_uint64* b);
+
 static int do_op(instr_t *ip);
+static int op_add(instr_t *ip, t_uint64 *operand);
+static int op_and(instr_t *ip, t_uint64 *op, t_uint64 *op2, t_uint64 *dest1, t_uint64 *dest2);
+static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest);
+static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2);
+
+// ============================================================================
 
 void execute_instr(void)
 {
@@ -24,51 +38,9 @@ static int fetch_op(const instr_t *ip, t_uint64 *wordp)
     return fetch_word(TPR.CA, wordp);
 }
 
-const t_uint64 MASK36 = ~(~((t_uint64)0)<<36);  // lower 36 bits all ones
-
-static inline t_uint64 lrotate(t_uint64 x, unsigned n)
-{
-    if (n >= 36)
-        n %= 36;
-    //return ((x << n) & ~(~((t_uint64)0)<<36)) | (x >> (36-n));
-    return ((x << n) & MASK36) | (x >> (36-n));
-}
-
-static inline void lrotate72(t_uint64* ap, t_uint64* bp, unsigned n)
-{
-    if (n >= 72)
-        n %= 72;
-    if (n == 0)
-        return;
-
-    t_uint64 a = *ap;
-    t_uint64 b = *bp;
-    if (n <= 36) {
-        t_uint64 aout = a >> (36 - n);
-        t_uint64 bout = b >> (36 - n);
-        a = ((a << n) & MASK36) | bout;
-        b = ((b << n) & MASK36) | aout;
-    } else {
-        t_uint64 aout_hi = a >> (72 - n);
-        t_uint64 aout_lo = a & ~(~0 << (n - 36));
-        t_uint64 bout_hi = b >> (72 - n);
-        t_uint64 bout_lo = b & ~(~0 << (n - 36));
-        a = (bout_lo << (n - 36)) | aout_hi;
-        b = (aout_lo << (n - 36)) | bout_hi;
-    }
-            
-    *ap = a;
-    *bp = b;
-}
-
-static inline void lshift72(t_uint64* ap, t_uint64* bp, unsigned n)
-{
-}
 
 // ============================================================================
 
-static int op_add(instr_t *ip, t_uint64 *operand);
-static int op_and(instr_t *ip, t_uint64 *op, t_uint64 *op2, t_uint64 *dest1, t_uint64 *dest2);
 
 static int do_op(instr_t *ip)
 {
@@ -122,15 +94,37 @@ static int do_op(instr_t *ip)
     
     if (bit27 == 0) {
         switch (op) {
-            case opcode0_lda: {
-                int ret = fetch_op(ip, &reg_A);
+            case opcode0_ldaq: {    // Load AQ reg
+                t_uint64 word1, word2;
+                int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
                 if (ret == 0) {
-                    IR.zero = reg_A == 0;
+                    reg_A = word1;
+                    reg_Q = word2;
+                    IR.zero = word1 == 0 && word2 == 0;
                     IR.neg = bit36_is_neg(reg_A);
                 }
-                printf("LDA: A <= M[%u]: %Lu\n", TPR.CA, reg_A);
                 return ret;
-                break;
+            }
+            case opcode0_szn: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    IR.zero = word == 0;
+                    IR.neg = bit36_is_neg(word);
+                }
+                return ret;
+            }
+            case opcode0_sznc: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    ret = store_word(TPR.CA, 0);
+                    if (ret == 0) {
+                        IR.zero = word == 0;
+                        IR.neg = bit36_is_neg(word);
+                    }
+                }
+                return ret;
             }
             case opcode0_ana:
                 return op_and(ip, &reg_A, NULL, &reg_A, NULL);
@@ -162,15 +156,55 @@ static int do_op(instr_t *ip)
             }
             case opcode0_stacq: {
                 // BUG: check for illegal modifiers
-                t_uint64 word1;
-                int ret = fetch_op(ip, &word1);
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
                 if (ret == 0) {
-                    IR.zero = word1 == reg_Q;
-                    if (word1 == reg_Q)
+                    IR.zero = word == reg_Q;
+                    if (word == reg_Q)
                         ret = store_word(TPR.CA, reg_A);
                 }
                 return ret;
             }
+            case opcode0_staq: {
+                // BUG: check for illegal modifiers
+                t_uint64 word1, word2;
+                uint y = TPR.CA - TPR.CA % 2;
+                int ret = store_word(y, reg_A);
+                if (ret == 0)
+                    ret = store_word(y+1, reg_Q);
+                return ret;
+            }
+            case opcode0_era: { // AOR to A
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    reg_A ^= word;
+                    IR.zero = reg_A == 0;
+                    IR.neg = bit36_is_neg(reg_A);
+                }
+                return ret;
+            }
+            case opcode0_ersa: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    word ^= reg_A;
+                    ret = store_word(TPR.CA, word);
+                    IR.zero = word == 0;
+                    IR.neg = bit36_is_neg(word);
+                }
+                return ret;
+            }
+            case opcode0_eaa:
+                reg_A = TPR.CA << 18;
+                IR.zero = reg_A == 0;
+                IR.neg = bit36_is_neg(reg_A);
+                return 0;
+            case opcode0_eaq:
+                reg_Q = TPR.CA << 18;
+                IR.zero = reg_Q == 0;
+                IR.neg = bit36_is_neg(reg_Q);
+                return 0;
             case opcode0_eax0:
             case opcode0_eax1:
             case opcode0_eax2:
@@ -195,6 +229,25 @@ static int do_op(instr_t *ip)
                 return ret;
 #endif
             }
+            case opcode0_lda: {
+                int ret = fetch_op(ip, &reg_A);
+                if (ret == 0) {
+                    IR.zero = reg_A == 0;
+                    IR.neg = bit36_is_neg(reg_A);
+                }
+                return ret;
+            }
+            case opcode0_ldac: {
+                int ret = fetch_op(ip, &reg_A);
+                if (ret == 0) {
+                    ret = store_word(TPR.CA, 0);
+                    if (ret == 0) {
+                        IR.zero = reg_A == 0;
+                        IR.neg = bit36_is_neg(reg_A);
+                    }
+                }
+                return ret;
+            }
             case opcode0_fld: {
                 int ret;
                 t_uint64 word;
@@ -210,12 +263,35 @@ static int do_op(instr_t *ip)
                 }
                 return ret;
             }
+            opcode0_div: {
+                int ret;
+                t_uint64 word;
+                if ((ret = fetch_op(ip, &word)) == 0) {
+                    t_int64 q = bit36_is_neg(reg_Q) ? negate36(reg_Q) : reg_Q;
+                    t_int64 w = bit36_is_neg(word) ? negate36(word) : word;
+                    if (w == 0 || (q == ((t_uint64)1<<35) && w == -1)) {    // (1<<35) signed is -2**36
+                        fault_gen(div_fault);
+                        IR.neg = bit36_is_neg(reg_Q);
+                        reg_Q = (IR.neg) ? - q  : reg_Q;    // magnitude, absolute value
+                        IR.zero = w == 0;
+                        ret = 1;
+                    } else {
+                        reg_Q = (q / w) | MASK36;
+                        reg_A = (q % w) | MASK36;
+                        IR.zero = reg_Q == 0;
+                        IR.neg = bit36_is_neg(reg_Q);
+                    }
+                }
+                return ret;
+            }
             case opcode0_sscr: { // priv
                 // set system controller register (to value in AQ)
                 if (get_addr_mode() != ABSOLUTE_mode) {
                     fault_gen(illproc_fault);
                     return 1;
                 }
+                debug_msg("OPU::opcode::sscr", "A = %Lo\n", reg_A);
+                debug_msg("OPU::opcode::sscr", "Q = %Lo\n", reg_Q);
                 int ret = 0;
                 uint y = getbits36(TPR.CA, 0, 2);       // BUG: just mask off
                 uint ea = y << 15;
@@ -280,8 +356,79 @@ static int do_op(instr_t *ip)
                     ret = 1;
                     // error
                 }
-                debug_msg("OPU::opcode::sscr", "A = %Lo\n", reg_A);
-                debug_msg("OPU::opcode::sscr", "Q = %Lo\n", reg_Q);
+                return ret;
+            }
+            case opcode0_rscr: { // priv
+                // read system controller register (to AQ)
+                if (get_addr_mode() != ABSOLUTE_mode) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                int ret = 0;
+                uint y = getbits36(TPR.CA, 0, 2);       // BUG: just mask off
+                uint ea = y << 15;
+                debug_msg("OPU::opcode::rscr", "EA is 0%04o\n", ea);
+                debug_msg("OPU::opcode::jscr", "CA is 0%04o (0%03ox=>0%03o)\n", TPR.CA, (TPR.CA >> 3), TPR.CA & ~7);
+                if ((TPR.CA & ~7) == ea) {
+                    ; // SC mode reg
+                    debug_msg("OPU::opcode::rscr", "mode register selected\n");
+                    debug_msg("OPU::opcode::rscr", "unimplemented\n");
+                    cancel_run(STOP_BUG);
+                    ret = 1;
+                } else if ((TPR.CA & ~7) == ea + 0010) {
+                    ; // SC config reg
+                    debug_msg("OPU::opcode::rscr", "sys config switches unimplemented\n");
+                    cancel_run(STOP_BUG);
+                    ret = 1;
+                } else if ((TPR.CA & ~7) == ea + 0020) {
+                    debug_msg("OPU::opcode::rscr", "port zero selected\n");
+                    scu_get_mask(TPR.CA, 0, &reg_A, &reg_Q);
+                } else if ((TPR.CA & ~7) == ea + 0120)
+                    scu_get_mask(TPR.CA, 1, &reg_A, &reg_Q);
+                else if ((TPR.CA & ~7) == ea + 0220)
+                    scu_get_mask(TPR.CA, 2, &reg_A, &reg_Q);
+                else if ((TPR.CA & ~7) == ea + 0320)
+                    scu_get_mask(TPR.CA, 3, &reg_A, &reg_Q);
+                else if ((TPR.CA & ~7) == ea + 0420)
+                    scu_get_mask(TPR.CA, 4, &reg_A, &reg_Q);
+                else if ((TPR.CA & ~7) == ea + 0520)
+                    scu_get_mask(TPR.CA, 5, &reg_A, &reg_Q);
+                else if ((TPR.CA & ~7) == ea + 0620)
+                    scu_get_mask(TPR.CA, 6, &reg_A, &reg_Q);
+                else if ((TPR.CA & ~7) == ea + 0720) {
+                    scu_get_mask(TPR.CA, 7, &reg_A, &reg_Q);
+                } else if ((TPR.CA & ~7) == ea + 0030) {
+                    // interrupts
+                    debug_msg("OPU::opcode::rscr", "interrupts unimplemented\n");
+                    cancel_run(STOP_BUG);
+                    ret = 1;
+                } else if ((TPR.CA & ~7) == ea + 0040) {
+                    // calendar
+                    debug_msg("OPU::opcode::rscr", "calendar unimplemented\n");
+                    cancel_run(STOP_BUG);
+                    ret = 1;
+                } else if ((TPR.CA & ~7) == ea + 0050) {
+                    // calendar
+                    debug_msg("OPU::opcode::rscr", "calendar unimplemented\n");
+                    cancel_run(STOP_BUG);
+                    ret = 1;
+                } else if ((TPR.CA & ~7) == ea + 0060) {
+                    // store unit mode reg
+                    debug_msg("OPU::opcode::rscr", "store unit mode reg unimplemented\n");
+                    cancel_run(STOP_BUG);
+                    ret = 1;
+                } else if ((TPR.CA & ~7) == ea + 0070) {
+                    debug_msg("OPU::opcode::rscr", "store unit mode reg unimplemented\n");
+                    cancel_run(STOP_BUG);
+                    ret = 1;
+                } else {
+                    debug_msg("OPU::opcode::rscr", "bad argument, CA 0%o\n", TPR.CA);
+                    cancel_run(STOP_BUG);
+                    ret = 1;
+                    // error
+                }
+                debug_msg("OPU::opcode::rscr", "A = %Lo\n", reg_A);
+                debug_msg("OPU::opcode::rscr", "Q = %Lo\n", reg_Q);
                 return ret;
             }
             case opcode0_ldt: { // load timer reg (priv)
@@ -339,9 +486,26 @@ static int do_op(instr_t *ip)
                 }
                 return ret;
             }
+            case opcode0_lxl0:  // Load Index Reg N from lower
+            case opcode0_lxl1:
+            case opcode0_lxl2:
+            case opcode0_lxl3:
+            case opcode0_lxl4:
+            case opcode0_lxl5:
+            case opcode0_lxl6:
+            case opcode0_lxl7: {
+                int n = op & 07;
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0)
+                    reg_X[n] = word & MASK18;
+                IR.zero = reg_X[n] == 0;
+                IR.neg = bit18_is_neg(reg_X[n]);
+                return ret;
+            }
             case opcode0_qlr: {
                 unsigned n = getbits36(TPR.CA, 11, 7);
-                reg_Q = lrotate(reg_Q, n);
+                reg_Q = lrotate36(reg_Q, n);
                 IR.zero = reg_Q == 0;
                 IR.neg = bit36_is_neg(reg_Q);
                 return 0;
@@ -389,7 +553,7 @@ static int do_op(instr_t *ip)
             }
             case opcode0_alr: {
                 unsigned n = getbits36(TPR.CA, 11, 7);
-                reg_A = lrotate(reg_A, n);
+                reg_A = lrotate36(reg_A, n);
                 IR.zero = reg_A == 0;
                 IR.neg = bit36_is_neg(reg_A);
                 return 0;
@@ -433,6 +597,112 @@ static int do_op(instr_t *ip)
                 IR.carry = init_neg != IR.neg;
                 return 0;
             }
+            case opcode0_cmpa: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    int neg1 = bit36_is_neg(reg_A);
+                    int neg2 = bit36_is_neg(word);
+                    if (neg1 == 0 && neg2 == 1) {
+                        IR.zero = 0;
+                        IR.neg = 0;
+                        IR.carry = 0;
+                    } else if (neg1 == neg2) {
+                        if (reg_A > word) {
+                            IR.zero = 0;
+                            IR.neg = 0;
+                            IR.carry = 1;
+                        } else if (reg_A == word) {
+                            IR.zero = 1;
+                            IR.neg = 0;
+                            IR.carry = 1;
+                        } else {
+                            IR.zero = 0;
+                            IR.neg = 1;
+                            IR.carry = 0;
+                        }
+                    } else {
+                        IR.zero = 0;
+                        IR.neg = 1;
+                        IR.carry = 1;
+                    }
+                }
+                return ret;
+            }
+            case opcode0_cmpaq: {
+                t_uint64 word1, word2;
+                int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
+                if (ret == 0) {
+                    int neg1 = bit36_is_neg(reg_A);
+                    int neg2 = bit36_is_neg(word1);
+                    if (neg1 == 0 && neg2 == 1) {
+                        IR.zero = 0;
+                        IR.neg = 0;
+                        IR.carry = 0;
+                    } else if (neg1 == neg2) {
+                        if (reg_A > word1) {
+                            IR.zero = 0;
+                            IR.neg = 0;
+                            IR.carry = 1;
+                        } else if (reg_A == word1) {
+                            if (reg_Q > word2) {
+                                IR.zero = 0;
+                                IR.neg = 0;
+                                IR.zero = 1;
+                            } else if (reg_Q == word2) {
+                                IR.zero = 1;
+                                IR.neg = 0;
+                                IR.zero = 1;
+                            } else {
+                                IR.zero = 0;
+                                IR.neg = 1;
+                                IR.zero = 1;
+                            }
+                        } else {
+                            IR.zero = 0;
+                            IR.neg = 1;
+                            IR.carry = 0;
+                        }
+                    } else {
+                        IR.zero = 0;
+                        IR.neg = 1;
+                        IR.carry = 1;
+                    }
+                }
+                return ret;
+            }
+            case opcode0_cmpq: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    int neg1 = bit36_is_neg(reg_Q);
+                    int neg2 = bit36_is_neg(word);
+                    if (neg1 == 0 && neg2 == 1) {
+                        IR.zero = 0;
+                        IR.neg = 0;
+                        IR.carry = 0;
+                    } else if (neg1 == neg2) {
+                        if (reg_Q > word) {
+                            IR.zero = 0;
+                            IR.neg = 0;
+                            IR.carry = 1;
+                        } else if (reg_Q == word) {
+                            IR.zero = 1;
+                            IR.neg = 0;
+                            IR.carry = 1;
+                        } else {
+                            IR.zero = 0;
+                            IR.neg = 1;
+                            IR.carry = 0;
+                        }
+                    } else {
+                        IR.zero = 0;
+                        IR.neg = 1;
+                        IR.carry = 1;
+                    }
+                }
+                return ret;
+            }
             case opcode0_ora: { // OR to A
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
@@ -443,6 +713,21 @@ static int do_op(instr_t *ip)
                 }
                 return ret;
             }
+            case opcode0_neg:
+                if (reg_A == 0) {
+                    IR.zero = 1;
+                } else {
+                    IR.zero = 0;
+                    reg_A = negate36(reg_A);
+                    IR.neg = bit36_is_neg(reg_A);
+                    IR.overflow = reg_A == ((t_uint64)1<<35);
+                    // BUG: Should we fault?  Maximum negative number can't be negated, but AL39 doesn't say to fault
+                }
+            case opcode0_nop:
+            case opcode0_puls1:
+            case opcode0_puls2:
+                // BUG: certain address forms may generate faults -- so addr_mod should gen faults
+                return 0;
             case opcode0_oraq: {    // OR to AQ
                 t_uint64 word1, word2;
                 int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
@@ -529,9 +814,65 @@ static int do_op(instr_t *ip)
                 }
                 return ret;
             }
-            // case opcode0_adlx6:  // Add logical to X[n]
-            // ldaq:    // Load AQ reg
-            // cana:    // Comparative AND with A reg
+            case opcode0_cana: {    // Comparative AND with A reg
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    word &= reg_A;      // results discarded except for IR bits
+                    IR.zero = word == 0;
+                    IR.neg = bit36_is_neg(word);
+                }
+                return ret;
+            }
+            case opcode0_canq: {    // Comparative AND with Q
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    word &= reg_Q;      // results discarded except for IR bits
+                    IR.zero = word == 0;
+                    IR.neg = bit36_is_neg(word);
+                }
+                return ret;
+            }
+            case opcode0_canx0:     // Comparative AND with Index Register N
+            case opcode0_canx1:
+            case opcode0_canx2:
+            case opcode0_canx3:
+            case opcode0_canx4:
+            case opcode0_canx5:
+            case opcode0_canx6:
+            case opcode0_canx7: {
+                int n = op & 7;
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    word &= reg_X[n];       // results discarded except for IR bits
+                    IR.zero = word == 0;
+                    IR.neg = bit36_is_neg(word);
+                }
+                return ret;
+            }
+            case opcode0_adlx0:     // Add logical to X[n]
+            case opcode0_adlx1:
+            case opcode0_adlx2:
+            case opcode0_adlx3:
+            case opcode0_adlx4:
+            case opcode0_adlx5:
+            case opcode0_adlx6:
+            case opcode0_adlx7: {
+                int n = op & 07;
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    word = getbits36(word, 0, 18) + reg_X[n];
+                    if ((IR.carry = word & MASK18) != 0)
+                        word &= MASK18;
+                    reg_X[n] = word;
+                    IR.zero = reg_X[n] == 0;
+                    IR.neg = bit18_is_neg(word);
+                }
+                return ret;
+            }
             // limr ??
             // ldo ??
             // camp2 ??
@@ -549,6 +890,12 @@ static int do_op(instr_t *ip)
                 PPR.PSR = TPR.TSR;
                 return 0;
             }
+            case opcode0_tze:
+                if (IR.zero) {
+                    PPR.IC = TPR.CA;
+                    PPR.PSR = TPR.TSR;
+                }
+                return 0;
             case opcode0_cams: {    // Clear Associative Memory Segments
                 if (get_addr_mode() != ABSOLUTE_mode) {
                     fault_gen(illproc_fault);
@@ -618,6 +965,10 @@ static int do_op(instr_t *ip)
                     PPR.PSR = TPR.TSR;
                 }
                 return 0;
+            case opcode0_ada:
+                return op_add(ip, &reg_A);
+            case opcode0_adq:
+                return op_add(ip, &reg_Q);
             case opcode0_adx0:  // Add to X[n]
             case opcode0_adx1:
             case opcode0_adx2:
@@ -634,6 +985,23 @@ static int do_op(instr_t *ip)
                 int ret = op_add(ip, &word);
                 if (ret == 0)
                     ret = store_word(TPR.CA, word);
+            }
+            case opcode0_sba: { // Subtract from A
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    word = negate36(word);
+                    ret = add36(reg_A, word, &reg_A);
+                }
+                return ret;
+            }
+            case opcode0_sbaq: {    // Subtract from AQ
+                t_uint64 word1, word2;
+                int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
+                if (ret == 0)
+                    if ((ret = negate72(&word1, &word2)) == 0)
+                        ret = add72(reg_A, reg_Q, &word1, &word2);
+                return ret;
             }
             case opcode0_xed: {
                 // todo: re-implement via setting flags and return to control_unit()
@@ -681,6 +1049,12 @@ static int do_op(instr_t *ip)
         }
     } else {
         switch (op) {
+            case opcode1_ttn:
+                if (IR.tally_runout) {
+                    PPR.IC = TPR.CA;
+                    PPR.PSR = TPR.TSR;
+                }
+                return 0;
             case opcode1_tmoz:
                 if (IR.neg || IR.zero) {
                     PPR.IC = TPR.CA;
@@ -738,26 +1112,35 @@ static int do_op(instr_t *ip)
     return 0;
 }
 
+// ============================================================================
+
+
 static int op_add(instr_t *ip, t_uint64 *dest)
 {
     int ret;
     t_uint64 word;
-    t_uint64 result;
     if ((ret = fetch_op(ip, &word)) != 0)
         return ret;
+    return add36(word, *dest, dest);
+}
+
+// ----------------------------------------------------------------------------
+
+static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
+{
     
-    uint sign1 = word >> 35;
-    uint sign2 = *dest >> 35;
-    result = word + *dest;
+    uint sign1 = a >> 35;
+    uint sign2 = b >> 35;
+    t_uint64 result = a + b;
     uint signr = result >> 35;
     if ((result >> 36) != 0) {
         IR.carry = 1;
-        result &= ~ (~(t_uint64)0 << 36);
+        result &= MASK36;
     } else {
         IR.carry = 0;
     }
     IR.zero = result == 0;
-    IR.neg = ! signr;
+    IR.neg = signr;
     if (sign1 == sign2 && signr != sign1) {
         IR.overflow = 1;
         if (IR.overflow_mask == 0) {
@@ -766,8 +1149,46 @@ static int op_add(instr_t *ip, t_uint64 *dest)
         }
     }
 
+    *dest = result;
     return 0;
 }
+
+// ----------------------------------------------------------------------------
+
+static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2)
+{
+    t_uint64 word1, word2;
+
+    uint sign1 = a >> 35;
+    uint sign2 = *dest1 >> 35;
+
+    t_uint64 lo = b + *dest2;
+    int lo_carry = (lo >> 35);
+    lo &= MASK36;
+
+    t_uint64 hi = a + *dest1;
+    if (lo_carry)
+        ++ hi;
+    IR.carry = (hi >> 36) != 0;
+    if (IR.carry)
+        hi &= MASK36;
+    IR.zero = lo == 0 && hi == 0;
+    int signr = hi >> 35;
+    IR.neg = signr;
+    if (sign1 == sign2 && signr != sign1) {
+        IR.overflow = 1;
+        if (IR.overflow_mask == 0) {
+            fault_gen(overflow_fault);
+            return 1;
+        }
+    }
+
+    *dest1 = hi;
+    *dest2 = lo;
+    return 0;
+}
+
+// ============================================================================
 
 static int op_and(instr_t *ip, t_uint64 *op1, t_uint64 *op2, t_uint64 *dest1, t_uint64 *dest2)
 {
@@ -788,6 +1209,66 @@ static int op_and(instr_t *ip, t_uint64 *op1, t_uint64 *op2, t_uint64 *dest1, t_
 
     IR.zero = (*dest1 == 0) && (dest2 == NULL || *dest2 == 0);
     IR.neg = bit36_is_neg(*dest1);  // dest1 presumed to hold bit zero
+    return 0;
+}
+
+// ============================================================================
+
+static inline t_uint64 lrotate36(t_uint64 x, unsigned n)
+{
+    if (n >= 36)
+        n %= 36;
+    //return ((x << n) & ~(~((t_uint64)0)<<36)) | (x >> (36-n));
+    return ((x << n) & MASK36) | (x >> (36-n));
+}
+
+static inline void lrotate72(t_uint64* ap, t_uint64* bp, unsigned n)
+{
+    if (n >= 72)
+        n %= 72;
+    if (n == 0)
+        return;
+
+    t_uint64 a = *ap;
+    t_uint64 b = *bp;
+    if (n <= 36) {
+        t_uint64 aout = a >> (36 - n);
+        t_uint64 bout = b >> (36 - n);
+        a = ((a << n) & MASK36) | bout;
+        b = ((b << n) & MASK36) | aout;
+    } else {
+        t_uint64 aout_hi = a >> (72 - n);
+        t_uint64 aout_lo = a & ~(~0 << (n - 36));
+        t_uint64 bout_hi = b >> (72 - n);
+        t_uint64 bout_lo = b & ~(~0 << (n - 36));
+        a = (bout_lo << (n - 36)) | aout_hi;
+        b = (aout_lo << (n - 36)) | bout_hi;
+    }
+            
+    *ap = a;
+    *bp = b;
+}
+
+static inline t_int64 negate36(t_uint64 x)
+{
+    // overflow not detected
+    if (bit36_is_neg(x))
+        return ((~x & MASK36) + 1) & MASK36;    // todo: only one mask needed?
+    else
+        return (- x) & MASK36;
+}
+
+static inline int negate72(t_uint64* a, t_uint64* b)
+{
+    // overflow not detected
+    *a = (~ *a) & MASK36;
+    *b = (~ *b) & MASK36;
+    ++ *b;
+    if (*b & MASK36) {
+        *b &= MASK36;
+        ++ *a;
+        *a = *a & MASK36;
+    }
     return 0;
 }
 

@@ -101,7 +101,7 @@ so all active devices will have the same config panel settings.
 Ports must correspond -- port A on every CPU and IOM must either
 be connected tothe same SCU or not connected to any SCU.
 IOMs should be on lower-numbered SCU ports than CPUs.
-Multicsk can have 16MW words of memory.
+Multics can have 16MW words of memory.
 CPUs have 8 ports, a..h.
 SCUs have 8 ports, 0..7.
 
@@ -176,7 +176,7 @@ int scu_set_mask(t_uint64 addr, int port)
     for (pima = 0; pima < 4; ++pima) {
         if (scu.mask_assign[pima] & (1 << cpu_no)) {
             found = 1;
-            scu.masks[port] = reg_Q;
+            scu.masks[port] = reg_Q;    // BUG: wrong; see AN87
             // todo: if only one interrput per cpu, we could break here
         }
     }
@@ -185,5 +185,44 @@ int scu_set_mask(t_uint64 addr, int port)
         fault_gen(store_fault);
         return 1;
     }
+    return 0;
+}
+
+int scu_get_mask(t_uint64 addr, int port)
+{
+    // BUG: addr should determine which SCU is selected
+    // Implements part of the sscr instruction
+
+    if (port < 0 || port > 7) {
+        complain_msg("SCU", "Port %d from sscr is out of range 0..7\n", port);
+        cancel_run(STOP_BUG);
+        return 1;
+    }
+
+    int cpu_no = cpu_ports.scu_port;    // port-no that rscr instr came in on
+    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+
+#if 1
+    // Verify that HW could have received signal
+    if (cpu_port < 0) {
+        complain_msg("SCU", "Port %d is disabled\n", cpu_no);
+        cancel_run(STOP_WARN);
+        return 0;
+    }
+    if (cpu_port > 7) {
+        complain_msg("SCU", "Port %d is not enabled (%d).\n", cpu_no, cpu_port);
+        cancel_run(STOP_WARN);
+        return 0;
+    }
+    if (cpu_ports.ports[cpu_port] != cpu_no) {
+        complain_msg("SCU", "Port %d on CPU is not connected to port %d of SCU.\n", cpu_port, cpu_no);
+        cancel_run(STOP_WARN);
+        return 0;
+    }
+#endif
+
+    // BUG: reg_AQ = ... masks[port];
+    debug_msg("SCU", "get mask unimplmented\n", cpu_no);
+    cancel_run(STOP_BUG);
     return 0;
 }
