@@ -8,10 +8,13 @@
 
 //=============================================================================
 
-static uint32 sign18(t_uint64 x)
+static int32 sign18(t_uint64 x)
 {
-    if (bit18_is_neg(x))
-        return - ((1<<18) - x);
+    if (bit18_is_neg(x)) {
+        int32 r = - ((1<<18) - (x&MASK18));
+        debug_msg("APU::sign18", "0%Lo => 0%o (%+d decimal)\n", x, r, r);
+        return r;
+    }
     else
         return x;
 }
@@ -176,24 +179,35 @@ int addr_mod(instr_t *ip)
                 case 016:
                 case 017:
                     TPR.CA = off + sign18(reg_X[td&07]);
+                    // if (td&7 == 5)
+                        debug_msg("APU", "Tm=%u,Td=%02u: offset 0%o + X[%d]=0%Lo(%+Ld decimal)==>0%o(+%Ld) yields 0%Lo (%+Ld decimal)\n",
+                            tm, td, off, td&7, reg_X[td&7], reg_X[td&7], sign18(reg_X[td&7]), sign18(reg_X[td&7]), TPR.CA, TPR.CA);
                     break;
             }
             break;
         }
         case 1: {   // register then indirect (ri)
-            complain_msg("APU", "this addr mod not implemented.\n");
+            complain_msg("APU", "RI addr mod not implemented.\n");
             cancel_run(STOP_BUG);
-            break;
+            return 1;
         }
         case 2: {   // indirect then tally (it)
-            complain_msg("APU", "this addr mod not implemented.\n");
-            cancel_run(STOP_BUG);
+            switch(td) {
+                case 0:
+                    debug_msg("APU", "IT with Td zero not valid in instr word.\n");
+                    fault_gen(f1_fault);    // This mode not ok in instr word
+                    break;
+                default:
+                    complain_msg("APU", "IT with Td %d not implmented.\n", td);
+                    cancel_run(STOP_BUG);
+                    return 1;
+            }
             break;
         }
         case 3: {   // indirect then register (ir)
-            complain_msg("APU", "this addr mod not implemented.\n");
+            complain_msg("APU", "IR addr mod not implemented.\n");
             cancel_run(STOP_BUG);
-            break;
+            return 1;
         }
     }
 

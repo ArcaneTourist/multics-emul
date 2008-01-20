@@ -1,6 +1,8 @@
 /*
     scu.c -- System Controller
     
+    See AN70, section 8.
+
     The term SCU is used throughout this code to match AL39, but the
     device emulated is closer to a Level 68 System Controller (SC) than
     to a Series 60 Level 66 Controller (SC).  The emulated device may
@@ -133,96 +135,209 @@ config panel -- Level 68 System Controller UNIT (4MW SCU)
 // ============================================================================
 
 #include "hw6180.h"
+#include <sys/time.h>
 
 extern cpu_ports_t cpu_ports;
 extern scu_t scu;   // BUG: we'll need more than one for max memory.  Unless we can abstract past the physical HW's capabilities
+
+#if 0
+void scu_dump()
+{
+    int pima;
+    for (pima = 0; pima < 4; ++pima)
+        debug_msg("SCU", "PIMA %d: mask assign = 0%o\n", pima, scu.mask_assign[pima]);
+}
+#endif
+
+static int scu_hw_arg_check(const char *tag, t_uint64 addr, int port) {
+    // Sanity check args
+    // Verify that HW could have received signal
+
+    if (port < 0 || port > 7) {
+        complain_msg("SCU", "%s: Port %d from sscr is out of range 0..7\n", tag, port);
+        cancel_run(STOP_BUG);
+        return 1;
+    }
+
+#if 0
+    return 0;
+#else
+    // Verify that HW could have received signal
+    int cpu_no = cpu_ports.scu_port;    // port-no that rscr instr came in on
+    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+
+    // Verify that HW could have received signal
+    if (cpu_port < 0) {
+        complain_msg("SCU", "Port %d is disabled\n", cpu_no);
+        cancel_run(STOP_WARN);
+        return 1;
+    }
+    if (cpu_port > 7) {
+        complain_msg("SCU", "Port %d is not enabled (%d).\n", cpu_no, cpu_port);
+        cancel_run(STOP_WARN);
+        return 1;
+    }
+    if (cpu_ports.ports[cpu_port] != cpu_no) {
+        complain_msg("SCU", "Port %d on CPU is not connected to port %d of SCU.\n", cpu_port, cpu_no);
+        cancel_run(STOP_WARN);
+        return 1;
+    }
+    return 0;
+#endif
+}
+
 
 int scu_set_mask(t_uint64 addr, int port)
 {
     // BUG: addr should determine which SCU is selected
     // Implements part of the sscr instruction
 
-    if (port < 0 || port > 7) {
-        complain_msg("SCU", "Port %d from sscr is out of range 0..7\n", port);
-        cancel_run(STOP_BUG);
+    if (scu_hw_arg_check("setmask", addr, port) != 0)
         return 1;
-    }
-
-    int cpu_no = cpu_ports.scu_port;    // port-no that rscr instr came in on
+    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
-
-#if 1
-    // Verify that HW could have received signal
-    if (cpu_port < 0) {
-        complain_msg("SCU", "Port %d is disabled\n", cpu_no);
-        cancel_run(STOP_WARN);
-        return 0;
-    }
-    if (cpu_port > 7) {
-        complain_msg("SCU", "Port %d is not enabled (%d).\n", cpu_no, cpu_port);
-        cancel_run(STOP_WARN);
-        return 0;
-    }
-    if (cpu_ports.ports[cpu_port] != cpu_no) {
-        complain_msg("SCU", "Port %d on CPU is not connected to port %d of SCU.\n", cpu_port, cpu_no);
-        cancel_run(STOP_WARN);
-        return 0;
-    }
-#endif
 
     // find mask reg assigned to processer
     int pima;
     int found = 0;
+    int err = 0;
     for (pima = 0; pima < 4; ++pima) {
+        // todo: if only one pima per cpu, follwing can be simplified
         if (scu.mask_assign[pima] & (1 << cpu_no)) {
-            found = 1;
-            scu.masks[port] = reg_Q;    // BUG: wrong; see AN87
-            // todo: if only one interrput per cpu, we could break here
+            ++found;
+            // AN87, 2-6
+            // we use the 32 low bits 
+            int maskno = -1;
+            int i;
+            for (i = 0; i < 4; ++i) {
+                // Find PIMA(s) assigned to requested port
+                if (scu.mask_assign[i] & (1 << port)) {
+                    maskno = i;
+                    t_uint64 old = scu.masks[maskno];
+                    scu.masks[maskno] = (getbits36(reg_A, 0, 16) << 16) | getbits36(reg_Q, 0, 16);
+                    warn_msg("SCU", "PIMA %d has CPU %d assigned; Mask[%d] was 0%o, now 0%o\n",
+                        pima, cpu_no, maskno, old, scu.masks[maskno]);
+                    cancel_run(STOP_IBKPT);
+                }
+            }
+            if (maskno == -1) {
+                // OTOH, see bootload_tape_label.alm -- SSCR will do nothing for unassigned masks
+                debug_msg("SCU", "PIMA %d has CPU %d assigned, but no PIMA has port %d assigned\n",
+                    pima, cpu_no, port);
+                err = 1;
+            }
         }
     }
     if (!found) {
-        debug_msg("SCU", "No masks assgined to cpu on port %d\n", cpu_no);
+        warn_msg("SCU", "No masks assigned to cpu on port %d\n", cpu_no);
         fault_gen(store_fault);
+        return 1;
+    } else
+        if (found > 1)
+            warn_msg("SCU", "Multiple masks assigned to cpu on port %d\n", cpu_no);
+    if (err) {
         return 1;
     }
     return 0;
 }
+
+
+int scu_set_cpu_mask(t_uint64 addr)
+{
+    // BUG: addr should determine which SCU is selected
+
+    if (scu_hw_arg_check("smcm", addr, 0) != 0)
+        return 1;
+    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
+    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+
+    return scu_set_mask(addr, cpu_no);  // BUG: is this right?
+    cancel_run(STOP_IBKPT);
+    return 1;
+}
+
 
 int scu_get_mask(t_uint64 addr, int port)
 {
     // BUG: addr should determine which SCU is selected
     // Implements part of the sscr instruction
 
-    if (port < 0 || port > 7) {
-        complain_msg("SCU", "Port %d from sscr is out of range 0..7\n", port);
-        cancel_run(STOP_BUG);
+    if (scu_hw_arg_check("getmask", addr, port) != 0)
         return 1;
-    }
-
-    int cpu_no = cpu_ports.scu_port;    // port-no that rscr instr came in on
+    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
-#if 1
-    // Verify that HW could have received signal
-    if (cpu_port < 0) {
-        complain_msg("SCU", "Port %d is disabled\n", cpu_no);
-        cancel_run(STOP_WARN);
-        return 0;
-    }
-    if (cpu_port > 7) {
-        complain_msg("SCU", "Port %d is not enabled (%d).\n", cpu_no, cpu_port);
-        cancel_run(STOP_WARN);
-        return 0;
-    }
-    if (cpu_ports.ports[cpu_port] != cpu_no) {
-        complain_msg("SCU", "Port %d on CPU is not connected to port %d of SCU.\n", cpu_port, cpu_no);
-        cancel_run(STOP_WARN);
-        return 0;
-    }
-#endif
+    // Upper 16 bits of each register gets half of the flags
+    reg_A = (scu.masks[port] >> 16) << 20;
+    reg_Q = (scu.masks[port] & MASKBITS(16)) << 20;
+    return 0;
+}
 
-    // BUG: reg_AQ = ... masks[port];
-    debug_msg("SCU", "get mask unimplmented\n", cpu_no);
+
+int scr_get_calendar(t_uint64 addr)
+{
+    // BUG: addr should determine which SCU is selected
+
+    if (scu_hw_arg_check("getmask", addr, 0) != 0)
+        return 1;
+    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
+    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+
+    // 52 bit clock
+    // microseconds since 0000 GMT, Jan 1, 1901 // not 1900 which was a per century exception to leap years
+
+    // sim_os_msec() gives elapsed time in microseconds; But does it return an OS agnositic value?
+
+    // gettimeofday() is POSIX complient
+    struct timeval tv;
+    struct timezone tz;
+    if (gettimeofday(&tv, &tz) != 0) {
+        complain_msg("SCU::getcal", "Error from OS gettimeofday\n");
+        reg_A = 0;
+        reg_Q = 0;
+        return 1;
+    }
+    // returned time is since epoch of 00:00:00 UTC, Jan 1, 1970
+    t_uint64 seconds = tv.tv_sec;
+    seconds += (t_uint64) 69 * 365 * 24 * 3600;
+    t_uint64 now = seconds * 1000 + tv.tv_usec;
+    reg_Q = now & MASK36;
+    reg_A = (now >> 36) & MASK36;
+
+    return 0;
+}
+
+
+int scu_cioc(t_uint64 addr)
+{
+    // BUG: addr should determine which SCU is selected
+
+    if (scu_hw_arg_check("cioc", addr, 0) != 0)
+        return 1;
+    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
+    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+
+    t_uint64 word;
+    int ret;
+    if ((ret = fetch_word(TPR.CA, &word)) != 0) {
+        cancel_run(STOP_BUG);
+        return ret;
+    }
+    int port = word & 7;
+    debug_msg("SCU::cioc", "Contents of %Lo are: %Lo => port %d\n", addr, word, port);
+    // OK ... what's a connect signal (as opposed to an interrupt?
+    // A connect signal does the following (AN70, 8-7):
+    //  IOM target: connect strobe to IOM
+    //  CPU target: connect fault
+    
+    // todo: check if enabled & not masked
+    warn_msg("SCU::cioc", "Partially implemented: Connect sent to port %d => %d\n", port, scu.ports[port]);
+
+    // we only have one IOM, so signal it
+    // todo: sanity check port connections
+    iom_interrupt();
+
     cancel_run(STOP_BUG);
     return 0;
 }
+

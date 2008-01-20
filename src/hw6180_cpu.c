@@ -60,7 +60,8 @@ t_uint64 reg_Q; // Quotient, 36 bits
 // Note: AQ register is just a combination of the A and Q registers
 t_uint64 reg_E; // Exponent
 // Note: EAQ register is just a combination of the E, A, and Q registers
-t_uint64 reg_X[8];  // Index Registers, 18 bits
+//t_uint64 reg_X[8];    // Index Registers, 18 bits
+uint32 reg_X[8];    // Index Registers, 18 bits; SIMH expects data type to be no larger than needed
 IR_t IR;        // Indicator register
 static t_uint64 saved_IR;
 // static int32 IC; // APU (appending unit) Instruction Counter, 18 bits -- see PPR.IC !!!
@@ -92,7 +93,12 @@ PTWAM_t PTWAM[16];  // Page Table Word Associative Memory, 51 bits
 REG cpu_reg[] = {
     // name="PC", loc=PC, radix=<8>, width=36, offset=<0>, depth=<1>, flags=, qptr=
     { ORDATA (IC, saved_IC, 18) },
-    { ORDATA (IR, saved_IR, 14) },
+    { ORDATA (IR, saved_IR, 14), REG_RO },
+    { ORDATA (A, reg_A, 36) },
+    { ORDATA (Q, reg_Q, 36) },
+    { ORDATA (E, reg_E, 36) },
+    { BRDATA (X, reg_X, 8, 18, 8) },
+    { ORDATA (TR, reg_TR, 27), REG_RO },
     { NULL }
 };
 
@@ -415,6 +421,7 @@ t_stat sim_instr(void)
     
     if (! bootimage_loaded) {
         // We probably should not do this
+        // See AL70, section 8
         complain_msg("MAIN", "Memory is empty, no bootimage loaded yet\n");
         // return STOP_MEMCLEAR;
     }
@@ -449,7 +456,7 @@ ninstr = 0;
                 debug_msg("MAIN::clock", "TR is running with %d time units left.\n", t);
         }
 printf("\n\r"); fflush(stdout);
-debug_msg("MAIN", "IC: %u, CYCLE: %u, SIM INTERVAL: %d, TR: %d\n", PPR.IC, ncycles, sim_interval, t);
+debug_msg("MAIN", "IC: %o, CYCLE: %u, SIM INTERVAL: %d, TR: %d\n", PPR.IC, ncycles, sim_interval, t);
         reason = control_unit();
         ++ ncycles;
         sim_interval--; // todo: maybe only per instr or by brkpoint type?
@@ -468,6 +475,19 @@ debug_msg("MAIN", "IC: %u, CYCLE: %u, SIM INTERVAL: %d, TR: %d\n", PPR.IC, ncycl
 
     // BUG: pack private variables into SIMH's world
     saved_IC = PPR.IC;
+    saved_IR =
+        (IR.zero << 18) |
+        (IR.neg << 19) |
+        (IR.carry << 20) |
+        (IR.overflow << 21) |
+        (IR.overflow_mask << 24) |
+        (IR.tally_runout << 25) |
+        (IR.not_bar_mode << 28) |
+        (IR.mid_instr_intr_fault << 30) |
+        (IR.abs_mode << 31) |
+        ((t_uint64) IR.hex_mode << 32);
+    saved_IR >>= 18;    // chop down to lower 14 bits
+        
     return reason;
 }
 
@@ -852,12 +872,31 @@ int fetch_word(uint addr, t_uint64 *wordp)
     // todo: efficiency: combine into a single min/max with sub-tests
     if (addr >= IOM_MBX_LOW && addr < IOM_MBX_LOW + IOM_MBX_LEN) {
         debug_msg("CU::fetch", "Fetch from IOM mailbox area for addr 0%o\n", addr);
-        cancel_run(STOP_WARN);
+        //cancel_run(STOP_WARN);
     }
     if (addr >= DN355_MBX_LOW && addr < DN355_MBX_LOW + DN355_MBX_LEN) {
         debug_msg("CU::fetch", "Fetch from DN355 mailbox area for addr 0%o\n", addr);
-        cancel_run(STOP_WARN);
+        //cancel_run(STOP_WARN);
     }
+#define CONFIG_DECK_LOW 012000
+#define CONFIG_DECK_LEN 010000
+    if (addr >= CONFIG_DECK_LOW && addr < CONFIG_DECK_LOW + CONFIG_DECK_LEN) {
+        debug_msg("CU::fetch", "Fetch from CONFIG DECK area for addr 0%o\n", addr);
+        //cancel_run(STOP_WARN);
+    }
+    if (addr <= 030) {
+        debug_msg("CU::fetch", "Fetch from 0..030 for addr 0%o\n", addr);
+    }
+
+    if (addr >= ARRAY_SIZE(M)) {
+            complain_msg("CU::fetch", "Addr 0%o (%d decimal) is too large\n");
+            (void) cancel_run(STOP_BUG);
+            return 0;
+    }
+
+    if (sim_brk_summ)
+        if (sim_brk_test (addr, SWMASK ('M')))
+            (void) cancel_run(STOP_IBKPT);
 
     *wordp = M[addr];
     return 0;
@@ -871,12 +910,27 @@ int store_word(uint addr, t_uint64 word)
     // todo: efficiency: combine into a single min/max with sub-tests
     if (addr >= IOM_MBX_LOW && addr < IOM_MBX_LOW + IOM_MBX_LEN) {
         debug_msg("CU::store", "Store to IOM mailbox area for addr 0%o\n", addr);
-        cancel_run(STOP_WARN);
+        //cancel_run(STOP_WARN);
     }
     if (addr >= DN355_MBX_LOW && addr < DN355_MBX_LOW + DN355_MBX_LEN) {
-        debug_msg("CU::fetch", "Fetch from DN355 mailbox area for addr 0%o\n", addr);
-        cancel_run(STOP_WARN);
+        debug_msg("CU::store", "Store to DN355 mailbox area for addr 0%o\n", addr);
+        //cancel_run(STOP_WARN);
     }
+    if (addr >= CONFIG_DECK_LOW && addr < CONFIG_DECK_LOW + CONFIG_DECK_LEN) {
+        debug_msg("CU::store", "Store to CONFIG DECK area for addr 0%o\n", addr);
+        //cancel_run(STOP_WARN);
+    }
+    if (addr <= 030) {
+        //debug_msg("CU::fetch", "Fetch from 0..030 for addr 0%o\n", addr);
+    }
+    if (addr >= ARRAY_SIZE(M)) {
+            complain_msg("CU::fetch", "Addr 0%o (%d decimal) is too large\n");
+            (void) cancel_run(STOP_BUG);
+            return 0;
+    }
+    if (sim_brk_summ)
+        if (sim_brk_test (addr, SWMASK ('M')))
+            (void) cancel_run(STOP_IBKPT);
 
     M[addr] = word;
     return 0;

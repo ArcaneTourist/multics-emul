@@ -5,6 +5,7 @@
 
 #include "hw6180.h"
 #include "bits.h"
+DEVICE cpu_dev; // hack
 
 void anal36 (const char* tag, t_uint64 word);
 char *bin(t_uint64 word, int n);
@@ -218,17 +219,21 @@ int doit()
 //=============================================================================
 
 
+#define force030 1
+
 void tape_block(unsigned char *p, uint32 len)
 {
-    static size_t hack = 0;
-    // static size_t hack = 030;
+    size_t hack = 0;
     bitstream_t *bp = bitstm_new(p, len);
     if ((len * 8) % 36 != 0) {
         complain_msg("CPU::boot", "Length %u bytes is not a multiple of 36 bits.\n");
     }
     printf("=============================================================\n");
     printf("Tape block: %u bytes, %u 36-bit words\n", len, len*8/36);
-    hack = 0;   // per block
+    if (force030)
+        hack = 030;
+    else
+        hack = 0;   // per block
     uint32 nbits = len * 8;
     while (nbits >= 36) {
         t_uint64 word;

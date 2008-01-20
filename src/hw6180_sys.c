@@ -1,5 +1,7 @@
 #include "hw6180.h"
 
+extern uint32 sim_brk_types, sim_brk_dflt, sim_brk_summ; /* breakpoint info */
+
 extern DEVICE cpu_dev;
 extern DEVICE dsk_dev;
 extern UNIT cpu_unit;
@@ -90,32 +92,157 @@ t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
     abort();
 }
 
+static void init_memory_iox(void);
+static void init_memory_iom(void);
 
 static void hw6180_init(void)
 {
+    cpu_dev.dctrl = 1;  // todo: don't default debug to on
     debug_msg("SYS::init", "Once-only initialization running.\n");
-    // todo: sim_brk_types = ...
-    // todo: sim_brk_dflt = ...
+    sim_brk_types = SWMASK('E') | SWMASK('M');  // M memory (absolute address)
+    sim_brk_dflt = SWMASK('E');
+
+    init_memory_iom();      // IOX includes unknown instr ldo
 
     // Hardware config -- should be based on config cards!
+    // BUG: need to write config deck at 012000
 
-    // CPU port 'a' connected to SCU port '7'
-    memset(&cpu_ports, 0, sizeof(cpu_ports));
-    cpu_ports.scu_port = 7; // arbitrary
-    cpu_ports.ports[0] = cpu_ports.scu_port;
-
+    // CPU switches
     memset(&switches, 0, sizeof(switches));
     // multics uses same vector for interrupts & faults?
     // OTOH, AN87, 1-41 claims faults are at 100o ((flt_base=1)<<5)
     switches.FLT_BASE = 0;  // multics uses same vector for interrupts & faults?
 
-    // Only one SCU, connected as described above
+    // CPU port 'b' connected to SCU port '7' -- arbitrary
+    memset(&cpu_ports, 0, sizeof(cpu_ports));
+    for (int i = 0; i < ARRAY_SIZE(cpu_ports.ports); ++i)
+        cpu_ports.ports[i] = -1;
+    cpu_ports.scu_port = 7;
+    cpu_ports.ports[1] = cpu_ports.scu_port;
+
+    // Only one SCU
     memset(&scu, 0, sizeof(scu));
-    scu.ports[cpu_ports.scu_port] = 0;  // port '7' connected to CPU port 'a'
+    for (int i = 0; i < ARRAY_SIZE(scu.ports); ++i)
+        scu.ports[i] = -1;
+    scu.ports[cpu_ports.scu_port] = 1;  // SCU port '7' connected to CPU port 'b'
     
     // GB61, page 9-1
     scu.mask_assign[0] = 1 << cpu_ports.scu_port;
+
+    // SCU port 0 connected to IOM port 0
+    scu.ports[0] = 0;   // port '7' connected to CPU port 'b'
 }
+
+static void init_memory_iom()
+{
+    // All values from bootload_tape_label.alm
+    // BUG: This is for an IOM.  Do we want an IOM or an IOX?
+    // The presence of a 0 in the top six bits of word 0 denote an IOM boot from an IOX boot
+
+// " The channel number ("Chan#") is set by the switches on the IOM to be the
+// " channel for the tape subsystem holding the bootload tape. The drive number
+// " for the bootload tape is set by switches on the tape MPC itself.
+
+int chan = 036;     // 12 bits; // BUG: unknown; controller channel; max=40?
+    int port = 0;       // 3 bits;  // SCU port # to which bootload IOM is attached (deduced)
+
+#if 0
+    int base = 012;     // 12 bits; IOM base; must be 0012 for Multics
+    // bootload_tape_label.alm comments wrong?
+int pi_base = 03613;    // 15 bits; BUG: unknown; an87 implies 1200
+#else
+    int base = 014;     // 12 bits; IOM base; must be 0012 for Multics; mailboxes at 1400...
+    int pi_base = 1200; // 15 bits; BUG: unknown; an87 implies 1200; interrupt cells would be 1200...
+#endif
+    int iom = 0;        // 3 bits; only IOM 0 would use vector 030
+
+    t_uint64 cmd = 5;       // 6 bits; 05 for tape, 01 for cards
+int dev = 045;      // 6 bits: BUG: unknown; maybe drive number
+
+t_uint64 imu = 1;       // 1 bit; BUG: unknown
+
+    // arbitrary -- zero first 4K words
+    //for (int i = 0; i < 4096; ++i)
+    //  M[i] = 0;
+#define MAXMEMSIZE (16*1024*1024)   /* BUG */
+    memset(M, 0, MAXMEMSIZE*sizeof(M[0]));
+
+    M[0] = 0720201;                 // Bootload channel PCW, word 1 (this is an 18 bit value)
+    //  3/0, 12/Chan#, 24/0, 3/Port#
+    M[1] = (chan << 21) | port;     // Bootload channel PCW, word 2
+    // 12/Base, 6/0, 15/PIbase, 3/IOM#
+    M[2] = (base << 24) | (pi_base << 3) | iom; // Info used by bootloaded pgm
+    M[3] = (cmd << 30) | (dev << 24) | 0700000;     // Bootload IDCW
+    M[4] = 030 << 18;               // Second IDCW: IOTD to loc 30 (startup fault vector)
+
+    // t_uint64 dis0 = (opcode0_dis << 18);
+    t_uint64 dis0 = 0616200;
+    M[010 + 2 * iom] = (imu << 34) | dis0;          // system fault vector; DIS 0 instruction
+    M[030 + 2 * iom] = dis0;                        // terminate interrupt vector (overwritten by bootload)
+
+    // IOM Mailbox, at Base*6
+    int mbx = base * 64;
+    M[mbx+07] = (base << 24) | (02 << 18) | 02;     // Fault channel DCW
+    debug_msg("SYS", "IOM MBX @%0o: %0Lo\n", mbx+7, M[mbx+7]);
+    M[mbx+10] = 04000;                              // Connect channel LPW -> PCW at 000000
+
+    // Channel mailbox, at Base*64 + 4*Chan#
+    mbx = (base * 64) + 4 * chan;
+    M[mbx+0] = (3<<18) | (2<<16) | 3;                   //  Boot dev LPW -> IDCW @ 000003
+    debug_msg("SYS", "Channel MBX @%0o: %0Lo\n", mbx, M[mbx]);
+    M[mbx+2] = (base <<24);                         //  Boot dev SCW -> IOM mailbox
+    
+// BUG: unknown constants used
+}
+
+static void init_memory_iox()
+{
+    // All values from bootload_tape_label.alm
+    // This is for an IOX
+
+// " The channel number ("Chan#") is set by the switches on the IOM to be the
+// " channel for the tape subsystem holding the bootload tape. The drive number
+// " for the bootload tape is set by switches on the tape MPC itself.
+
+    int cmd = 5;        // 6 bits; 05 for tape, 01 for cards
+    int dev = -1;           // 6 bits
+
+    int iox_offset = -1;    // 12 bits
+
+    //int chan = -1;        // 12 bits;
+    //int port = -1;        // 3 bits; 
+
+    //int base = 012;       // 12 bits; IOM base; must be 0012 for Multics
+    //int pi_base = -1; // 15 bits
+    //int iom = 0;      // 3 bits; only IOM 0 would use vector 030
+
+
+    int imu = -1;       // 1 bit
+
+    // arbitrary -- zero first 4K words
+    for (int i = 0; i < 4096; ++i)
+        M[i] = 0;
+
+    //  6/Command, 6/Device#, 6/0, 18/700000
+    M[0] = (cmd << 30) | (dev << 24) | 0700000; // Bootload IDCW
+    M[1] = 030 << 18;                           // Second IDCW: IOTD to loc 30 (startup fault vector)
+    // 24/7000000,12/IOXoffset
+    M[3] = (07000000 << 12) | iox_offset;       // A register value for connect
+
+    M[010] = (1<<18) | 0612000;                 // System fault vector; a HALT instruction
+    M[030] = (010<<18) | 0612000;               // Terminate interrupt vector (overwritten by bootload)
+
+    // IOM Mailbox
+    M[001400] = 0;      // base addr 0
+    M[001401] = 0;      // base addr 1
+    M[001402] = 0;      // base addr 2
+    M[001403] = 0;      // base addr 3
+    M[001404] = (0777777<<18);  // bound 0, bound 1
+    M[001405] = 0;              // bound 2, bound 3
+    M[001406] = 03034;          // channel link word
+    M[001407] = (0400 << 27) | 0400;    // lpw
+}
+
 
 extern t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
 {
@@ -127,7 +254,7 @@ extern t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int3
     abort();
 }
 
-activate_timer()
+int activate_timer()
 {
     uint32 t;
     debug_msg("SYS::clock", "TR is %Ld 0%Lo.\n", reg_TR, reg_TR);
@@ -137,7 +264,7 @@ activate_timer()
         else
             debug_msg("SYS::clock", "TR loaded with negative value, but it was alread stopped.\n", t);
         sim_cancel(&TR_clk_unit);
-        return;
+        return 0;
     }
     if ((t = sim_is_active(&TR_clk_unit)) != 0) {
         debug_msg("SYS::clock", "TR was still running with %d time units left.\n", t);
@@ -150,6 +277,7 @@ activate_timer()
         debug_msg("SYS::clock", "TR is not running\n", t);
     else
         debug_msg("SYS::clock", "TR is now running with %d time units left.\n", t);
+    return 0;
 }
 
 

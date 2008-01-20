@@ -4,9 +4,6 @@
 
 // ============================================================================
 
-const t_uint64 MASK36 = ~(~((t_uint64)0)<<36);  // lower 36 bits all ones
-const t_uint64 MASK18 = ~(~((t_uint64)0)<<18);  // lower 18 bits all ones
-
 static inline t_uint64 lrotate36(t_uint64 x, unsigned n);
 static inline void lrotate72(t_uint64* ap, t_uint64* bp, unsigned n);
 static inline t_int64 negate36(t_uint64 x);
@@ -16,7 +13,10 @@ static int do_op(instr_t *ip);
 static int op_add(instr_t *ip, t_uint64 *operand);
 static int op_and(instr_t *ip, t_uint64 *op, t_uint64 *op2, t_uint64 *dest1, t_uint64 *dest2);
 static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest);
+static int add18(t_uint64 a, t_uint64 b, t_uint64 *dest);
 static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2);
+static int32 sign18(t_uint64 x);
+
 
 // ============================================================================
 
@@ -60,7 +60,7 @@ static int do_op(instr_t *ip)
         int x = ip->offset;
         if (bit18_is_neg(x))
             x = - ((1<<18) - x);
-        debug_msg("OPU", "Opcode 0%0o(%d) -- %s, offset 0%06o(%+d), inhibit %u, pr %u, tag 0%03o(Tm=%u,Td=%02u)\n",
+        debug_msg("OPU", "Opcode 0%0o(%d) -- %s, offset 0%06o(%+d), inhibit %u, pr %u, tag 0%03o(Tm=%u,Td=0%02o)\n",
             op, bit27, opname, 
             ip->offset, x, 
             ip->inhibit, ip->pr_bit, ip->tag, ip->tag >> 4, ip->tag & 017);
@@ -284,6 +284,22 @@ static int do_op(instr_t *ip)
                 }
                 return ret;
             }
+            case opcode0_cioc: { // priv
+                // Connect I/O channel
+                debug_msg("OPU", "CIOC\n");
+                if (get_addr_mode() != ABSOLUTE_mode) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                return scu_cioc(TPR.CA);
+            }
+            case opcode0_smcm: { // priv
+                if (get_addr_mode() != ABSOLUTE_mode) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                return scu_set_cpu_mask(TPR.CA);
+            }
             case opcode0_sscr: { // priv
                 // set system controller register (to value in AQ)
                 if (get_addr_mode() != ABSOLUTE_mode) {
@@ -293,10 +309,11 @@ static int do_op(instr_t *ip)
                 debug_msg("OPU::opcode::sscr", "A = %Lo\n", reg_A);
                 debug_msg("OPU::opcode::sscr", "Q = %Lo\n", reg_Q);
                 int ret = 0;
-                uint y = getbits36(TPR.CA, 0, 2);       // BUG: just mask off
+                // uint y = getbits36(TPR.CA, 0, 2);        // BUG: CA is 18 bits, not 36
+                uint y = (TPR.CA >> 16) & 3;    // 18bit CA
                 uint ea = y << 15;
                 debug_msg("OPU::opcode::sscr", "EA is 0%04o\n", ea);
-                debug_msg("OPU::opcode::sscr", "CA is 0%04o (0%03ox=>0%03o)\n", TPR.CA, (TPR.CA >> 3), TPR.CA & ~7);
+                debug_msg("OPU::opcode::sscr", "CA is 0%04Lo (0%03Lo=>0%03Lo)\n", TPR.CA, (TPR.CA >> 3), TPR.CA & ~7);
                 if ((TPR.CA & ~7) == ea) {
                     ; // SC mode reg
                     debug_msg("OPU::opcode::sscr", "mode register selected\n");
@@ -310,22 +327,22 @@ static int do_op(instr_t *ip)
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0020) {
                     debug_msg("OPU::opcode::sscr", "port zero selected\n");
-                    scu_set_mask(TPR.CA, 0);
+                    ret = scu_set_mask(TPR.CA, 0);
                 } else if ((TPR.CA & ~7) == ea + 0120)
-                    scu_set_mask(TPR.CA, 1);
+                    ret = scu_set_mask(TPR.CA, 1);
                 else if ((TPR.CA & ~7) == ea + 0220)
-                    scu_set_mask(TPR.CA, 2);
+                    ret = scu_set_mask(TPR.CA, 2);
                 else if ((TPR.CA & ~7) == ea + 0320)
-                    scu_set_mask(TPR.CA, 3);
+                    ret = scu_set_mask(TPR.CA, 3);
                 else if ((TPR.CA & ~7) == ea + 0420)
-                    scu_set_mask(TPR.CA, 4);
+                    ret = scu_set_mask(TPR.CA, 4);
                 else if ((TPR.CA & ~7) == ea + 0520)
-                    scu_set_mask(TPR.CA, 5);
+                    ret = scu_set_mask(TPR.CA, 5);
                 else if ((TPR.CA & ~7) == ea + 0620)
-                    scu_set_mask(TPR.CA, 6);
+                    ret = scu_set_mask(TPR.CA, 6);
                 else if ((TPR.CA & ~7) == ea + 0720) {
                     debug_msg("OPU::opcode::sscr", "port seven selected\n");
-                    scu_set_mask(TPR.CA, 7);
+                    ret = scu_set_mask(TPR.CA, 7);
                 } else if ((TPR.CA & ~7) == ea + 0030) {
                     // interrupts
                     debug_msg("OPU::opcode::sscr", "unimplemented\n");
@@ -365,10 +382,12 @@ static int do_op(instr_t *ip)
                     return 1;
                 }
                 int ret = 0;
-                uint y = getbits36(TPR.CA, 0, 2);       // BUG: just mask off
+                // uint y = getbits36(TPR.CA, 0, 2);        // BUG: CA is 18 bits, not 36
+                uint y = (TPR.CA >> 16) & 3;    // 18bit CA
                 uint ea = y << 15;
                 debug_msg("OPU::opcode::rscr", "EA is 0%04o\n", ea);
-                debug_msg("OPU::opcode::jscr", "CA is 0%04o (0%03ox=>0%03o)\n", TPR.CA, (TPR.CA >> 3), TPR.CA & ~7);
+                //debug_msg("OPU::opcode::rscr", "CA is 0%04o (0%03ox=>0%03o)\n", TPR.CA, (TPR.CA >> 3), TPR.CA & ~7);
+                debug_msg("OPU::opcode::rscr", "CA is 0%04Lo (0%03Lo=>0%03Lo)\n", TPR.CA, (TPR.CA >> 3), TPR.CA & ~7);
                 if ((TPR.CA & ~7) == ea) {
                     ; // SC mode reg
                     debug_msg("OPU::opcode::rscr", "mode register selected\n");
@@ -382,36 +401,30 @@ static int do_op(instr_t *ip)
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0020) {
                     debug_msg("OPU::opcode::rscr", "port zero selected\n");
-                    scu_get_mask(TPR.CA, 0, &reg_A, &reg_Q);
+                    ret = scu_get_mask(TPR.CA, 0);
                 } else if ((TPR.CA & ~7) == ea + 0120)
-                    scu_get_mask(TPR.CA, 1, &reg_A, &reg_Q);
+                    ret = scu_get_mask(TPR.CA, 1);
                 else if ((TPR.CA & ~7) == ea + 0220)
-                    scu_get_mask(TPR.CA, 2, &reg_A, &reg_Q);
+                    ret = scu_get_mask(TPR.CA, 2);
                 else if ((TPR.CA & ~7) == ea + 0320)
-                    scu_get_mask(TPR.CA, 3, &reg_A, &reg_Q);
+                    ret = scu_get_mask(TPR.CA, 3);
                 else if ((TPR.CA & ~7) == ea + 0420)
-                    scu_get_mask(TPR.CA, 4, &reg_A, &reg_Q);
+                    ret = scu_get_mask(TPR.CA, 4);
                 else if ((TPR.CA & ~7) == ea + 0520)
-                    scu_get_mask(TPR.CA, 5, &reg_A, &reg_Q);
+                    ret = scu_get_mask(TPR.CA, 5);
                 else if ((TPR.CA & ~7) == ea + 0620)
-                    scu_get_mask(TPR.CA, 6, &reg_A, &reg_Q);
+                    ret = scu_get_mask(TPR.CA, 6);
                 else if ((TPR.CA & ~7) == ea + 0720) {
-                    scu_get_mask(TPR.CA, 7, &reg_A, &reg_Q);
+                    ret = scu_get_mask(TPR.CA, 7);
                 } else if ((TPR.CA & ~7) == ea + 0030) {
                     // interrupts
                     debug_msg("OPU::opcode::rscr", "interrupts unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0040) {
-                    // calendar
-                    debug_msg("OPU::opcode::rscr", "calendar unimplemented\n");
-                    cancel_run(STOP_BUG);
-                    ret = 1;
+                    ret = scr_get_calendar(TPR.CA);
                 } else if ((TPR.CA & ~7) == ea + 0050) {
-                    // calendar
-                    debug_msg("OPU::opcode::rscr", "calendar unimplemented\n");
-                    cancel_run(STOP_BUG);
-                    ret = 1;
+                    ret = scr_get_calendar(TPR.CA);
                 } else if ((TPR.CA & ~7) == ea + 0060) {
                     // store unit mode reg
                     debug_msg("OPU::opcode::rscr", "store unit mode reg unimplemented\n");
@@ -422,7 +435,7 @@ static int do_op(instr_t *ip)
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else {
-                    debug_msg("OPU::opcode::rscr", "bad argument, CA 0%o\n", TPR.CA);
+                    debug_msg("OPU::opcode::rscr", "bad argument, CA 0%Lo\n", TPR.CA);
                     cancel_run(STOP_BUG);
                     ret = 1;
                     // error
@@ -446,10 +459,36 @@ static int do_op(instr_t *ip)
                 }
                 return ret;
             }
-            case opcode0_lcpr:  // load central processor reg (priv)
-                debug_msg("OPU::opcode::lcpr", "unimplemented (and perhaps not relevant\n");
+            case opcode0_lcpr: {    // load central processor reg (priv)
+                int ret = 0;
+                t_uint64 word;
+                switch (ip->tag) {      // no addr modifications
+                    case 2:
+                        ret = fetch_word(TPR.CA, &word);
+                        complain_msg("OPU::opcode::lcpr", "Not writing 0%Lo to cache mode reg.\n", word);
+                        if (word != 0)
+                            ret = 1;
+                        break;
+                    case 4:
+                        ret = fetch_word(TPR.CA, &word);
+                        complain_msg("OPU::opcode::lcpr", "Not writing 0%Lo to mode reg.\n", word);
+                        if (word != 0)
+                            ret = 1;
+                        break;
+                    case 3:
+                        complain_msg("OPU::opcode::lcpr", "history reg zero unimplemented.\n");
+                        break;
+                    case 7:
+                        complain_msg("OPU::opcode::lcpr", "history reg setting unimplemented.\n");
+                        ret = 1;
+                        break;
+                    default:
+                        complain_msg("OPU::opcode::lcpr", "Bad tag 0%o\n", ip->tag);
+                        ret = 1;
+                }
                 cancel_run(STOP_WARN);
-                return 0;
+                return ret;
+            }
             case opcode0_ldq: { // load Q reg
                 int ret = fetch_op(ip, &reg_Q);
                 if (ret == 0) {
@@ -476,11 +515,13 @@ static int do_op(instr_t *ip)
             case opcode0_ldx5:
             case opcode0_ldx6:
             case opcode0_ldx7: {
+                // BUG: manual says bits 0..17, but alm program trying to use constant 2
                 int n = op & 07;
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
-                    reg_X[n] = word >> 18;  // reg is 18 bits
+                    reg_X[n] = (word >> 18) & MASK18;   // reg is 18 bits
+                    debug_msg("OPU::instr::ldx*", "X[%d]: Loaded 0%Lo => 0%Lo (0%Lo aka 0%Lo)\n", n, word, word >> 18, reg_X[n], reg_X[n] & MASK18);
                     IR.zero = reg_X[n] == 0;
                     IR.neg = bit18_is_neg(reg_X[n]);
                 }
@@ -504,14 +545,14 @@ static int do_op(instr_t *ip)
                 return ret;
             }
             case opcode0_qlr: {
-                unsigned n = getbits36(TPR.CA, 11, 7);
+                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
                 reg_Q = lrotate36(reg_Q, n);
                 IR.zero = reg_Q == 0;
                 IR.neg = bit36_is_neg(reg_Q);
                 return 0;
             }
             case opcode0_qls: { // Q reg left shift
-                int n = getbits36(TPR.CA, 11, 7);
+                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
                 int init_neg = bit36_is_neg(reg_Q);
                 reg_Q = (reg_Q << n) & MASK36;
                 IR.zero = reg_Q == 0;
@@ -520,7 +561,7 @@ static int do_op(instr_t *ip)
                 return 0;
             }
             case opcode0_qrl: {
-                int n = getbits36(TPR.CA, 11, 7);
+                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
                 reg_Q >>= n;
                 IR.zero = reg_Q == 0;
                 IR.neg = bit36_is_neg(reg_Q);
@@ -538,7 +579,7 @@ static int do_op(instr_t *ip)
 #endif
             }
             case opcode0_qrs: { // Q Right Shift (with sign fill)
-                int n = getbits36(TPR.CA, 11, 7);
+                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
                 int init_neg = bit36_is_neg(reg_Q);
                 reg_Q >>= n;
                 if (init_neg) {
@@ -552,23 +593,26 @@ static int do_op(instr_t *ip)
                 return 0;
             }
             case opcode0_alr: {
-                unsigned n = getbits36(TPR.CA, 11, 7);
+                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
                 reg_A = lrotate36(reg_A, n);
                 IR.zero = reg_A == 0;
                 IR.neg = bit36_is_neg(reg_A);
                 return 0;
             }
             case opcode0_als: { // A reg left shift
-                int n = getbits36(TPR.CA, 11, 7);
+                int n = TPR.CA & 177;   // bits 11..17 of 18bit CA
+                debug_msg("OPU::als", "CA = 0%Lo; bits 11..17 = %0o\n", (t_uint64) TPR.CA, n);
+                debug_msg("OPU::als", "A = (%0Lo << %d) ==> %0Lo\n", reg_A, n, (reg_A << n) & MASK36);
                 int init_neg = bit36_is_neg(reg_A);
                 reg_A = (reg_A << n) & MASK36;
                 IR.zero = reg_A == 0;
                 IR.neg = bit36_is_neg(reg_A);
                 IR.carry = init_neg != IR.neg;
+cancel_run(STOP_IBKPT);
                 return 0;
             }
             case opcode0_arl: { // A reg right logical shift
-                int n = getbits36(TPR.CA, 11, 7);
+                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
                 reg_A >>= n;
                 IR.zero = reg_A == 0;
                 IR.neg = bit36_is_neg(reg_A);
@@ -576,7 +620,7 @@ static int do_op(instr_t *ip)
             }
             case opcode0_llr: {     // Long left rotate
                 int init_neg = bit36_is_neg(reg_A);
-                unsigned n = getbits36(TPR.CA, 11, 7);
+                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
                 lrotate72(&reg_A, &reg_Q, n);
                 IR.zero = reg_A == 0 && reg_Q == 0;
                 IR.neg = bit36_is_neg(reg_A);
@@ -585,7 +629,7 @@ static int do_op(instr_t *ip)
             }
             case opcode0_lls: {     // Long left shift
                 int init_neg = bit36_is_neg(reg_A);
-                unsigned n = getbits36(TPR.CA, 11, 7);
+                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
                 if (n >= 72)
                     n %= 72;
                 if (n != 0) {
@@ -902,8 +946,10 @@ static int do_op(instr_t *ip)
                     return 1;
                 }
                 int ret = 0;
-                int clear = getbits36(TPR.CA, 15, 1);
-                int enable = getbits36(TPR.CA, 16, 2);
+                //int clear = getbits36(TPR.CA, 15, 1);
+                //int enable = getbits36(TPR.CA, 16, 2);
+                int clear = (TPR.CA >> 2) & 1;  // Bit 15 of 18-bit CA
+                int enable = TPR.CA & 3;        // Bits 16 and 17 of 18-bit CA
                 int i;
                 for (i = 0; i < 16; ++i) {
                     SDWAM[i].is_full = 0;
@@ -940,11 +986,11 @@ static int do_op(instr_t *ip)
                 return 0;
             case opcode0_tnz:
                 if (! IR.zero) {
-                    debug_msg("OPU::opcode::tnz", "transfer to %u\n", TPR.CA);
+                    debug_msg("OPU::opcode::tnz", "transfer to %0Lo\n", TPR.CA);
                     PPR.IC = TPR.CA;
                     PPR.PSR = TPR.TSR;
                 } else
-                    debug_msg("OPU::opcode::tnz", "no transfer (would have been to %d)\n", TPR.CA);
+                    debug_msg("OPU::opcode::tnz", "no transfer (would have been to %0Lo)\n", TPR.CA);
                 return 0;
             case opcode0_tov:
                 if (IR.overflow) {
@@ -978,7 +1024,13 @@ static int do_op(instr_t *ip)
             case opcode0_adx6:
             case opcode0_adx7: {
                 int n = op & 07;
-                return op_add(ip, &reg_X[n]);
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0)
+                    word >>= 18;
+                    if (add18(word, reg_X[n], &word) == 0)
+                        reg_X[n] = word;
+                return ret;
             }
             case opcode0_asa: { // Add Stored to A reg
                 t_uint64 word = reg_A;
@@ -1082,8 +1134,10 @@ static int do_op(instr_t *ip)
                     return 1;
                 }
                 int ret = 0;
-                int sel_clear = getbits36(TPR.CA, 15, 1);
-                int enable = getbits36(TPR.CA, 16, 2);
+                //int sel_clear = getbits36(TPR.CA, 15, 1);
+                //int enable = getbits36(TPR.CA, 16, 2);
+                int sel_clear = (TPR.CA >> 2) & 1;  // Bit 15 of 18-bit CA
+                int enable = TPR.CA & 3;        // Bits 16 and 17 of 18-bit CA
                 int i;
                 for (i = 0; i < 16; ++i) {
                     PTWAM[i].is_full = 0;
@@ -1152,6 +1206,39 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
     *dest = result;
     return 0;
 }
+
+// ----------------------------------------------------------------------------
+
+static int add18(t_uint64 a, t_uint64 b, t_uint64 *dest)
+{
+    
+    a &= MASK18;
+    b &= MASK18;
+    uint sign1 = a >> 17;
+    uint sign2 = b >> 17;
+    uint32 result = a + b;
+    uint signr = result >> 17;
+    if ((result >> 18) != 0) {
+        IR.carry = 1;
+        result &= MASK18;
+    } else {
+        IR.carry = 0;
+    }
+    IR.zero = result == 0;
+    IR.neg = signr;
+    if (sign1 == sign2 && signr != sign1) {
+        IR.overflow = 1;
+        if (IR.overflow_mask == 0) {
+            // BUG: Should we overwrite dest on overflow fault?
+            fault_gen(overflow_fault);
+            return 1;
+        }
+    }
+
+    *dest = result;
+    return 0;
+}
+
 
 // ----------------------------------------------------------------------------
 
@@ -1238,9 +1325,9 @@ static inline void lrotate72(t_uint64* ap, t_uint64* bp, unsigned n)
         b = ((b << n) & MASK36) | aout;
     } else {
         t_uint64 aout_hi = a >> (72 - n);
-        t_uint64 aout_lo = a & ~(~0 << (n - 36));
+        t_uint64 aout_lo = a & ~(~(t_uint64)0 << (n - 36));
         t_uint64 bout_hi = b >> (72 - n);
-        t_uint64 bout_lo = b & ~(~0 << (n - 36));
+        t_uint64 bout_lo = b & ~(~(t_uint64)0 << (n - 36));
         a = (bout_lo << (n - 36)) | aout_hi;
         b = (aout_lo << (n - 36)) | bout_hi;
     }
@@ -1272,3 +1359,13 @@ static inline int negate72(t_uint64* a, t_uint64* b)
     return 0;
 }
 
+static int32 sign18(t_uint64 x)
+{
+    if (bit18_is_neg(x)) {
+        int32 r = - ((1<<18) - (x&MASK18));
+        debug_msg("OPU::sign18", "0%Lo => 0%o (%+d decimal)\n", x, r, r);
+        return r;
+    }
+    else
+        return x;
+}

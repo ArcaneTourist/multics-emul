@@ -25,7 +25,8 @@ typedef enum {
 } cycles_t;
 
 enum faults {
-    shutdown_fault = 0, store_fault = 1, timer_fault = 4, connect_fault = 8,
+    shutdown_fault = 0, store_fault = 1, f1_fault = 3,
+    timer_fault = 4, connect_fault = 8,
     illproc_fault = 10, startup_fault = 12, overflow_fault = 13,
     div_fault = 14, trouble_fault = 31,
     //
@@ -44,7 +45,7 @@ enum sim_stops {
 
 
 // ============================================================================
-// === Misc constants
+// === Misc constants and macros
 
 // Clocks
 #define CLK_TR_HZ (512*1) /* should be 512 kHz, but we'll use 512 Hz for now */
@@ -55,6 +56,8 @@ enum sim_stops {
 #define IOM_MBX_LEN 02200
 #define DN355_MBX_LOW 03400
 #define DN355_MBX_LEN 03000
+
+#define ARRAY_SIZE(a) ( sizeof(a) / sizeof(a[0]) )
 
 
 // ============================================================================
@@ -145,7 +148,7 @@ typedef struct {
     uint TRR;   // Current effective ring number, 3 bits
     uint TSR;   // Current effective segment number, 15 bits
     uint TBR;   // Current bit offset as calculated from ITS and ITP
-    t_uint64 CA;// Current computed addr relative to the segment in TPR.TSR; Normally 24? bits but sized to hold 36bit non-address operands
+    t_uint64 CA;// Current computed addr relative to the segment in TPR.TSR; Normally 18? bits but sized to hold 36bit non-address operands
 } TPR_t;
 
 
@@ -284,11 +287,16 @@ typedef struct {
         } pima[4];      // each bit indicates an assigned port (matches 4 rotary switches [initally?])
     } config_switches;
 #endif
-    t_uint64 masks[8];  // port assignements
     uint ports[8];  // CPU/IOM connectivity; designated 0..7; negative to disable
-    int mask_assign[4]; //  Bit masks.  Which port(s) is each PIMA reg assigned to?
+    t_uint64 masks[4];  // 32bit masks
+    uint mask_assign[4];    //  Bit masks.  Which port(s) is each PIMA reg assigned to?
     
 } scu_t;
+
+typedef struct {
+    uint ports[8];  // CPU/IOM connectivity; designated a..; negative to disable
+} iom_t;
+
 
 // ============================================================================
 // === Operations on 36-bit pseudo words
@@ -309,6 +317,11 @@ typedef struct {
     right-most bit were bit 35.  This means that bit positon zero is
     in the 36th bit from the right -- in the middle of the 64 bit word.
 */
+
+static const t_uint64 MASK36 = ~(~((t_uint64)0)<<36);   // lower 36 bits all ones
+static const t_uint64 MASK18 = ~(~((t_uint64)0)<<18);   // lower 18 bits all ones
+#define MASKBITS(x) ( ~(~((t_uint64)0)<<x) )    // lower (x) bits all ones
+
 
 /*  Extract (i)th bit of a 36 bit word (held in a uint64). */
 #define bitval36(word,i) ( ((word)>>(35-i)) & (uint64_t) 1 )
@@ -353,7 +366,8 @@ static inline t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
 extern t_uint64 reg_A;      // Accumulator, 36 bits
 extern t_uint64 reg_Q;      // Quotient, 36 bits
 extern t_uint64 reg_E;      // Quotient, 36 bits
-extern t_uint64 reg_X[8];   // Index Registers, 18 bits
+//extern t_uint64 reg_X[8]; // Index Registers, 18 bits
+extern uint32 reg_X[8]; // Index Registers, 18 bits; SIMH expects data type to be no larger than needed
 extern IR_t IR;             // Indicator Register
 extern t_uint64 reg_TR;     // Timer Reg, 27 bits -- only valid after calls to SIMH clock routines
 extern PPR_t PPR;           // Procedure Pointer Reg, 37 bits, internal only
@@ -368,7 +382,10 @@ extern cpu_state_t cpu;
 // === Functions
 
 extern void debug_msg(const char* who, const char* format, ...);
+extern void warn_msg(const char* who, const char* format, ...);
 extern void complain_msg(const char* who, const char* format, ...);
+extern void out_msg(const char* format, ...);
+extern void cancel_run(enum sim_stops reason);
 extern void execute_instr(void);
 extern void fault_gen(enum faults);
 extern int decode_addr(instr_t* ip, t_uint64* addrp);
