@@ -102,6 +102,9 @@ static void hw6180_init(void)
     sim_brk_types = SWMASK('E') | SWMASK('M');  // M memory (absolute address)
     sim_brk_dflt = SWMASK('E');
 
+extern UNIT cpu_unit;
+debug_msg("SYS::init", "cpu_unit @ %p\n", &cpu_unit);
+
     init_memory_iom();      // IOX includes unknown instr ldo
 
     // Hardware config -- should be based on config cards!
@@ -136,6 +139,7 @@ static void hw6180_init(void)
 static void init_memory_iom()
 {
     // All values from bootload_tape_label.alm
+    // See also doc #43A239854.
     // BUG: This is for an IOM.  Do we want an IOM or an IOX?
     // The presence of a 0 in the top six bits of word 0 denote an IOM boot from an IOX boot
 
@@ -172,6 +176,7 @@ t_uint64 imu = 1;       // 1 bit; BUG: unknown
     M[1] = (chan << 21) | port;     // Bootload channel PCW, word 2
     // 12/Base, 6/0, 15/PIbase, 3/IOM#
     M[2] = (base << 24) | (pi_base << 3) | iom; // Info used by bootloaded pgm
+    // 6/Command, 6/Device#, 6/0, 18/700000; Bootload IDCW - Command is 05 for tape, 01 for cards.
     M[3] = (cmd << 30) | (dev << 24) | 0700000;     // Bootload IDCW
     M[4] = 030 << 18;               // Second IDCW: IOTD to loc 30 (startup fault vector)
 
@@ -198,6 +203,7 @@ t_uint64 imu = 1;       // 1 bit; BUG: unknown
 static void init_memory_iox()
 {
     // All values from bootload_tape_label.alm
+    // See also doc #43A239854.
     // This is for an IOX
 
 // " The channel number ("Chan#") is set by the switches on the IOM to be the
@@ -244,14 +250,15 @@ static void init_memory_iox()
 }
 
 
-extern t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
+t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
 {
-    abort();
+    return SCPE_ARG;
 }
 
-extern t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
+t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
 {
-    abort();
+    complain_msg("SYS::parse_sym", "unimplemented\n");
+    return SCPE_ARG;
 }
 
 int activate_timer()

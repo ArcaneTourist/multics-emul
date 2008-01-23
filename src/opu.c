@@ -601,14 +601,13 @@ static int do_op(instr_t *ip)
             }
             case opcode0_als: { // A reg left shift
                 int n = TPR.CA & 177;   // bits 11..17 of 18bit CA
-                debug_msg("OPU::als", "CA = 0%Lo; bits 11..17 = %0o\n", (t_uint64) TPR.CA, n);
-                debug_msg("OPU::als", "A = (%0Lo << %d) ==> %0Lo\n", reg_A, n, (reg_A << n) & MASK36);
+                //debug_msg("OPU::als", "CA = 0%Lo; bits 11..17 = %0o\n", (t_uint64) TPR.CA, n);
+                //debug_msg("OPU::als", "A = (%0Lo << %d) ==> %0Lo\n", reg_A, n, (reg_A << n) & MASK36);
                 int init_neg = bit36_is_neg(reg_A);
                 reg_A = (reg_A << n) & MASK36;
                 IR.zero = reg_A == 0;
                 IR.neg = bit36_is_neg(reg_A);
                 IR.carry = init_neg != IR.neg;
-cancel_run(STOP_IBKPT);
                 return 0;
             }
             case opcode0_arl: { // A reg right logical shift

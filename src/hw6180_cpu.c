@@ -113,7 +113,8 @@ REG cpu_reg[] = {
     cpu_mod     CPU modifier list
 */
 
-static UNIT cpu_unit = {
+//static UNIT cpu_unit = {
+UNIT cpu_unit = {
     // TODO: idle svc
     UDATA (NULL, UNIT_FIX|UNIT_BINK, MAXMEMSIZE)
 };
@@ -126,11 +127,14 @@ static MTAB cpu_mod[] = {
 t_stat cpu_boot (int32 unit_num, DEVICE *dptr);;
 t_stat cpu_reset (DEVICE *dptr);
 
+// SIMH directs requests to examine/change memory to the CPU DEVICE?
+static t_stat cpu_ex (t_value *eval_array, t_addr addr, UNIT *uptr, int32 switches);
+static t_stat cpu_dep (t_value v, t_addr addr, UNIT *uptr, int32 switches);
 DEVICE cpu_dev = {
     // todo: revisit cpu_dev: add debug, examine, deposit, etc
     "CPU", &cpu_unit, cpu_reg, cpu_mod,
-    1, 8, 18, 1, 8, 8,
-    NULL, NULL, &cpu_reset,
+    1, 8, 24, 1, 8, 36,                     // should we say 18 for awidth?
+    &cpu_ex, &cpu_dep, &cpu_reset,
     &cpu_boot, NULL, NULL
 };
 
@@ -158,6 +162,7 @@ scu_t scu;  // only one for now
 //-----------------------------------------------------------------------------
 //***  Other Externs
 extern int bootimage_loaded;    // only relevent for the boot CPU ?
+extern uint32 sim_emax;
 
 
 //-----------------------------------------------------------------------------
@@ -1057,4 +1062,21 @@ char *bin2text(t_uint64 word, int n)
         word >>= 1;
     }
     return str;
+}
+
+
+static t_stat cpu_ex (t_value *eval_array, t_addr addr, UNIT *uptr, int32 switches)
+{
+    // BUG: sanity check args
+    // NOTE: We ignore UNIT, because all CPUS see the same memory
+    memcpy(eval_array, &M[addr], sizeof(M[0]) * sim_emax);
+    return 0;
+}
+
+static t_stat cpu_dep (t_value v, t_addr addr, UNIT *uptr, int32 switches)
+{
+    // BUG: sanity check args
+    // NOTE: We ignore UNIT, because all CPUS see the same memory
+    M[addr] = v;
+    return 0;
 }
