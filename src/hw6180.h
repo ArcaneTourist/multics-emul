@@ -42,6 +42,7 @@ enum sim_stops {
     STOP_ODD_FETCH,
     STOP_IBKPT,         // breakpoint
 };
+enum dev_type { DEV_NONE, DEV_TAPE, DEV_DISK }; // devices connected to an IOM
 
 
 // ============================================================================
@@ -295,6 +296,9 @@ typedef struct {
 
 typedef struct {
     uint ports[8];  // CPU/IOM connectivity; designated a..; negative to disable
+    int scu_port;   // which port on the SCU(s) are we connected to?
+    enum dev_type channels[64];
+    DEVICE* devices[64];
 } iom_t;
 
 
@@ -392,13 +396,14 @@ extern int decode_addr(instr_t* ip, t_uint64* addrp);
 extern int decode_ypair_addr(instr_t* ip, t_uint64* addrp);
 extern int fetch_instr(uint IC, instr_t *ip);
 extern char *bin2text(t_uint64 word, int n);
+extern void iom_interrupt(void);
 
-int fetch_word(uint addr, t_uint64 *wordp);
-int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p);
-int store_word(uint addr, t_uint64 word);
+extern int fetch_word(uint addr, t_uint64 *wordp);
+extern int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p);
+extern int store_word(uint addr, t_uint64 word);
 
-void set_addr_mode(addr_modes_t mode);
-addr_modes_t get_addr_mode(void);
+extern void set_addr_mode(addr_modes_t mode);
+extern addr_modes_t get_addr_mode(void);
 
 // ============================================================================
 

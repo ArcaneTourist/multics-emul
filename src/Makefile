@@ -1,7 +1,7 @@
 include ../Makefile.defs
 
 
-multics_objs: hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o bits.o apu.o scu.o iom.o
+multics_objs: hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o bits.o apu.o scu.o iom.o mt.o
 
 hw6180_cpu.o: *.h
 hw6180_sys.o: *.h
@@ -12,6 +12,7 @@ bits.o: *.h
 apu.o: *.h
 scu.o: *.h
 iom.o: *.h
+mt.o: *.h
 
 bit-test.o: *.h
 bit-test: bit-test.o bits.o

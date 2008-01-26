@@ -3,19 +3,16 @@
 extern uint32 sim_brk_types, sim_brk_dflt, sim_brk_summ; /* breakpoint info */
 
 extern DEVICE cpu_dev;
-extern DEVICE dsk_dev;
-extern UNIT cpu_unit;
+extern DEVICE tape_dev;
+//extern DEVICE dsk_dev;
 extern REG cpu_reg[];
-extern DEVICE sio_dev;
-extern DEVICE ptr_dev;
-extern DEVICE ptp_dev;
-extern DEVICE lpt_dev;
 extern t_uint64 M[];
 
 extern UNIT TR_clk_unit;
 extern switches_t switches;
 extern cpu_ports_t cpu_ports;
 extern scu_t scu;
+extern iom_t iom;
 
 /* SCP data structures
 
@@ -37,12 +34,7 @@ int32 sim_emax = 4;
 
 DEVICE *sim_devices[] = {
     &cpu_dev,
-#if 0
-    &sio_dev,
-    &ptr_dev,
-    &ptp_dev,
-    &dsk_dev,
-#endif
+    &tape_dev,
     NULL
 };
 
@@ -97,43 +89,50 @@ static void init_memory_iom(void);
 
 static void hw6180_init(void)
 {
-    cpu_dev.dctrl = 1;  // todo: don't default debug to on
     debug_msg("SYS::init", "Once-only initialization running.\n");
+
+    cpu_dev.dctrl = 1;  // todo: don't default debug to on
     sim_brk_types = SWMASK('E') | SWMASK('M');  // M memory (absolute address)
     sim_brk_dflt = SWMASK('E');
 
-extern UNIT cpu_unit;
-debug_msg("SYS::init", "cpu_unit @ %p\n", &cpu_unit);
-
-    init_memory_iom();      // IOX includes unknown instr ldo
-
-    // Hardware config -- should be based on config cards!
+    // Hardware config -- todo - should be based on config cards!
     // BUG: need to write config deck at 012000
 
-    // CPU switches
+    // CPU Switches
     memset(&switches, 0, sizeof(switches));
     // multics uses same vector for interrupts & faults?
     // OTOH, AN87, 1-41 claims faults are at 100o ((flt_base=1)<<5)
     switches.FLT_BASE = 0;  // multics uses same vector for interrupts & faults?
 
-    // CPU port 'b' connected to SCU port '7' -- arbitrary
-    memset(&cpu_ports, 0, sizeof(cpu_ports));
-    for (int i = 0; i < ARRAY_SIZE(cpu_ports.ports); ++i)
-        cpu_ports.ports[i] = -1;
-    cpu_ports.scu_port = 7;
-    cpu_ports.ports[1] = cpu_ports.scu_port;
-
     // Only one SCU
     memset(&scu, 0, sizeof(scu));
     for (int i = 0; i < ARRAY_SIZE(scu.ports); ++i)
         scu.ports[i] = -1;
-    scu.ports[cpu_ports.scu_port] = 1;  // SCU port '7' connected to CPU port 'b'
-    
-    // GB61, page 9-1
-    scu.mask_assign[0] = 1 << cpu_ports.scu_port;
 
-    // SCU port 0 connected to IOM port 0
-    scu.ports[0] = 0;   // port '7' connected to CPU port 'b'
+    // Only one IOM
+    memset(&iom, 0, sizeof(iom));
+    for (int i = 0; i < ARRAY_SIZE(iom.ports); ++i) {
+        iom.ports[i] = -1;
+        iom.channels[i] = DEV_NONE;
+    }
+
+    // Only one CPU
+    memset(&cpu_ports, 0, sizeof(cpu_ports));
+    for (int i = 0; i < ARRAY_SIZE(cpu_ports.ports); ++i)
+        cpu_ports.ports[i] = -1;
+
+    init_memory_iom();      // IOX includes unknown instr ldo
+
+    // CPU port 'b'(1) connected to SCU port '7' -- arbitrary
+    cpu_ports.scu_port = 7;
+    cpu_ports.ports[1] = cpu_ports.scu_port;    // port B connected to SCU
+    scu.ports[cpu_ports.scu_port] = 1;  // SCU port '7' connected to CPU port 'b'
+    scu.mask_assign[0] = 1 << cpu_ports.scu_port;       // GB61, page 9-1
+
+    // IOM port 'a'(0) connected to SCU port 0
+    iom.scu_port = 0;
+    iom.ports[0] = iom.scu_port;    // port A connected to SCU
+    scu.ports[iom.scu_port] = 0;
 }
 
 static void init_memory_iom()
@@ -147,8 +146,12 @@ static void init_memory_iom()
 // " channel for the tape subsystem holding the bootload tape. The drive number
 // " for the bootload tape is set by switches on the tape MPC itself.
 
-int chan = 036;     // 12 bits; // BUG: unknown; controller channel; max=40?
-    int port = 0;       // 3 bits;  // SCU port # to which bootload IOM is attached (deduced)
+int chan = 036;     // 12 bits or 6 bits;   // BUG: unknown; controller channel; max=40?
+//  int port = 0;       // 3 bits;  // SCU port # to which bootload IOM is attached (deduced)
+    int port = iom.scu_port;
+
+iom.channels[chan] = DEV_TAPE;
+iom.devices[chan] = &tape_dev;
 
 #if 0
     int base = 012;     // 12 bits; IOM base; must be 0012 for Multics
@@ -172,8 +175,8 @@ t_uint64 imu = 1;       // 1 bit; BUG: unknown
     memset(M, 0, MAXMEMSIZE*sizeof(M[0]));
 
     M[0] = 0720201;                 // Bootload channel PCW, word 1 (this is an 18 bit value)
-    //  3/0, 12/Chan#, 24/0, 3/Port#
-    M[1] = (chan << 21) | port;     // Bootload channel PCW, word 2
+    //  3/0, 6/Chan#, 30/0, 3/Port -- NOT 3/0, 12/Chan#, 24/0, 3/Port# -- also non-zero port may not be valid for low bits
+    M[1] = ((t_uint64) chan << 27) | port;      // Bootload channel PCW, word 2
     // 12/Base, 6/0, 15/PIbase, 3/IOM#
     M[2] = (base << 24) | (pi_base << 3) | iom; // Info used by bootloaded pgm
     // 6/Command, 6/Device#, 6/0, 18/700000; Bootload IDCW - Command is 05 for tape, 01 for cards.
@@ -205,6 +208,7 @@ static void init_memory_iox()
     // All values from bootload_tape_label.alm
     // See also doc #43A239854.
     // This is for an IOX
+    // init_memory_iom() is more up to date...
 
 // " The channel number ("Chan#") is set by the switches on the IOM to be the
 // " channel for the tape subsystem holding the bootload tape. The drive number
@@ -293,7 +297,8 @@ t_stat clk_svc(UNIT *up)
     // only valid for TR
     (void) sim_rtcn_calb (CLK_TR_HZ, TR_CLK);   // calibrate clock
     uint32 t = sim_is_active(&TR_clk_unit);
-    printf("SYS::clock::service", "TR has %d time units left\n");
+    debug_msg("SYS::clock::service", "TR has %d time units left\n");
+    return 0;
 }
 
 t_stat XX_clk_svc(UNIT *up)

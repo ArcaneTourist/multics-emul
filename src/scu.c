@@ -274,7 +274,7 @@ int scu_get_mask(t_uint64 addr, int port)
 }
 
 
-int scr_get_calendar(t_uint64 addr)
+int scu_get_calendar(t_uint64 addr)
 {
     // BUG: addr should determine which SCU is selected
 

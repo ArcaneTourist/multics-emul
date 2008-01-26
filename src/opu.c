@@ -17,6 +17,14 @@ static int add18(t_uint64 a, t_uint64 b, t_uint64 *dest);
 static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2);
 static int32 sign18(t_uint64 x);
 
+// BUG: move externs to hdr file
+extern int scu_cioc(t_uint64 addr);
+extern int scu_set_mask(t_uint64 addr, int port);
+extern int scu_get_mask(t_uint64 addr, int port);
+extern int scu_set_cpu_mask(t_uint64 addr);
+extern int scu_get_calendar(t_uint64 addr);
+extern int addr_mod(instr_t *ip);
+extern int activate_timer();
 
 // ============================================================================
 
@@ -422,9 +430,9 @@ static int do_op(instr_t *ip)
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0040) {
-                    ret = scr_get_calendar(TPR.CA);
+                    ret = scu_get_calendar(TPR.CA);
                 } else if ((TPR.CA & ~7) == ea + 0050) {
-                    ret = scr_get_calendar(TPR.CA);
+                    ret = scu_get_calendar(TPR.CA);
                 } else if ((TPR.CA & ~7) == ea + 0060) {
                     // store unit mode reg
                     debug_msg("OPU::opcode::rscr", "store unit mode reg unimplemented\n");
