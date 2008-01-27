@@ -17,14 +17,20 @@ extern scu_t scu;   // BUG: we'll need more than one for max memory.  Unless we 
 extern iom_t iom;
 
 enum iom_sys_faults {
-    // from 4.5.1
+    // from 4.5.1; descr from AN87, 3-9
     iom_no_fault = 0,
-    iom_ill_chan = 01,
-    iom_tr0_conn = 05,
-    iom_ill_tly_cont = 013,
+    iom_ill_chan = 01,      // PCW to chan with chan number >= 40
+    // iom_ill_ser_req=02,  // chan requested svc with a service code of zero or bad chan #
+    // iom_256K_of=04,      // 256K overflow -- address decremented to zero, but not tally
+    iom_lpw_tro_conn = 05,  // tally was zero for an update LPW (LPW bit 21==0) when the LPW was fetched for the connect channel
+    // iom_not_pcw_conn=06, // DCW for conn channel had bits 18..20 != 111b
+    // iom_cp1_data=07,     // DCW was TDCW or had bits 18..20 == 111b
+    iom_ill_tly_cont = 013, // LPW bits 21-22 == 00 when LPW was fetched for the connect channel
+    // 14 LPW had bit 23 on in Multics mode
 };
-enum iom_user_faults {
+enum iom_user_faults {  // aka central status
     // from 4.5.2
+    iom_lpw_tro = 1,    //  tally was zero for an update LPW (LPW bit 21==0) when the LPW was fetched  and TRO-signal (bit 22) is on
     iom_bndy_vio = 03,
 };
 
@@ -60,10 +66,12 @@ void iom_interrupt()
 
     // dump_iom();
 
-    int ptro = 0;
     debug_msg("IOM::CIOC", "Starting\n");
-    list_service(IOM_CONNECT_CHAN, 1, &ptro);
-    // BUG: if no PTR0 occurs, do a second list service
+    int ptro = 0;   // pre-tally-run-out, e.g. end of list
+    while (ptro == 0) {
+        debug_msg("IOM::CIOC", "Doing list service for Connect Channel\n");
+        list_service(IOM_CONNECT_CHAN, 1, &ptro);
+    }
 
     debug_msg("IOM::CIOC", "Unfinished\n");
     cancel_run(STOP_BUG);
@@ -143,7 +151,7 @@ typedef struct {
     t_bool ae;      // bit 20; address extension
     t_bool nc;      // bit 21; no tally; zero means update tally
     t_bool trunout; // bit 22; signal tally runout?
-    t_bool srel;    // bit 23; software relative addressing
+    t_bool srel;    // bit 23; software relative addressing; not for Multics!
     uint32 tally;   // bits 24..35
     // following not valid for paged mode; see B15; but maybe IOM-B non existant
     uint32 lbnd;
@@ -163,6 +171,37 @@ typedef struct {
     int chan;       // 6 bits; bits 3..8 of word 2
 } pcw_t;
 
+#if 0
+// from AN87, 3-8
+typedef struct {
+    int channel;    // 9 bits
+    int serv_req;   // 5 bits; see AN87, 3-9
+    int ctlr_fault; // 4 bits; SC ill action codes, AN87 sect II
+    int io_fault;   // 6 bits; see enum iom_sys_faults
+} sys_fault_t;
+#endif
+
+#if 0
+// from AN87, 3-11
+typedef struct {
+    int major;
+    int substatus;
+    // even/odd bit
+    // status marker bit
+    // soft, 2 bits set to zero by hw
+    // initiate bit
+    // chan_stat; 3 bits; 1=busy, 2=invalid chan, 3=incorrect dcw, 5=incomplete
+    // iom_stat; 3 bits; 1=tro, 2=2tdcw, 3=bndry, 4=addr ext, 5=idcw,
+    // addrext
+    // rcound;  // residue in PCW or last IDCW
+    // addr;    // addr of *next* data word to be transmitted
+    // char_pos
+    // read;    // flag
+    // type;    // 1 bit
+    // dcw_residue; // residue in tally of last dcw
+} chan_status_t;
+#endif
+
 
 char* lpw2text(const lpw_t *p)
 {
@@ -176,6 +215,7 @@ char* lpw2text(const lpw_t *p)
 
 int parse_lpw(lpw_t *p, int addr)
 {
+    // NOTE: We always look at 2nd word even if connect channel shouldn't
     p->dcw = M[addr] >> 18;
     p->ires = getbits36(M[addr], 18, 1);
     p->hrel = getbits36(M[addr], 19, 1);
@@ -195,20 +235,6 @@ int parse_lpw(lpw_t *p, int addr)
 
 static int list_service_orig(int chan, int first_list, int *ptro)
 {
-    lpw_t lpw;
-    int chanloc = IOM_A_MBX + chan * 4;
-    debug_msg("IOM", "Checking LPW for channel %0o(%d dec) at addr %0o\n", chan, chan, chanloc);
-    dump_iom_mbx(IOM_A_MBX, chan);
-    parse_lpw(&lpw, chanloc);
-    debug_msg("IOM", "LPW: %s\n", lpw2text(&lpw));
-
-    if (first_list) {
-        lpw.hrel = lpw.srel;
-    }
-    if (lpw.ae != lpw.hrel) {
-        warn_msg("IOM::LPW", "AE does not match HREL\n");
-        cancel_run(STOP_BUG);
-    }
 
     // Flowchare 256K overflow checks relate to 18bit offset & tally incr
     // TRO -- tally runout, a fault (not matching CPU fault names)
@@ -221,62 +247,8 @@ static int list_service_orig(int chan, int first_list, int *ptro)
     // 3 modes: std gcos; ext gcos, paged
     // paged: all acc either paged or extneded gcos, not relative moe
 
-    *ptro = 0;
-    enum { LS_END = 'E', LS_START = 'S', LS_A = 'A', LS_B='B', LS_C='C'} state = LS_START;
-    while (state != LS_END) {
-        debug_msg("IOM::list-sevice", "state %c\n");
-        switch(state) {
-            case LS_START:
-                if (chan == IOM_CONNECT_CHAN) {
-                    // ignore bit 23 (srel)
-                    // Ignore DCW and SCW mailboxes for the connect channel.
-                    // Do next PCW  (0720201 at loc zero for bootload_tape_label.alm)
-                    if (lpw.nc == 0 && lpw.trunout == 0) {
-                        iom_fault(chan, __LINE__, 1, iom_ill_tly_cont); // sys fault
-                        return 1;
-                    } else if (lpw.nc == 0 && lpw.trunout == 1) {
-                        if (lpw.tally == 0) {
-                            iom_fault(chan, __LINE__, 1, iom_tr0_conn); // sys fault
-                            return 1;
-                        } else {
-                            if (lpw.tally == 1)
-                                *ptro = 1;
-                            else {
-                                ;
-                                //if 256k overflow
-                                //  fault & return
-                            }
-                            // pull pcw from core
-                            state = LS_B;
-                            continue;
-                        }
-                    } else {
-                        *ptro = 1;
-                        //pull pcw from core
-                        state = LS_B;
-                        continue;
-                    }
-                } else {
-                    // not connect channel
-                    // get addr
-                    ; // do next DCW
-                }
-                break;
-            default:
-                complain_msg("IOM::list-sevice", "Internal error\n");
-                return 1;
-        }
-    }
-    complain_msg("IOM::list-sevice", "Internal error\n");
-    return 1;   // internal error
 }
 
-static void iom_fault(int chan, int src_line, int is_sys, int signal)
-{
-    // signal gets put in bits 30..35, but we need fault code for 26..29
-    complain_msg("IOM", "Fault for channel %d at line %d: is_sys=%d, signal=%d\n", chan, src_line, is_sys, signal);
-    cancel_run(STOP_WARN);
-}
 
 static int list_service(int chan, int first_list, int *ptro)
 {
@@ -286,9 +258,17 @@ static int list_service(int chan, int first_list, int *ptro)
     debug_msg("IOM::list-service", "Checking LPW for channel %0o(%d dec) at addr %0o\n", chan, chan, chanloc);
     // dump_iom_mbx(IOM_A_MBX, chan);
 
+    // Pull LPW -- NOTE: should ignore 2nd word on connect channel
     parse_lpw(&lpw, chanloc);
     debug_msg("IOM::list-service", "LPW: %s\n", lpw2text(&lpw));
 
+    if (lpw.srel) {
+        // code 14 -- LPW had bit 23 on in Multics mode
+        complain_msg("IOM::list-service", "LPW with bit 23 on is invalid for Multics mode\n");
+        iom_fault(chan, __LINE__, 1, 014);  // BUG, want enum
+        cancel_run(STOP_BUG);
+        return 1;
+    }
     if (first_list) {
         lpw.hrel = lpw.srel;
     }
@@ -297,6 +277,35 @@ static int list_service(int chan, int first_list, int *ptro)
         cancel_run(STOP_BUG);
     }
 
+    // Check for TRO or PTRO at time that LPW is fetched -- not later
+
+    *ptro = 0;
+    if (chan == IOM_CONNECT_CHAN)
+        if (lpw.nc == 0 && lpw.trunout == 0) {
+            iom_fault(chan, __LINE__, 1, iom_ill_tly_cont);
+            return 1;
+        }
+    // BUG 0,0 check for non connect channel
+    if (lpw.nc == 0 && lpw.trunout == 1)
+        if (lpw.tally == 0) {
+            if (chan == IOM_CONNECT_CHAN) {
+                iom_fault(chan, __LINE__, 1, iom_lpw_tro_conn);
+                cancel_run(STOP_WARN);
+                return 1;
+            } else {
+                iom_fault(chan, __LINE__, 0, iom_lpw_tro);
+                cancel_run(STOP_WARN);
+                // no return
+            }
+        }
+    if (lpw.nc == 1)
+        if (chan == IOM_CONNECT_CHAN) {
+            // we're not updating tally, so pretend it's at zero
+            *ptro = 1;
+        }
+
+
+    // addr check
     int addr = lpw.dcw;
     if (lpw.ae)
         if (lpw.srel && chan != IOM_CONNECT_CHAN)
@@ -306,18 +315,8 @@ static int list_service(int chan, int first_list, int *ptro)
             } else
                 addr = lpw.lbnd + addr ;
 
-    int ret;
-    if (chan == IOM_CONNECT_CHAN) {
-        // Do next PCW  (0720201 at loc zero for bootload_tape_label.alm)
-        ret = do_pcw(chan, addr);
-    } else {
-        // flowchar allows looping on tdcw until idcw or dcw sent to channel
-        ret = do_dcw(chan, addr);
-    }
-
-// BUG: need looping: (3.x) -- see Notes.iom
-
-    *ptro = 0;
+    // where should this be done?
+    MAY BE WRONG
     if (lpw.nc == 0) {
         if (chan ==IOM_CONNECT_CHAN)
             lpw.tally -= 2;
@@ -327,9 +326,7 @@ static int list_service(int chan, int first_list, int *ptro)
             *ptro = 1;
         } else if (lpw.tally < 0) {
             if (chan == IOM_CONNECT_CHAN) {
-                // BUG: which fault?
-                // iom_fault(chan, __LINE__, 1, iom_ill_tly_cont);
-                iom_fault(chan, __LINE__, 1, iom_tr0_conn);
+                iom_fault(chan, __LINE__, 1, iom_lpw_tro_conn);
             }
             else
                 iom_fault(chan, __LINE__, 0, iom_bndy_vio);
@@ -337,9 +334,27 @@ static int list_service(int chan, int first_list, int *ptro)
         }
     }
 
+    int ret;
+    if (chan == IOM_CONNECT_CHAN) {
+        // Do next PCW  (0720201 at loc zero for bootload_tape_label.alm)
+VERIFY that all words in the list are PCWs (3.2.2)
+        ret = do_pcw(chan, addr);
+    } else {
+        // flowchar allows looping on tdcw until idcw or dcw sent to channel
+        ret = do_dcw(chan, addr);
+    }
+// BUG: need looping: (3.x) -- see Notes.iom
+
     // BUG: need to loop over tally?
     // complain_msg("IOM::list-sevice", "returning\n");
     return 0;   // internal error
+}
+
+static void iom_fault(int chan, int src_line, int is_sys, int signal)
+{
+    // signal gets put in bits 30..35, but we need fault code for 26..29
+    complain_msg("IOM", "Fault for channel %d at line %d: is_sys=%d, signal=%d\n", chan, src_line, is_sys, signal);
+    cancel_run(STOP_WARN);
 }
 
 
