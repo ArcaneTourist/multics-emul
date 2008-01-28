@@ -91,7 +91,10 @@ static void hw6180_init(void)
 {
     debug_msg("SYS::init", "Once-only initialization running.\n");
 
+    // todo: set debug flags for all devices
     cpu_dev.dctrl = 1;  // todo: don't default debug to on
+    tape_dev.dctrl = 1;
+
     sim_brk_types = SWMASK('E') | SWMASK('M');  // M memory (absolute address)
     sim_brk_dflt = SWMASK('E');
 
@@ -154,19 +157,19 @@ iom.channels[chan] = DEV_TAPE;
 iom.devices[chan] = &tape_dev;
 
 #if 0
-    int base = 012;     // 12 bits; IOM base; must be 0012 for Multics
+    // int base = 012;      // 12 bits; IOM base; must be 0012 for Multics
     // bootload_tape_label.alm comments wrong?
-int pi_base = 03613;    // 15 bits; BUG: unknown; an87 implies 1200
+    // int pi_base = 03613; // 15 bits; BUG: unknown; an87 implies 1200
 #else
     int base = 014;     // 12 bits; IOM base; must be 0012 for Multics; mailboxes at 1400...
-    int pi_base = 1200; // 15 bits; BUG: unknown; an87 implies 1200; interrupt cells would be 1200...
+    int pi_base = 01200;    // 15 bits; BUG: unknown; an87 implies 1200; interrupt cells would be 1200...
 #endif
     int iom = 0;        // 3 bits; only IOM 0 would use vector 030
 
     t_uint64 cmd = 5;       // 6 bits; 05 for tape, 01 for cards
-int dev = 045;      // 6 bits: BUG: unknown; maybe drive number
+    int dev = 0;        // 6 bits: drive number
 
-t_uint64 imu = 1;       // 1 bit; BUG: unknown
+t_uint64 imu = 0;       // 1 bit; Maybe an is-IMU flag; IMU is later version of IOM
 
     // arbitrary -- zero first 4K words
     //for (int i = 0; i < 4096; ++i)
@@ -178,7 +181,7 @@ t_uint64 imu = 1;       // 1 bit; BUG: unknown
     //  3/0, 6/Chan#, 30/0, 3/Port -- NOT 3/0, 12/Chan#, 24/0, 3/Port# -- also non-zero port may not be valid for low bits
     M[1] = ((t_uint64) chan << 27) | port;      // Bootload channel PCW, word 2
     // 12/Base, 6/0, 15/PIbase, 3/IOM#
-    M[2] = (base << 24) | (pi_base << 3) | iom; // Info used by bootloaded pgm
+    M[2] = ((t_uint64) base << 24) | (pi_base << 3) | iom;  // Info used by bootloaded pgm
     // 6/Command, 6/Device#, 6/0, 18/700000; Bootload IDCW - Command is 05 for tape, 01 for cards.
     M[3] = (cmd << 30) | (dev << 24) | 0700000;     // Bootload IDCW
     M[4] = 030 << 18;               // Second IDCW: IOTD to loc 30 (startup fault vector)
@@ -192,11 +195,11 @@ t_uint64 imu = 1;       // 1 bit; BUG: unknown
     int mbx = base * 64;
     M[mbx+07] = (base << 24) | (02 << 18) | 02;     // Fault channel DCW
     debug_msg("SYS", "IOM MBX @%0o: %0Lo\n", mbx+7, M[mbx+7]);
-    M[mbx+10] = 04000;                              // Connect channel LPW -> PCW at 000000
+    M[mbx+010] = 04000;                             // Connect channel LPW -> PCW at 000000
 
     // Channel mailbox, at Base*64 + 4*Chan#
     mbx = (base * 64) + 4 * chan;
-    M[mbx+0] = (3<<18) | (2<<16) | 3;                   //  Boot dev LPW -> IDCW @ 000003
+    M[mbx+0] = (3<<18) | (2<<12) | 3;                   //  Boot dev LPW -> IDCW @ 000003
     debug_msg("SYS", "Channel MBX @%0o: %0Lo\n", mbx, M[mbx]);
     M[mbx+2] = (base <<24);                         //  Boot dev SCW -> IOM mailbox
     

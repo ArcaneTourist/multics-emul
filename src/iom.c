@@ -21,9 +21,9 @@ enum iom_sys_faults {
     iom_no_fault = 0,
     iom_ill_chan = 01,      // PCW to chan with chan number >= 40
     // iom_ill_ser_req=02,  // chan requested svc with a service code of zero or bad chan #
-    // iom_256K_of=04,      // 256K overflow -- address decremented to zero, but not tally
+    iom_256K_of=04,         // 256K overflow -- address decremented to zero, but not tally
     iom_lpw_tro_conn = 05,  // tally was zero for an update LPW (LPW bit 21==0) when the LPW was fetched for the connect channel
-    // iom_not_pcw_conn=06, // DCW for conn channel had bits 18..20 != 111b
+    iom_not_pcw_conn=06,    // DCW for conn channel had bits 18..20 != 111b
     // iom_cp1_data=07,     // DCW was TDCW or had bits 18..20 == 111b
     iom_ill_tly_cont = 013, // LPW bits 21-22 == 00 when LPW was fetched for the connect channel
     // 14 LPW had bit 23 on in Multics mode
@@ -34,11 +34,74 @@ enum iom_user_faults {  // aka central status
     iom_bndy_vio = 03,
 };
 
+typedef struct {
+    uint32 dcw; // bits 0..17
+    t_bool ires;    // bit 18; IDCW restrict
+    t_bool hrel;    // bit 19; hardware relative addressing
+    t_bool ae;      // bit 20; address extension
+    t_bool nc;      // bit 21; no tally; zero means update tally
+    t_bool trunout; // bit 22; signal tally runout?
+    t_bool srel;    // bit 23; software relative addressing; not for Multics!
+    uint32 tally;   // bits 24..35
+    // following not valid for paged mode; see B15; but maybe IOM-B non existant
+    uint32 lbnd;
+    uint32 size;
+    uint32 idcw;    // ptr to most recent dcw, idcw, ...
+} lpw_t;
+
+// Much of this is from, AN87 as 43A23985 lacked details of 0..18 and 22..36
+typedef struct pcw_s {
+    int dev_cmd;    // 6 bits; 0..5
+    int dev_code;   // 6 bits; 6..11
+    int ext;        // 6 bits; 12..17
+    int cp;         // 3 bits; 18..20, must be all ones
+    t_bool mask;    // 1 bit; bit 21
+    int control;    // 2 bits; bit 22..23
+    int chan_cmd;   // 6 bits; bit 24..29
+    int chan_data;  // 6 bits; bit 30..35
+    //
+    int chan;       // 6 bits; bits 3..8 of word 2
+} pcw_t;
+
+#if 0
+// from AN87, 3-8
+typedef struct {
+    int channel;    // 9 bits
+    int serv_req;   // 5 bits; see AN87, 3-9
+    int ctlr_fault; // 4 bits; SC ill action codes, AN87 sect II
+    int io_fault;   // 6 bits; see enum iom_sys_faults
+} sys_fault_t;
+#endif
+
+// from AN87, 3-11
+typedef struct {
+    int chan;       // not part of the status word; simulator only
+    int major;
+    int substatus;
+    // even/odd bit
+    // status marker bit
+    // soft, 2 bits set to zero by hw
+    // initiate bit
+    // chan_stat; 3 bits; 1=busy, 2=invalid chan, 3=incorrect dcw, 5=incomplete
+    // iom_stat; 3 bits; 1=tro, 2=2tdcw, 3=bndry, 4=addr ext, 5=idcw,
+    // addrext
+    // rcound;  // residue in PCW or last IDCW
+    // addr;    // addr of *next* data word to be transmitted
+    // char_pos
+    // read;    // flag
+    // type;    // 1 bit
+    // dcw_residue; // residue in tally of last dcw
+} chan_status_t;
+
+static chan_status_t chan_status;
+
+
 static void dump_iom(void);
 static void iom_fault(int chan, int src_line, int is_sys, int signal);
 static int list_service(int chan, int first_list, int *ptro);
 static void dump_iom_mbx(int base, int i);
-static int do_pcw(int chan, int addr);
+static int handle_pcw(int chan, int addr);
+static int do_pcw(int chan, pcw_t *p);
 static int do_dcw(int chan, int addr);
 
 void iom_interrupt()
@@ -144,65 +207,6 @@ static void dump_iom_mbx(int base, int i)
         }
 }
 
-typedef struct {
-    uint32 dcw; // bits 0..17
-    t_bool ires;    // bit 18; IDCW restrict
-    t_bool hrel;    // bit 19; hardware relative addressing
-    t_bool ae;      // bit 20; address extension
-    t_bool nc;      // bit 21; no tally; zero means update tally
-    t_bool trunout; // bit 22; signal tally runout?
-    t_bool srel;    // bit 23; software relative addressing; not for Multics!
-    uint32 tally;   // bits 24..35
-    // following not valid for paged mode; see B15; but maybe IOM-B non existant
-    uint32 lbnd;
-    uint32 size;
-    uint32 idcw;
-} lpw_t;
-
-typedef struct {
-    int dev_cmd;    // 6 bits; 0..5
-    int dev_code;   // 6 bits; 6..11
-    int ext;        // 6 bits; 12..17
-    t_bool mask;    // 1 bit; bit 21
-    int control;    // 2 bits; bit 22..23
-    int chan_cmd;   // 6 bits; bit 24..29
-    int chan_data;  // 6 bits; bit 30..35
-    //
-    int chan;       // 6 bits; bits 3..8 of word 2
-} pcw_t;
-
-#if 0
-// from AN87, 3-8
-typedef struct {
-    int channel;    // 9 bits
-    int serv_req;   // 5 bits; see AN87, 3-9
-    int ctlr_fault; // 4 bits; SC ill action codes, AN87 sect II
-    int io_fault;   // 6 bits; see enum iom_sys_faults
-} sys_fault_t;
-#endif
-
-#if 0
-// from AN87, 3-11
-typedef struct {
-    int major;
-    int substatus;
-    // even/odd bit
-    // status marker bit
-    // soft, 2 bits set to zero by hw
-    // initiate bit
-    // chan_stat; 3 bits; 1=busy, 2=invalid chan, 3=incorrect dcw, 5=incomplete
-    // iom_stat; 3 bits; 1=tro, 2=2tdcw, 3=bndry, 4=addr ext, 5=idcw,
-    // addrext
-    // rcound;  // residue in PCW or last IDCW
-    // addr;    // addr of *next* data word to be transmitted
-    // char_pos
-    // read;    // flag
-    // type;    // 1 bit
-    // dcw_residue; // residue in tally of last dcw
-} chan_status_t;
-#endif
-
-
 char* lpw2text(const lpw_t *p)
 {
     // WARNING: returns single static buffer
@@ -263,7 +267,6 @@ static int list_service(int chan, int first_list, int *ptro)
     debug_msg("IOM::list-service", "LPW: %s\n", lpw2text(&lpw));
 
     if (lpw.srel) {
-        // code 14 -- LPW had bit 23 on in Multics mode
         complain_msg("IOM::list-service", "LPW with bit 23 on is invalid for Multics mode\n");
         iom_fault(chan, __LINE__, 1, 014);  // BUG, want enum
         cancel_run(STOP_BUG);
@@ -279,75 +282,149 @@ static int list_service(int chan, int first_list, int *ptro)
 
     // Check for TRO or PTRO at time that LPW is fetched -- not later
 
-    *ptro = 0;
-    if (chan == IOM_CONNECT_CHAN)
+    if (ptro != NULL)
+        *ptro = 0;
+    int addr = lpw.dcw;
+    if (chan == IOM_CONNECT_CHAN) {
         if (lpw.nc == 0 && lpw.trunout == 0) {
             iom_fault(chan, __LINE__, 1, iom_ill_tly_cont);
+            cancel_run(STOP_WARN);
             return 1;
         }
-    // BUG 0,0 check for non connect channel
-    if (lpw.nc == 0 && lpw.trunout == 1)
-        if (lpw.tally == 0) {
-            if (chan == IOM_CONNECT_CHAN) {
+        if (lpw.nc == 0 && lpw.trunout == 1)
+            if (lpw.tally == 0) {
                 iom_fault(chan, __LINE__, 1, iom_lpw_tro_conn);
                 cancel_run(STOP_WARN);
                 return 1;
-            } else {
+            }
+        if (lpw.nc == 1) {
+            // we're not updating tally, so pretend it's at zero
+            if (ptro != NULL)
+                *ptro = 1;  // forced, see pg 23
+        }
+        // next: pull PCW from core
+    } else {
+        // non connect channel
+        // first, do an addr check for overflow
+        int overflow = 0;
+        if (lpw.ae) {
+            if (addr > lpw.size)
+                overflow = 1; // signal or record below
+            else
+                addr = lpw.lbnd + addr ;
+        }
+        // see flowchart 4.3.1b
+        if (lpw.nc == 0 && lpw.trunout == 0) {
+            if (overflow)
+                iom_fault(chan, __LINE__, 1, iom_256K_of);
+        }
+        if (lpw.nc == 0 && lpw.trunout == 1) {
+            // BUG: need looping or goto here
+            if (lpw.tally == 0) {
                 iom_fault(chan, __LINE__, 0, iom_lpw_tro);
                 cancel_run(STOP_WARN);
                 // no return
             }
-        }
-    if (lpw.nc == 1)
-        if (chan == IOM_CONNECT_CHAN) {
-            // we're not updating tally, so pretend it's at zero
-            *ptro = 1;
-        }
-
-
-    // addr check
-    int addr = lpw.dcw;
-    if (lpw.ae)
-        if (lpw.srel && chan != IOM_CONNECT_CHAN)
-            if (addr > lpw.size) {
-                iom_fault(chan, __LINE__, 0, iom_bndy_vio);
-                return 1;
-            } else
-                addr = lpw.lbnd + addr ;
-
-    // where should this be done?
-    MAY BE WRONG
-    if (lpw.nc == 0) {
-        if (chan ==IOM_CONNECT_CHAN)
-            lpw.tally -= 2;
-        else
-            -- lpw.tally;
-        if (lpw.tally == 0) {
-            *ptro = 1;
-        } else if (lpw.tally < 0) {
-            if (chan == IOM_CONNECT_CHAN) {
-                iom_fault(chan, __LINE__, 1, iom_lpw_tro_conn);
+            if (lpw.tally > 1) {
+                if (overflow) {
+                    iom_fault(chan, __LINE__, 1, iom_256K_of);
+                    cancel_run(STOP_WARN);
+                    return 1;
+                }
             }
-            else
-                iom_fault(chan, __LINE__, 0, iom_bndy_vio);
-            return 1;
         }
+        //if (lpw.ae)   {   // bit 20
+        //  // fault if in GCOS mode
+        //}
+        // next: Pull DCW using addr calculted above
     }
 
     int ret;
+
     if (chan == IOM_CONNECT_CHAN) {
         // Do next PCW  (0720201 at loc zero for bootload_tape_label.alm)
-VERIFY that all words in the list are PCWs (3.2.2)
-        ret = do_pcw(chan, addr);
+        ret = handle_pcw(chan, addr);
     } else {
         // flowchar allows looping on tdcw until idcw or dcw sent to channel
+        // BUG: need looping: (3.x) -- see Notes.iom
         ret = do_dcw(chan, addr);
     }
-// BUG: need looping: (3.x) -- see Notes.iom
+
+//-------------------------------------------------------------------------
+// ALL THE FOLLOWING HANDLED BY PART "D" of figure 4.3.1b and 4.3.1c
+//          if (pcw.chan == IOM_CONNECT_CHAN) {
+//              debug_msg("IOM::pcw", "Connect channel does not return status.\n");
+//              return ret;
+//          }
+//          // BUG: need to write status to channel (temp: todo chan==036)
+// update LPW for chan (not 2)
+// update DCWs as used
+// SCW in mbx
+// last, send an interrupt (still 3.0)
+// However .. conn chan does not interrupt, store status, use dcw, or use scw
+//-------------------------------------------------------------------------
+
+    // Part "D" of 4.3.1c
+
+    // BUG BUG ALL THE FOLLOWING IS BOTH CORRECT AND INCORRECT!!! Section 3.0 states
+    // BUG BUG that LPW for CONN chan is updated in core after each chan is given PCW
+    // BUG BUG Worse, below is prob for channels listed in dcw/pcw, not conn
+
+    if (chan_status.chan != IOM_CONNECT_CHAN)
+        send_chan_flags();
+
+    int write_lpw = 0;
+    int write_lpw_ext = 0;
+    int write_any = 1;
+    if (lpw.nc == 0) {
+        if (lpw.trunout == 1)
+            if (lpw.tally == 1)
+                if (ptro != NULL)
+                    *ptro = 1;
+            else if (lpw.tally == 0) {
+                write_any = 0;
+                if (chan == IOM_CONNECT_CHAN)
+                    iom_fault(chan, __LINE__, 1, iom_lpw_tro_conn);
+                else
+                    iom_fault(chan, __LINE__, 0, iom_bndy_vio); // BUG: might be wrong
+            }
+        if (write_any)
+            if (chan == IOM_CONNECT_CHAN) {
+                lpw.tally -= 2; // maybe should be one?
+                lpw.dcw += 2;   // pcw is two words
+            }
+            else {
+                -- lpw.tally;
+                ++ lpw.dcw;     // dcw is one word
+            }
+    } else  {
+        // note: ptro forced earlier
+        write_any = 0;
+    }
+
+int idcw = 0;   // BUG
+int tdcw = 0;   // BUG
+    if (lpw.nc == 0) {
+        write_lpw = 1;
+        if (idcw || first_list)
+            write_lpw_ext = 1;
+    } else {
+        // no update
+        if (idcw || first_list) {
+            write_lpw = 1;
+            write_lpw_ext = 1;
+        } else if (tdcw) 
+            write_lpw = 1;
+    }
+    //if (pcw.chan != IOM_CONNECT_CHAN) {
+    //  ; // BUG: write lpw
+    //}
+    // BUG: how do we get status for other channels?
+
 
     // BUG: need to loop over tally?
-    // complain_msg("IOM::list-sevice", "returning\n");
-    return 0;   // internal error
+    warn_msg("IOM::list-sevice", "returning\n");
+    return 1;   // internal error
 }
 
 static void iom_fault(int chan, int src_line, int is_sys, int signal)
@@ -358,16 +435,27 @@ static void iom_fault(int chan, int src_line, int is_sys, int signal)
 }
 
 
-int parse_pcw(pcw_t *p, int addr)
+int parse_pcw(pcw_t *p, int addr, int ext)
 {
     p->dev_cmd = getbits36(M[addr], 0, 6);
     p->dev_code = getbits36(M[addr], 6, 6);
     p->ext = getbits36(M[addr], 12, 6);
+    p->cp = getbits36(M[addr], 18, 3);
     p->mask = getbits36(M[addr], 21, 1);
     p->control = getbits36(M[addr], 22, 2);
     p->chan_cmd = getbits36(M[addr], 24, 6);
     p->chan_data = getbits36(M[addr], 30, 6);
-    p->chan = getbits36(M[addr+1], 3, 6);
+    if (ext) {
+        p->chan = getbits36(M[addr+1], 3, 6);
+        uint x = getbits36(M[addr+1], 9, 28);
+        if (x != 0) {
+            // BUG: Should only check if in GCOS or EXT GCOS Mode
+            complain_msg("IOM::pcw", "Page Table Pointer for model IOM-B detected\n");
+            cancel_run(STOP_BUG);
+        }
+    } else {
+        p->chan = -1;
+    }
 }
 
 char* pcw2text(const pcw_t *p)
@@ -380,38 +468,44 @@ char* pcw2text(const pcw_t *p)
 }
 
 
-static int do_pcw(int chan, int addr)
+static int handle_pcw(int chan, int addr)
 {
-    pcw_t pcw;
     debug_msg("IOM::pcw", "chan %d, addr 0%o\n", chan, addr);
-    parse_pcw(&pcw, addr);
+    pcw_t pcw;
+    parse_pcw(&pcw, addr, 1);
     debug_msg("IOM::pcw", "%s\n", pcw2text(&pcw));
     if (pcw.chan < 0 || pcw.chan >= 040) {  // 040 == 32 decimal
         iom_fault(chan, __LINE__, 1, iom_ill_chan); // BUG: what about ill-ser-req? -- is iom issuing a pcw or is channel requesting svc?
         return 1;
     }
-    switch(iom.channels[pcw.chan]) {
+    if (pcw.cp != 07 && chan == IOM_CONNECT_CHAN) {     // BUG: is 111 OK in IDCW?
+        iom_fault(chan, __LINE__, 1, iom_not_pcw_conn);
+        return 1;
+    }
+
+    if (pcw.mask) {
+        // BUG: set mask flags for channel?
+        complain_msg("IOM::pwc", "Mask not implemented\n");
+        cancel_run(STOP_BUG);
+        return 1;
+    }
+    return do_pcw(pcw.chan, &pcw);
+}
+
+
+static int do_pcw(int chan, pcw_t *p)
+{
+    int ret = 0;
+    chan_status.chan = chan;
+    switch(iom.channels[chan]) {
         case DEV_NONE:
             // BUG: no device connected, what's the fault code(s) ?
             iom_fault(chan, __LINE__, 0, 0);
             cancel_run(STOP_WARN);
             return 1;
         case DEV_TAPE: {
-            int major;
-            int substatus;
-            // BUG: update lpw in core after sending pcw to channel (3.0)
-            int ret = mt_iom_cmd(pcw.chan, pcw.dev_cmd, pcw.dev_code, &major, &substatus);
-            debug_msg("IOM::pcw", "MT returns major code 0%o substatus 0%o\n", major, substatus);
-            if (pcw.chan == IOM_CONNECT_CHAN) {
-                debug_msg("IOM::pcw", "Connect channel does not return status.\n");
-                return ret;
-            }
-            // BUG: need to write status to channel (temp: todo chan==036)
-// update LPW for chan (not 2)
-// update DCWs as used
-// SCW in mbx
-// last, send an interrupt (still 3.0)
-// However .. conn chan does not interrupt, store status, use dcw, or use scw
+            ret = mt_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chan_status.major, &chan_status.substatus);
+            debug_msg("IOM::pcw", "MT returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
             break;
         }
         default:
@@ -420,6 +514,27 @@ static int do_pcw(int chan, int addr)
             return 1;
     }
 
+    switch (p->control) {
+        case 0:
+            // do nothing, terminate
+            break;
+        case 2:
+            debug_msg("IOM::pcw", "Asking for list service\n");
+            list_service(chan, 1, NULL);
+            debug_msg("IOM::pcw", "Return from list service\n");
+            break;
+        case 3:
+            // BUG: set marker interrupt and proceed (list service)
+            complain_msg("IOM::pwc", "Set marker not implemented\n");
+            cancel_run(STOP_BUG);
+            break;
+        default:
+            complain_msg("IOM::pwc", "Bad PCW control == %d\n", p->control);
+            cancel_run(STOP_BUG);
+    }
+
+    // BUG: may need to request status service
+
     /* -- from orangesquid iom.c -- seems somewhat bogus
     read mbx at iom plus 4*pcw.chan
     take lpw from that loc; extract tally
@@ -427,9 +542,47 @@ static int do_pcw(int chan, int addr)
     extract addr
     for i = 0 .. tally; do-dcw(dcw+i)
     */
+
+    return ret;
 }
 
 static int do_dcw(int chan, int addr)
 {
     debug_msg("IOM::dwc", "chan %d, addr 0%o\n", chan, addr);
+    int cp = getbits36(M[addr], 18, 3);
+    if (cp == 7) {
+        // instr dcw
+        int ec = getbits36(M[addr], 21, 1);
+        if (ec) {
+            // BUG: Check LPW bit 23
+            // M[addr] = setbits36(M[addr], 12, 6, present_addr_extension);
+            complain_msg("IOW::DCW", "I-DCW bit EC not implemented\n");
+            cancel_run(STOP_BUG);
+        }
+        debug_msg("IOW::DCW", "I-DCW found\n");
+        pcw_t pcw;
+        parse_pcw(&pcw, addr, 0);
+        pcw.mask = 0;   // EC not mask
+        pcw.chan = chan;    // Real HW would not populate
+        debug_msg("IOM::dcw", "I-DCW: %s\n", pcw2text(&pcw));
+        return do_pcw(chan, &pcw);
+    } else {
+        int type = getbits36(M[addr], 22, 2);
+        if (type == 2) {
+            // transfer
+            complain_msg("IOW::DCW", "Transfer-DCW not implemented\n");
+            return 1;
+        } else {
+            // IOTD, IOTP, or IONTP -- i/o (non) transfer
+            uint daddr = getbits36(M[addr], 0, 18);
+            uint cp = getbits36(M[addr], 18, 3);
+            uint tally = getbits36(M[addr], 24, 12);
+            debug_msg("IOW::DCW", "Data DCW: addr=0%o, cp=0%o, tally=%d\n", daddr, cp, tally);
+            return 1;
+        }
+    }
+}
+
+int send_chan_flags()
+{
 }

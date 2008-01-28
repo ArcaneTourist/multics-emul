@@ -553,14 +553,14 @@ static int do_op(instr_t *ip)
                 return ret;
             }
             case opcode0_qlr: {
-                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
+                unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 reg_Q = lrotate36(reg_Q, n);
                 IR.zero = reg_Q == 0;
                 IR.neg = bit36_is_neg(reg_Q);
                 return 0;
             }
             case opcode0_qls: { // Q reg left shift
-                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
+                unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 int init_neg = bit36_is_neg(reg_Q);
                 reg_Q = (reg_Q << n) & MASK36;
                 IR.zero = reg_Q == 0;
@@ -569,7 +569,8 @@ static int do_op(instr_t *ip)
                 return 0;
             }
             case opcode0_qrl: {
-                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
+                unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
+                t_uint64 qold = reg_Q;
                 reg_Q >>= n;
                 IR.zero = reg_Q == 0;
                 IR.neg = bit36_is_neg(reg_Q);
@@ -587,7 +588,7 @@ static int do_op(instr_t *ip)
 #endif
             }
             case opcode0_qrs: { // Q Right Shift (with sign fill)
-                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
+                unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 int init_neg = bit36_is_neg(reg_Q);
                 reg_Q >>= n;
                 if (init_neg) {
@@ -601,14 +602,14 @@ static int do_op(instr_t *ip)
                 return 0;
             }
             case opcode0_alr: {
-                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
+                unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 reg_A = lrotate36(reg_A, n);
                 IR.zero = reg_A == 0;
                 IR.neg = bit36_is_neg(reg_A);
                 return 0;
             }
             case opcode0_als: { // A reg left shift
-                int n = TPR.CA & 177;   // bits 11..17 of 18bit CA
+                int n = TPR.CA & 0177;  // bits 11..17 of 18bit CA
                 //debug_msg("OPU::als", "CA = 0%Lo; bits 11..17 = %0o\n", (t_uint64) TPR.CA, n);
                 //debug_msg("OPU::als", "A = (%0Lo << %d) ==> %0Lo\n", reg_A, n, (reg_A << n) & MASK36);
                 int init_neg = bit36_is_neg(reg_A);
@@ -619,7 +620,7 @@ static int do_op(instr_t *ip)
                 return 0;
             }
             case opcode0_arl: { // A reg right logical shift
-                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
+                unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 reg_A >>= n;
                 IR.zero = reg_A == 0;
                 IR.neg = bit36_is_neg(reg_A);
@@ -627,7 +628,7 @@ static int do_op(instr_t *ip)
             }
             case opcode0_llr: {     // Long left rotate
                 int init_neg = bit36_is_neg(reg_A);
-                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
+                unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 lrotate72(&reg_A, &reg_Q, n);
                 IR.zero = reg_A == 0 && reg_Q == 0;
                 IR.neg = bit36_is_neg(reg_A);
@@ -636,7 +637,7 @@ static int do_op(instr_t *ip)
             }
             case opcode0_lls: {     // Long left shift
                 int init_neg = bit36_is_neg(reg_A);
-                unsigned n = TPR.CA & 177;  // bits 11..17 of 18bit CA
+                unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 if (n >= 72)
                     n %= 72;
                 if (n != 0) {
