@@ -333,9 +333,14 @@ static const t_uint64 MASK18 = ~(~((t_uint64)0)<<18);   // lower 18 bits all one
     the (i)th bit. */
 #define bitset36(word,i) ( (word) | ( (uint64_t) 1 << (35 - i)) )
 #define bitclear36(word,i) ( (word) & ~ ( (uint64_t) 1 << (35 - i)) )
+extern void complain_msg(const char* who, const char* format, ...);
 static inline t_uint64 getbits36(t_uint64 x, int i, int n) {
     // bit 35 is right end, bit zero is 36th from the left
-    return (x >> (35-i-n+1)) & ~ (~0 << n);
+    int shift = 35-i-n+1;
+    if (shift < 0 || shift > 35) {
+        complain_msg("getbits36", "bad args (%Lo,i=%d,n=%d)\n", x, i, n);
+    } else
+        return (x >> shift) & ~ (~0 << n);
 }
 static inline t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
 {
@@ -345,13 +350,23 @@ static inline t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
     t_uint64 mask = ~ (~0<<n);  // n low bits on
         // 1 => ...1
         // 2 => ..11
+    int shift = 36 - p - n;
+    if (shift < 0 || shift > 35) {
+        complain_msg("setbit36", "bad args\n");
+        return 0;
+    }
     mask <<= 36 - p - n;    // shift 1s to proper position; result 0*1{n}0*
             // 0,1 => 35 => 1000... (35 zeros)
             // 1,1 => 34 => 0100... (34 z)
             // 0,2 = 34 => 11000 (34 z)
             // 1,2 = 33 => 011000 (33 z)
             // 35,1 => 0 => 0001 (0 z)
-    return (x & ~ mask) | (val << (36 - p - n));
+    t_uint64 temp1 = (x & ~ mask) | (val << (36 - p - n));
+    t_uint64 temp2 = (x & ~ mask) | ((val&MASKBITS(n)) << (36 - p - n));
+    if (temp1 != temp2) {
+        complain_msg("setbits36", "x=0%Lo, p=%d, n=%d, val=0%Lo: mask=0%Lo: result 0%Lo vs 0%Lo\n", x, p, n, val, mask, temp1, temp2);
+    }
+    return temp2;
 }
 
 

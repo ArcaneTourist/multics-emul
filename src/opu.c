@@ -271,7 +271,7 @@ static int do_op(instr_t *ip)
                 }
                 return ret;
             }
-            opcode0_div: {
+            case opcode0_div: {
                 int ret;
                 t_uint64 word;
                 if ((ret = fetch_op(ip, &word)) == 0) {
@@ -284,8 +284,9 @@ static int do_op(instr_t *ip)
                         IR.zero = w == 0;
                         ret = 1;
                     } else {
-                        reg_Q = (q / w) | MASK36;
-                        reg_A = (q % w) | MASK36;
+                        debug_msg("OPU::div", "0%Lo/0%Lo => 0%Lo/0%Lo)\n", reg_Q, word, q, w);
+                        reg_Q = (q / w) & MASK36;
+                        reg_A = (q % w) & MASK36;
                         IR.zero = reg_Q == 0;
                         IR.neg = bit36_is_neg(reg_Q);
                     }
@@ -376,7 +377,7 @@ static int do_op(instr_t *ip)
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else {
-                    debug_msg("OPU::opcode::sscr", "bad argument, CA 0%o\n", TPR.CA);
+                    debug_msg("OPU::opcode::sscr", "bad argument, CA 0%Lo\n", TPR.CA);
                     cancel_run(STOP_BUG);
                     ret = 1;
                     // error
@@ -394,7 +395,6 @@ static int do_op(instr_t *ip)
                 uint y = (TPR.CA >> 16) & 3;    // 18bit CA
                 uint ea = y << 15;
                 debug_msg("OPU::opcode::rscr", "EA is 0%04o\n", ea);
-                //debug_msg("OPU::opcode::rscr", "CA is 0%04o (0%03ox=>0%03o)\n", TPR.CA, (TPR.CA >> 3), TPR.CA & ~7);
                 debug_msg("OPU::opcode::rscr", "CA is 0%04Lo (0%03Lo=>0%03Lo)\n", TPR.CA, (TPR.CA >> 3), TPR.CA & ~7);
                 if ((TPR.CA & ~7) == ea) {
                     ; // SC mode reg
@@ -523,13 +523,13 @@ static int do_op(instr_t *ip)
             case opcode0_ldx5:
             case opcode0_ldx6:
             case opcode0_ldx7: {
-                // BUG: manual says bits 0..17, but alm program trying to use constant 2
+                // BUG: manual says bits 0..17, but alm program trying to use constant 2.  Resolved?
                 int n = op & 07;
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
                     reg_X[n] = (word >> 18) & MASK18;   // reg is 18 bits
-                    debug_msg("OPU::instr::ldx*", "X[%d]: Loaded 0%Lo => 0%Lo (0%Lo aka 0%Lo)\n", n, word, word >> 18, reg_X[n], reg_X[n] & MASK18);
+                    debug_msg("OPU::instr::ldx*", "X[%d]: Loaded 0%Lo => 0%Lo (0%o aka 0%o)\n", n, word, word >> 18, reg_X[n], reg_X[n] & MASK18);
                     IR.zero = reg_X[n] == 0;
                     IR.neg = bit18_is_neg(reg_X[n]);
                 }
@@ -1045,6 +1045,7 @@ static int do_op(instr_t *ip)
                 int ret = op_add(ip, &word);
                 if (ret == 0)
                     ret = store_word(TPR.CA, word);
+                return ret;
             }
             case opcode0_sba: { // Subtract from A
                 t_uint64 word;
@@ -1061,6 +1062,19 @@ static int do_op(instr_t *ip)
                 if (ret == 0)
                     if ((ret = negate72(&word1, &word2)) == 0)
                         ret = add72(reg_A, reg_Q, &word1, &word2);
+                return ret;
+            }
+            case opcode0_sblq: {    // Subtract logical from Q
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    uint sign = reg_Q >> 35;
+                    reg_Q = (reg_Q - word) & MASK36;
+                    uint rsign = reg_Q >> 35;
+                    IR.zero = reg_Q == 0;
+                    IR.neg = rsign;
+                    IR.carry = sign != rsign;
+                }
                 return ret;
             }
             case opcode0_xed: {
@@ -1080,7 +1094,7 @@ static int do_op(instr_t *ip)
                     debug_msg("OPU::opcode::xed", "fetch even: error or fault\n");
                     return 1;   // faulted
                 }
-                debug_msg("OPU::opcode::xed", "executing even instr at %ld\n", (long) addr);
+                debug_msg("OPU::opcode::xed", "executing even instr at 0%Lo\n", addr);
                 if (do_op(&IR) != 0) {
                     debug_msg("OPU::opcode::xed", "fault or error executing even instr\n");
                     return 1;
@@ -1094,7 +1108,7 @@ static int do_op(instr_t *ip)
                         debug_msg("OPU::opcode::xed", "fetch odd: error or fault\n");
                         return 1;   // faulted
                     }
-                    debug_msg("OPU::opcode::xed", "executing odd instr at %ld\n", (long) addr);
+                    debug_msg("OPU::opcode::xed", "executing odd instr at 0%Lo\n", addr);
                     if (do_op(&IR) != 0) {
                         debug_msg("OPU::opcode::xed", "fault or error executing odd instr\n");
                         return 1;

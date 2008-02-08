@@ -180,7 +180,7 @@ int addr_mod(instr_t *ip)
                 case 017:
                     TPR.CA = off + sign18(reg_X[td&07]);
                     // if (td&7 == 5)
-                        debug_msg("APU", "Tm=%u,Td=%02u: offset 0%o + X[%d]=0%Lo(%+Ld decimal)==>0%o(+%Ld) yields 0%Lo (%+Ld decimal)\n",
+                        debug_msg("APU", "Tm=0%o,Td=%02o: offset 0%o + X[%d]=0%o(%+d decimal)==>0%o(+%d) yields 0%Lo (%+Ld decimal)\n",
                             tm, td, off, td&7, reg_X[td&7], reg_X[td&7], sign18(reg_X[td&7]), sign18(reg_X[td&7]), TPR.CA, TPR.CA);
                     break;
             }
@@ -197,8 +197,48 @@ int addr_mod(instr_t *ip)
                     debug_msg("APU", "IT with Td zero not valid in instr word.\n");
                     fault_gen(f1_fault);    // This mode not ok in instr word
                     break;
+                case 014: {
+                    t_uint64 iword;
+                    int ret;
+                    int iloc = TPR.CA;
+                    if ((ret = fetch_word(TPR.CA, &iword)) == 0) {
+                        int addr = getbits36(iword, 0, 18);
+                        int tally = getbits36(iword, 18, 12);
+                        int tag = getbits36(iword, 30, 6);
+                        ++tally;
+                        tally &= MASKBITS(12);  // wrap from 4095 to zero
+                        IR.tally_runout = (tally == 0); // BUG: do we need to fault?
+                        --addr;
+                        addr &= MASK18; // wrap from zero to 2^18-1
+                        iword = setbits36(iword, 0, 18, addr);
+                        iword = setbits36(iword, 18, 12, tally);
+                        TPR.CA = addr;
+                        ret = store_word(iloc, iword);
+                    }
+                    return ret;
+                }
+                case 016: {
+                    t_uint64 iword;
+                    int ret;
+                    int iloc = TPR.CA;
+                    if ((ret = fetch_word(TPR.CA, &iword)) == 0) {
+                        int addr = getbits36(iword, 0, 18);
+                        int tally = getbits36(iword, 18, 12);
+                        int tag = getbits36(iword, 30, 6);
+                        TPR.CA = addr;
+                        --tally;
+                        tally &= MASKBITS(12);  // wrap from zero to 4095
+                        IR.tally_runout = (tally == 0); // BUG: do we need to fault?
+                        ++addr;
+                        addr &= MASK18; // wrap from 2^18-1 to zero
+                        iword = setbits36(iword, 0, 18, addr);
+                        iword = setbits36(iword, 18, 12, tally);
+                        ret = store_word(iloc, iword);
+                    }
+                    return ret;
+                }
                 default:
-                    complain_msg("APU", "IT with Td %d not implmented.\n", td);
+                    complain_msg("APU", "IT with Td 0%o not implmented.\n", td);
                     cancel_run(STOP_BUG);
                     return 1;
             }

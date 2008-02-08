@@ -49,11 +49,28 @@ void out_msg(const char* format, ...)
 static void msg(const char* tag, const char *who, const char* format, va_list ap)
 {
     fflush(stdout);
-    //printf("%s:%*s %s: ", who, 15-strlen(who), "", tag);
     printf("%s: %*s %s: %*s", tag, 7-strlen(tag), "", who, 18-strlen(who), "");
-    vprintf(format, ap);
-    if (*(format + strlen(format) - 1) == '\n') {
-        printf("\r");
+
+    // SIMH does something odd with the terminal, so output CRNL
+    int len =strlen(format);
+    int nl = *(format + len - 1) == '\n';
+    if (nl) {
+        char *f = malloc(len + 2);
+        if (f) {
+            strcpy(f, format);
+            *(f + len - 1) = '\r';
+            *(f + len) = '\n';
+            vprintf(f, ap);
+            free(f);
+        } else {
+            vprintf(format, ap);
+            if (*(format + strlen(format) - 1) == '\n')
+                printf("\r");
+        }
+    } else {
+        vprintf(format, ap);
+        if (*(format + strlen(format) - 1) == '\n')
+            printf("\r");
     }
     fflush(stdout);
 }

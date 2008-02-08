@@ -96,7 +96,8 @@ PTWAM_t PTWAM[16];  // Page Table Word Associative Memory, 51 bits
 REG cpu_reg[] = {
     // name="PC", loc=PC, radix=<8>, width=36, offset=<0>, depth=<1>, flags=, qptr=
     { ORDATA (IC, saved_IC, 18) },
-    { ORDATA (IR, saved_IR, 14), REG_RO },
+    // { ORDATA (IR, saved_IR, 14), REG_RO },
+    { GRDATA (IR, saved_IR, 2, 14, 0), REG_RO },
     { ORDATA (A, reg_A, 36) },
     { ORDATA (Q, reg_Q, 36) },
     { ORDATA (E, reg_E, 36) },
@@ -297,7 +298,8 @@ void cancel_run(enum sim_stops reason)
     (void) sim_cancel_step();
     // sim_interval = -100; // insufficient
     // sim_interval = 0;
-    cancel = reason;
+    if (cancel == 0 || reason < cancel)
+        cancel = reason;
     debug_msg("CU", "Cancel requested: %d\n", reason);
 }
 
@@ -373,18 +375,18 @@ debug_msg("MAIN", "IC: %o, CYCLE: %u, SIM INTERVAL: %d, TR: %d\n", PPR.IC, ncycl
 
     // BUG: pack private variables into SIMH's world
     saved_IC = PPR.IC;
-    saved_IR =
-        (IR.zero << 18) |
-        (IR.neg << 19) |
-        (IR.carry << 20) |
-        (IR.overflow << 21) |
-        (IR.overflow_mask << 24) |
-        (IR.tally_runout << 25) |
-        (IR.not_bar_mode << 28) |
-        (IR.mid_instr_intr_fault << 30) |
-        (IR.abs_mode << 31) |
-        ((t_uint64) IR.hex_mode << 32);
-    saved_IR >>= 18;    // chop down to lower 14 bits
+    t_uint64 temp =
+        (IR.zero << (35-18)) |
+        (IR.neg << (35-19)) |
+        (IR.carry << (35-20)) |
+        (IR.overflow << (35-21)) |
+        (IR.overflow_mask << (35-24)) |
+        (IR.tally_runout << (35-25)) |
+        (IR.not_bar_mode << (35-28)) |
+        (IR.mid_instr_intr_fault << (35-30)) |
+        (IR.abs_mode << (35-31)) |
+        (IR.hex_mode << (35-32));
+    saved_IR = (temp >> 18);    // chop down to lower 14 bits
         
     return reason;
 }
@@ -913,7 +915,15 @@ void anal36 (const char* tag, t_uint64 word)
 char *bin2text(t_uint64 word, int n)
 {
     // WARNING: static buffer
-    static char str[65];
+    static char str1[65];
+    static char str2[65];
+    static char *str = NULL;
+    if (str == NULL)
+        str = str1;
+    else if (str == str1)
+        str = str2;
+    else
+        str = str1;
     str[n] = 0;
     int i;
     for (i = 0; i < n; ++ i) {
@@ -928,7 +938,9 @@ static t_stat cpu_ex (t_value *eval_array, t_addr addr, UNIT *uptr, int32 switch
 {
     // BUG: sanity check args
     // NOTE: We ignore UNIT, because all CPUS see the same memory
-    memcpy(eval_array, &M[addr], sizeof(M[0]) * sim_emax);
+    // SIMH Documention is incorrect; SIMH code expects examine() to only
+    // write a single value (often a member of an array of size sim_emax)
+    memcpy(eval_array, &M[addr], sizeof(M[0]));
     return 0;
 }
 
