@@ -257,9 +257,27 @@ static void init_memory_iox()
 }
 
 
+extern UNIT cpu_unit;   // BUG: put in hdr
+
 t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
 {
-    return SCPE_ARG;
+    // debug_msg("SYS::fprint_sym", "addr=0%Lo, valp=%p, unit=%p, sw=0%o\n",
+    //  (t_uint64) addr, val, uptr, sw);
+#if 1
+    if (uptr == &cpu_unit) {
+        // memory request
+        if (sw & SWMASK('M')) {
+            char *instr = print_instr(M[addr]);
+            fprintf(ofile, "%012Lo %s\n", M[addr], instr);
+        } else if (sw & SWMASK('L')) {
+            fprintf(ofile, "%012Lo %s\n", M[addr], print_lpw(addr));
+        } else {
+            fprintf(ofile, "%012Lo", M[addr]);
+        }
+        return SCPE_OK;
+    } else
+        return SCPE_ARG;
+#endif
 }
 
 t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)

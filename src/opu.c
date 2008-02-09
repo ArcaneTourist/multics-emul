@@ -28,6 +28,31 @@ extern int activate_timer();
 
 // ============================================================================
 
+char* print_instr(t_uint64 word)
+{
+    static char buf[100];
+    instr_t instr;
+    decode_instr(&instr, word);
+    instr_t *ip = &instr;
+
+    uint op = ip->opcode;
+    char *opname = opcodes2text[op];
+    if (opname == NULL) {
+        strcpy(buf, "<illegal instr>");
+    } else {
+        int x = ip->offset;
+        if (bit18_is_neg(x))
+            x = - ((1<<18) - x);
+            sprintf(buf, "%s, offset 0%06o(%+d), inhibit %u, pr %u, tag 0%03o(Tm=%u,Td=0%02o)",
+            opname, 
+            ip->offset, x, 
+            ip->inhibit, ip->pr_bit, ip->tag, ip->tag >> 4, ip->tag & 017);
+    }
+    return buf;
+}
+
+// ============================================================================
+
 void execute_instr(void)
 {
     // execute whatever instruction is in the IR (not whatever the IC points at)

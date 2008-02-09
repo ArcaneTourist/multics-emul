@@ -107,10 +107,10 @@ static void iom_fault(int chan, int src_line, int is_sys, int signal);
 static int list_service(int chan, int first_list, int *ptro, int *addr);
 static int handle_pcw(int chan, int addr);
 static int do_channel(int chan, pcw_t *p);
-static int do_dcw(int chan, int addr);
+static int do_dcw(int chan, int addr, int *control, int *hack);
 static int lpw_write(int chan, int chanloc, const lpw_t* lpw);
 static int do_conn_chan(void);
-static char* lpw2text(const lpw_t *p);
+static char* lpw2text(const lpw_t *p, int conn);
 static char* pcw2text(const pcw_t *p);
 static int parse_lpw(lpw_t *p, int addr, int is_conn);
 static int parse_pcw(pcw_t *p, int addr, int ext);
@@ -209,32 +209,45 @@ static int do_channel(int chan, pcw_t *p)
     // Second, check if PCW tells use to request a list service, send an interrupt, etc
     // BUG: A loop for calling list service and doing returned DCWs should probably be here
 
-    if (ret == 0)
-        switch (p->control) {
+    int control = p->control;
+    int first_list = 1;
+    while (ret == 0 && control != 0) {
+        switch (control) {
             case 0:
                 // do nothing, terminate
                 break;
             case 2: {
                 int addr;
                 debug_msg("IOM::do-chan", "Asking for list service\n");
-                if (list_service(chan, 1, NULL, &addr) != 0) {
+                if (list_service(chan, first_list, NULL, &addr) != 0) {
                     ret = 1;
                     warn_msg("IOM::do-chan", "List service indicates failure\n");
                 } else {
                     debug_msg("IOM::do-chan", "List service yields DCW at addr 0%o\n", addr);
-                    do_dcw(chan, addr);
+                    control = -1;
+                    int hack = 0;
+                    ret = do_dcw(chan, addr, &control, &hack);
+                    debug_msg("IOM::do-chan", "Back from latest do_dcw (at %0o); control = %d\n", addr, control);
+                    if (hack && first_list && chan_status.major == 0) {
+                        debug_msg("IOM::do-chan", "HACK: Asking for another list service (contrary to 43A239854)\n");
+                        control = 2;
+                    }
                 }
+                first_list = 0;
                 break;
             }
             case 3:
                 // BUG: set marker interrupt and proceed (list service)
                 complain_msg("IOM::do-chan", "Set marker not implemented\n");
                 cancel_run(STOP_BUG);
+                ret = 1;
                 break;
             default:
-                complain_msg("IOM::do-chan", "Bad PCW control == %d\n", p->control);
+                complain_msg("IOM::do-chan", "Bad PCW control == %d\n", control);
                 cancel_run(STOP_BUG);
+                ret = 1;
         }
+    }
 
     // Next: probably loop performing DCWs and asking for list service
 
@@ -284,7 +297,7 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
 
     *addrp = -1;
     parse_lpw(&lpw, chanloc, chan == IOM_CONNECT_CHAN);
-    debug_msg("IOM::list-service", "LPW: %s\n", lpw2text(&lpw));
+    debug_msg("IOM::list-service", "LPW: %s\n", lpw2text(&lpw, chan == IOM_CONNECT_CHAN));
 
     if (lpw.srel) {
         complain_msg("IOM::list-service", "LPW with bit 23 on is invalid for Multics mode\n");
@@ -533,7 +546,7 @@ static int send_pcw(int chan, pcw_t *p)
 }
 
 
-static int do_dcw(int chan, int addr)
+static int do_dcw(int chan, int addr, int *control, int *hack)
 {
     debug_msg("IOM::dwc", "chan %d, addr 0%o\n", chan, addr);
     int cp = getbits36(M[addr], 18, 3);
@@ -552,6 +565,8 @@ static int do_dcw(int chan, int addr)
         pcw.mask = 0;   // EC not mask
         pcw.chan = chan;    // Real HW would not populate
         debug_msg("IOM::dcw", "I-DCW: %s\n", pcw2text(&pcw));
+        *control = pcw.control;
+        *hack = 1;  // do_pcw with either return non zero or will set chan_status.major
         return do_pcw(chan, &pcw);
     } else {
         int type = getbits36(M[addr], 22, 2);
@@ -571,14 +586,25 @@ static int do_dcw(int chan, int addr)
     }
 }
 
+char* print_lpw(t_addr addr)
+{
+    lpw_t temp;
+    int chan = (addr - IOM_A_MBX) / 4;
+    parse_lpw(&temp, addr, chan == IOM_CONNECT_CHAN);
+    static char buf[80];
+    sprintf(buf, "Chan 0%o -- %s", chan, lpw2text(&temp, chan == IOM_CONNECT_CHAN));
+    return buf;
+}
 
-static char* lpw2text(const lpw_t *p)
+static char* lpw2text(const lpw_t *p, int conn)
 {
     // WARNING: returns single static buffer
     static char buf[80];
-    sprintf(buf, "[dcw=0%o ires=%d hrel=%d ae=%d nc=%d trun=%d srel=%d tally=0%o] [lbnd=0%o size=0%o(%d) idcw=0%o]",
-        p->dcw, p->ires, p->hrel, p->ae, p->nc, p->trunout, p->srel, p->tally,
-        p->lbnd, p->size, p->size, p->idcw);
+    sprintf(buf, "[dcw=0%o ires=%d hrel=%d ae=%d nc=%d trun=%d srel=%d tally=0%o]",
+        p->dcw, p->ires, p->hrel, p->ae, p->nc, p->trunout, p->srel, p->tally);
+    if (!conn)
+        sprintf(buf+strlen(buf), " [lbnd=0%o size=0%o(%d) idcw=0%o]",
+            p->lbnd, p->size, p->size, p->idcw);
     return buf;
 }
 
@@ -613,8 +639,8 @@ int lpw_write(int chan, int chanloc, const lpw_t* p)
     debug_msg("IOM::lpw_write", "Chan 0%o: Addr 0%o had %012o %012o\n", chan, chanloc, M[chanloc], M[chanloc+1]);
     lpw_t temp;
     parse_lpw(&temp, chanloc, chan == IOM_CONNECT_CHAN);
-    debug_msg("IOM::lpw_write", "Chan 0%o: Addr 0%o had: %s\n", chan, chanloc, lpw2text(&temp));
-    debug_msg("IOM::lpw_write", "Chan 0%o: Addr 0%o new: %s\n", chan, chanloc, lpw2text(p));
+    //debug_msg("IOM::lpw_write", "Chan 0%o: Addr 0%o had: %s\n", chan, chanloc, lpw2text(&temp, chan == IOM_CONNECT_CHAN));
+    //debug_msg("IOM::lpw_write", "Chan 0%o: Addr 0%o new: %s\n", chan, chanloc, lpw2text(p, chan == IOM_CONNECT_CHAN));
     t_uint64 word = 0;
     //word = setbits36(0, 0, 18, p->dcw & MASK18);
     word = setbits36(0, 0, 18, p->dcw);
