@@ -69,14 +69,14 @@ IR_t IR;        // Indicator register
 static t_uint64 saved_IR;
 // static int32 IC; // APU (appending unit) Instruction Counter, 18 bits -- see PPR.IC !!!
 static t_uint64 saved_IC;
-static t_uint64 BAR;    // Base Addr Register; 18 bits
-t_uint64 reg_TR;        // Timer Reg, 27 bits -- only valid after calls to SIMH clock routines
+BAR_reg_t BAR;      // Base Addr Register; 18 bits
+//static uint32 saved_BAR;
+uint32 reg_TR;      // Timer Reg, 27 bits -- only valid after calls to SIMH clock routines
 static t_uint64 RALR;   // Ring Alarm Reg, 3 bits
-static t_uint64 PR[8];  // Pointer Registers, 42 bits
-static t_uint64 AR[8];  // Address Registers, 24 bits
+AR_PR_t AR_PR[8];   // Combined Pointer Registers (42 bits) and Address Registers (24 bits)
 PPR_t PPR;      // Procedure Pointer Reg, 37 bits, internal only
 TPR_t TPR;      // Temporary Pointer Reg, 42 bits, internal only
-// DSBR;    // Descriptor Segment Base Register, 51 bits
+DSBR_t DSBR;    // Descriptor Segment Base Register, 51 bits
 SDWAM_t SDWAM[16];  // Segment Descriptor Word Associative Memory, 88 bits
 PTWAM_t PTWAM[16];  // Page Table Word Associative Memory, 51 bits
 // static fault_reg_t FR;   // Fault Register, 35 bits
@@ -120,7 +120,7 @@ REG cpu_reg[] = {
 //static UNIT cpu_unit = {
 UNIT cpu_unit = {
     // TODO: idle svc
-    UDATA (NULL, UNIT_FIX|UNIT_BINK, MAXMEMSIZE)
+    UDATA (NULL, UNIT_FIX|UNIT_BINK|UNIT_IDLE, MAXMEMSIZE)
 };
 
 static MTAB cpu_mod[] = {
@@ -145,13 +145,13 @@ DEVICE cpu_dev = {
 
 extern t_stat clk_svc(UNIT *up);
 
-UNIT TR_clk_unit = { UDATA(&clk_svc, UNIT_IDLE, 0) };   // BUG: Does UNIT_IDLE make sense?
+UNIT TR_clk_unit = { UDATA(&clk_svc, UNIT_IDLE, 0) };
 
 extern t_stat mt_svc(UNIT *up);
 UNIT mt_unit = {
     // one drive
-    // BUG: other SIMH tape sims don't set UNIT_SEQ
-    UDATA (&mt_svc, UNIT_ATTABLE | UNIT_SEQ | UNIT_ROABLE | UNIT_DISABLE, 0)
+    // NOTE: other SIMH tape sims don't set UNIT_SEQ
+    UDATA (&mt_svc, UNIT_ATTABLE | UNIT_SEQ | UNIT_ROABLE | UNIT_DISABLE | UNIT_IDLE, 0)
 };
 
 DEVICE tape_dev = {
@@ -216,6 +216,31 @@ void decode_instr(instr_t *ip, t_uint64 word);
 
 void tape_block(unsigned char *p, uint32 len, uint32 addr);
 
+
+//=============================================================================
+
+static int32 sign18(t_uint64 x)
+{
+    if (bit18_is_neg(x)) {
+        int32 r = - ((1<<18) - (x&MASK18));
+        // debug_msg("APU::sign18", "0%Lo => 0%o (%+d decimal)\n", x, r, r);
+        return r;
+    }
+    else
+        return x;
+}
+
+
+static int32 sign15(uint x)
+{
+    if (bit_is_neg(x,15)) {
+        int32 r = - ((1<<15) - (x&MASKBITS(15)));
+        debug_msg("sign15", "0%Lo => 0%o (%+d decimal)\n", x, r, r);
+        return r;
+    }
+    else
+        return x;
+}
 
 //=============================================================================
 
@@ -355,7 +380,8 @@ ninstr = 0;
             else
                 debug_msg("MAIN::clock", "TR is running with %d time units left.\n", t);
         }
-printf("\n\r"); fflush(stdout);
+// fflush(stdout); printf("\n\r"); fflush(stdout);
+fflush(stdout); printf("\n"); fflush(stdout);
 debug_msg("MAIN", "IC: %o, CYCLE: %u, SIM INTERVAL: %d, TR: %d\n", PPR.IC, ncycles, sim_interval, t);
         reason = control_unit();
         ++ ncycles;
@@ -367,11 +393,17 @@ debug_msg("MAIN", "IC: %o, CYCLE: %u, SIM INTERVAL: %d, TR: %d\n", PPR.IC, ncycl
     }
 
     uint32 delta = sim_os_msec() - start;
+#if 0
     if (delta == 0)
         warn_msg("CU", "Step: zero seconds: %d cycles, %d instructions\n", ncycles, ninstr);
     else
         warn_msg("CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
             (float) delta / 1000, ncycles, ncycles*1000/delta, ninstr, ninstr*1000/delta);
+#else
+    if (delta > 2000)
+        warn_msg("CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
+            (float) delta / 1000, ncycles, ncycles*1000/delta, ninstr, ninstr*1000/delta);
+#endif
 
     // BUG: pack private variables into SIMH's world
     saved_IC = PPR.IC;
@@ -428,7 +460,7 @@ t_stat control_unit(void)
     // BUG: Check non group 7 faults?  No, expect cycle to have been reset to FAULT_cycle
 
     int reason = 0;
-    int break_on_fault = 1; // BUG: causes incorrect results
+    int break_on_fault = 1;
 
     switch(cycle) {
         case FETCH_cycle:
@@ -550,7 +582,9 @@ t_stat control_unit(void)
             uint addr = switches.FLT_BASE + 2 * fault; // ABSOLUTE mode
             // Force computed addr and xed opcode into the instruction
             // register and execute (during FAULT CYCLE not EXECUTE CYCLE).
-            cu.IR.offset = addr;
+            cu.IR.addr.raw18 = addr;
+            cu.IR.addr.offset = addr;
+            cu.IR.addr.soffset = sign18(addr);  // unused; for debug
             cu.IR.opcode = (opcode0_xed << 1);
             cu.IR.inhibit = 1;
             cu.IR.pr_bit = 0;
@@ -858,10 +892,19 @@ int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
 
 void decode_instr(instr_t *ip, t_uint64 word)
 {
-    ip->offset = getbits36(word, 0, 18);
     ip->opcode = getbits36(word, 18, 10);
     ip->inhibit = getbits36(word, 28, 1);
     ip->pr_bit = getbits36(word, 29, 1);
+    ip->addr.raw18 = getbits36(word, 0, 18);
+    if (ip->pr_bit == 0) {
+        ip->addr.pr = 0;
+        ip->addr.offset = ip->addr.raw18;
+        ip->addr.soffset = sign18(ip->addr.raw18);
+    } else {
+        ip->addr.pr = ip->addr.raw18 >> 15;
+        ip->addr.offset = ip->addr.raw18 & MASKBITS(15);
+        ip->addr.soffset = sign15(ip->addr.offset);
+    }
     ip->tag = getbits36(word, 30, 6);
     ip->is_value = 0;   // OPU or APU will set if appropriate
     //ip->value = 0;

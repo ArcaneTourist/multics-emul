@@ -1,6 +1,8 @@
 /*
     iom.c
         See: Document 43A239854 -- 6000B I/O Multiplexer --  43A239854_600B_IOM_Spec_Jul75.pdf
+        See also: http://www.multicians.org/fjcc5.html -- Communications and Input/Output Switching in a Multiplex Computing System
+        See also: Patents: 4092715, 4173783, 1593312
 
     3.10 some more physical switches
 
@@ -9,7 +11,6 @@
 
 #include "hw6180.h"
 #include <sys/time.h>
-typedef unsigned t_flag;
 
 #define IOM_A_MBX 01400     /* location of mailboxes for IOM A */
 #define IOM_CONNECT_CHAN 2
@@ -39,12 +40,12 @@ enum iom_user_faults {  // aka central status
 
 typedef struct {
     uint32 dcw; // bits 0..17
-    t_flag ires;    // bit 18; IDCW restrict
-    t_flag hrel;    // bit 19; hardware relative addressing
-    t_flag ae;      // bit 20; address extension
-    t_flag nc;      // bit 21; no tally; zero means update tally
-    t_flag trunout; // bit 22; signal tally runout?
-    t_flag srel;    // bit 23; software relative addressing; not for Multics!
+    flag_t ires;    // bit 18; IDCW restrict
+    flag_t hrel;    // bit 19; hardware relative addressing
+    flag_t ae;      // bit 20; address extension
+    flag_t nc;      // bit 21; no tally; zero means update tally
+    flag_t trunout; // bit 22; signal tally runout?
+    flag_t srel;    // bit 23; software relative addressing; not for Multics!
     uint32 tally;   // bits 24..35
     // following not valid for paged mode; see B15; but maybe IOM-B non existant
     uint32 lbnd;
@@ -58,7 +59,7 @@ typedef struct pcw_s {
     int dev_code;   // 6 bits; 6..11
     int ext;        // 6 bits; 12..17
     int cp;         // 3 bits; 18..20, must be all ones
-    t_flag mask;    // 1 bit; bit 21
+    flag_t mask;    // 1 bit; bit 21
     int control;    // 2 bits; bit 22..23
     int chan_cmd;   // 6 bits; bit 24..29
     int chan_data;  // 6 bits; bit 30..35
@@ -94,7 +95,7 @@ typedef struct {
     // read;    // flag
     // type;    // 1 bit
     // dcw_residue; // residue in tally of last dcw
-    t_flag power_off;
+    flag_t power_off;
 } chan_status_t;
 
 // #define MAXCHAN 64
@@ -114,6 +115,9 @@ static char* lpw2text(const lpw_t *p, int conn);
 static char* pcw2text(const pcw_t *p);
 static int parse_lpw(lpw_t *p, int addr, int is_conn);
 static int parse_pcw(pcw_t *p, int addr, int ext);
+static int dev_send_pcw(int chan, pcw_t *p);
+static int status_service(int chan);
+static int send_chan_flags();
 
 void iom_interrupt()
 {
@@ -143,7 +147,6 @@ void iom_interrupt()
     debug_msg("IOM::CIOC", "Starting\n");
     do_conn_chan();
     debug_msg("IOM::CIOC", "Finished\n");
-    cancel_run(STOP_IBKPT);
 }
 
 static int do_conn_chan()
@@ -204,7 +207,7 @@ static int do_channel(int chan, pcw_t *p)
 
     // First, send any PCW command to the device
 
-    ret = send_pcw(chan, p);
+    ret = dev_send_pcw(chan, p);
 
     // Second, check if PCW tells use to request a list service, send an interrupt, etc
     // BUG: A loop for calling list service and doing returned DCWs should probably be here
@@ -228,10 +231,13 @@ static int do_channel(int chan, pcw_t *p)
                     int hack = 0;
                     ret = do_dcw(chan, addr, &control, &hack);
                     debug_msg("IOM::do-chan", "Back from latest do_dcw (at %0o); control = %d\n", addr, control);
-                    if (hack && first_list && chan_status.major == 0) {
-                        debug_msg("IOM::do-chan", "HACK: Asking for another list service (contrary to 43A239854)\n");
-                        control = 2;
-                    }
+                    if (chan_status.major != 0)
+                        control = 0;
+                    else
+                        if (hack && first_list) {
+                            debug_msg("IOM::do-chan", "HACK: Asking for another list service (contrary to 43A239854)\n");
+                            control = 2;
+                        }
                 }
                 first_list = 0;
                 break;
@@ -252,7 +258,6 @@ static int do_channel(int chan, pcw_t *p)
     // Next: probably loop performing DCWs and asking for list service
 
     // BUG: skip status service if system fault exists
-    complain_msg("IOM::do-chan", "Probably need to loop on more DCWs...\n");
     debug_msg("IOM::do-chan", "Requesting Status service\n");
     status_service(chan);
 
@@ -320,12 +325,14 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
     int addr = lpw.dcw;
     if (chan == IOM_CONNECT_CHAN) {
         if (lpw.nc == 0 && lpw.trunout == 0) {
+            warn_msg("IOM::list-service", "Illegal tally connect channel\n");
             iom_fault(chan, __LINE__, 1, iom_ill_tly_cont);
             cancel_run(STOP_WARN);
             return 1;
         }
         if (lpw.nc == 0 && lpw.trunout == 1)
             if (lpw.tally == 0) {
+                warn_msg("IOM::list-service", "TRO on connect channel\n");
                 iom_fault(chan, __LINE__, 1, iom_lpw_tro_conn);
                 cancel_run(STOP_WARN);
                 return 1;
@@ -363,6 +370,7 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
             // BUG: Chart not fully handled (nothing after (C) except T-DCW detect)
             for (;;) {
                 if (lpw.tally == 0) {
+                    warn_msg("IOW::list-service", "TRO on channel 0%o\n", chan);
                     iom_fault(chan, __LINE__, 0, iom_lpw_tro);
                     cancel_run(STOP_WARN);
                     // user fault, no return
@@ -463,7 +471,7 @@ int did_tdcw = 0;   // BUG
     //}
     lpw_write(chan, chanloc, &lpw);     // BUG: we always write LPW
 
-    warn_msg("IOM::list-sevice", "returning\n");
+    debug_msg("IOM::list-sevice", "returning\n");
     return 0;   // BUG: unfinished
 }
 
@@ -505,15 +513,13 @@ static char* pcw2text(const pcw_t *p)
 
 static int do_pcw(int chan, pcw_t *p)
 {
-    // BUG: we don't want this indirect recursion
-    // maybe a call to send_pcw() would make sense?
     debug_msg("IOM::do-pcw", "\n");
-    return send_pcw(chan, p);
+    return dev_send_pcw(chan, p);
 }
 
-static int send_pcw(int chan, pcw_t *p)
+static int dev_send_pcw(int chan, pcw_t *p)
 {
-    debug_msg("IOM::send-pcw", "\n");
+    debug_msg("IOM::dev-send-pcw", "\n");
 
     DEVICE* devp = iom.devices[chan];
     if (devp == NULL || devp->units == NULL) {
@@ -534,10 +540,11 @@ static int send_pcw(int chan, pcw_t *p)
             return 1;
         case DEV_TAPE: {
             int ret = mt_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chan_status.major, &chan_status.substatus);
-            debug_msg("IOM::send-pcw", "MT returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
+            debug_msg("IOM::dev-send-pcw", "MT returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
             return 0;   // ignore ret in favor of chan_status.{major,substatus}
         }
         default:
+            complain_msg("IOM::dev-send-pcw", "Unknown device type 0%o\n", iom.channels[chan]);
             iom_fault(chan, __LINE__, 1, 0);    // BUG: need to pick a fault code
             cancel_run(STOP_BUG);
             return 1;
@@ -546,7 +553,88 @@ static int send_pcw(int chan, pcw_t *p)
 }
 
 
-static int do_dcw(int chan, int addr, int *control, int *hack)
+static int dev_io(int chan, t_uint64 *wordp)
+{
+    DEVICE* devp = iom.devices[chan];
+    if (devp == NULL || devp->units == NULL) {
+        // BUG: no device connected, what's the fault code(s) ?
+        chan_status.power_off = 1;
+        iom_fault(chan, __LINE__, 0, 0);
+        cancel_run(STOP_WARN);
+        return 1;
+    }
+    chan_status.power_off = 0;
+
+    switch(iom.channels[chan]) {
+        case DEV_NONE:
+            // BUG: no device connected, what's the fault code(s) ?
+            chan_status.power_off = 1;
+            iom_fault(chan, __LINE__, 0, 0);
+            cancel_run(STOP_WARN);
+            return 1;
+        case DEV_TAPE: {
+            int ret = mt_iom_io(chan, wordp, &chan_status.major, &chan_status.substatus);
+            if (ret != 0 || chan_status.major != 0)
+                debug_msg("IOM::dev-io", "MT returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
+            return 0;   // ignore ret in favor of chan_status.{major,substatus}
+        }
+        default:
+            complain_msg("IOM::dev-io", "Unknown device type 0%o\n", iom.channels[chan]);
+            iom_fault(chan, __LINE__, 1, 0);    // BUG: need to pick a fault code
+            cancel_run(STOP_BUG);
+            return 1;
+    }
+    return -1;  // not reached
+}
+
+
+static int do_ddcw(int chan, int addr, int *control)
+{
+    // IOTD, IOTP, IONTP
+
+    uint daddr = getbits36(M[addr], 0, 18);
+    uint cp = getbits36(M[addr], 18, 3);
+    uint type = getbits36(M[addr], 22, 3);
+    uint tally = getbits36(M[addr], 24, 12);
+    debug_msg("IOW::DDCW", "Data DCW: %012Lo: addr=0%o, cp=0%o, tally=%d\n", M[addr], daddr, cp, tally);
+
+    // impossible for (cp == 7); see do_dcw
+
+    // AE, the upper 6 bits of data addr (bits 0..5) from LPW
+    // if rel == 0; abs; else absolutize & boundry check
+    // BUG: Need to munge daddr
+
+    t_uint64 word = 0;
+    t_uint64 *wordp = (type == 3) ? &word : M + daddr;  // 2 impossible; see do_dcw
+    int ret;
+    debug_msg("IOM::DDCW", "I/O Request(s) starting at addr 0%o\n", daddr);
+    for (;;) {
+        ret = dev_io(chan, wordp);
+        if (ret != 0 || chan_status.major != 0)
+            break;
+        ++daddr;    // todo: remove from loop
+        ++wordp;
+        if (--tally <= 0)
+            break;
+    }
+    debug_msg("IOM::DDCW", "Last I/O Request was to addr 0%o; tally now %d\n", daddr, tally);
+    // set control ala PCW as method to indicate terminate or proceed
+    if (type == 0)
+        *control = 0;
+    else
+        *control = 3;   // 2 or 3?
+    // update dcw
+#if 0
+    // Assume that DCW is only in scratchpad (bootload_tape_label.alm rd_tape reuses same DCW on each call)
+    M[addr] = setbits36(M[addr], 0, 18, daddr);
+    M[addr] = setbits36(M[addr], 24, 12, tally);
+    debug_msg("IOM::DDCW", "Data DCW update: %012Lo: addr=%0o, tally=%d\n", M[addr], daddr, tally);
+#endif
+    return ret;
+}
+
+
+static int do_dcw(int chan, int addr, int *controlp, int *hack)
 {
     debug_msg("IOM::dwc", "chan %d, addr 0%o\n", chan, addr);
     int cp = getbits36(M[addr], 18, 3);
@@ -565,7 +653,7 @@ static int do_dcw(int chan, int addr, int *control, int *hack)
         pcw.mask = 0;   // EC not mask
         pcw.chan = chan;    // Real HW would not populate
         debug_msg("IOM::dcw", "I-DCW: %s\n", pcw2text(&pcw));
-        *control = pcw.control;
+        *controlp = pcw.control;
         *hack = 1;  // do_pcw with either return non zero or will set chan_status.major
         return do_pcw(chan, &pcw);
     } else {
@@ -576,12 +664,8 @@ static int do_dcw(int chan, int addr, int *control, int *hack)
             return 1;
         } else {
             // IOTD, IOTP, or IONTP -- i/o (non) transfer
-            uint daddr = getbits36(M[addr], 0, 18);
-            uint cp = getbits36(M[addr], 18, 3);
-            uint tally = getbits36(M[addr], 24, 12);
-            debug_msg("IOW::DCW", "Data DCW: addr=0%o, cp=0%o, tally=%d\n", daddr, cp, tally);
-            complain_msg("IOW::DCW", "I/O not implemented\n");
-            return 1;
+            int ret = do_ddcw(chan, addr, controlp);
+            return ret;
         }
     }
 }
@@ -666,13 +750,13 @@ int lpw_write(int chan, int chanloc, const lpw_t* p)
 }
 
 
-int send_chan_flags()
+static int send_chan_flags()
 {
     warn_msg("IOM", "send_chan_flags() unimplemented\n");
 }
 
 
-int status_service(int chan)
+static int status_service(int chan)
 {
     // See page 33 and AN87 for format of y-pair of status info
 

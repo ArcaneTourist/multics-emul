@@ -12,6 +12,7 @@
 */
 
 typedef unsigned int uint;  // efficient unsigned int, at least 32 bits
+typedef unsigned flag_t;    // efficient unsigned flag
 
 // ============================================================================
 // === Misc enum typdefs
@@ -66,11 +67,16 @@ enum dev_type { DEV_NONE, DEV_TAPE, DEV_DISK }; // devices connected to an IOM
 
 /* Format of a 36 bit instruction word */
 typedef struct {
-    /* uint32 addr; /* 18 bits at 0..17 */
-    uint offset;    // 18 bits at 0..17; 18 bit offset or seg/offset pair
+    struct {
+        // 18 bits at 0..17; 18 bit offset or seg/offset pair
+        uint raw18;     // all 18 bits
+        uint pr;        // first 3 bits of above if (pr_bit==1)
+        uint offset;    // unsigned offset, 15 or 18 bits
+        int soffset;    // signed offset, 15 or 18 bits
+    } addr;
     uint opcode;    /* 10 bits at 18..27 */
     uint inhibit;   /* 1 bit at 28 */
-    uint pr_bit;    // 1 bit at 29; use offset[0..2] as pointer reg?
+    uint pr_bit;    // 1 bit at 29; use offset[0..2] as pointer reg
     uint tag;       /* 6 bits at 30..35 */
     uint is_value;  // is offset a value or an address? (du or dl modifiers)
     //t_uint64 value;   // 36bit value from opcode constant via du/dl
@@ -95,6 +101,7 @@ typedef struct {
     uint abs_mode;          // bit 31
     uint hex_mode;          // bit 32
 } IR_t;
+
 
 // more simulator state variables for the cpu
 // these probably belong elsewhere..
@@ -127,6 +134,25 @@ typedef struct {
     t_bool interrupts[32];
 } events_t;
 
+// Base Address Register (BAR) -- 18 bits
+typedef struct {
+    uint base;      // 9 bits
+    uint bound;     // 9 bits
+} BAR_reg_t;
+
+// Combination: Pointer Registers and Address Registers
+typedef struct {
+    int wordno; // offset from segment base;
+    struct {
+        int snr;    // segment #
+        uint rnr;   // effective ring number
+        int bitno;  // index into wordno
+    } PR;   // located in APU in physical hardware
+    struct {
+        int charno; // index into wordno
+        int bitno;  // index into charno
+    } AR;   // located in Decimal Unit in physical hardware
+} AR_PR_t;
 
 // PPR Procedure Pointer Register (pseudo register)
 //      Use: Holds info relative to the location in main memory of the
@@ -150,6 +176,7 @@ typedef struct {
     uint TSR;   // Current effective segment number, 15 bits
     uint TBR;   // Current bit offset as calculated from ITS and ITP
     t_uint64 CA;// Current computed addr relative to the segment in TPR.TSR; Normally 18? bits but sized to hold 36bit non-address operands
+    int bitno;
 } TPR_t;
 
 
@@ -254,7 +281,13 @@ typedef struct {
     uint enabled;   // internal flag, not part of the register
 } SDWAM_t;
 
-
+// Descriptor Segment Base Register (51 bits)
+typedef struct {
+    uint32 addr;    // Addr of DS or addr of page tbl; 24 bits at 0..23
+    uint32 bound;   // Upper bits of 16bit addr; 14 bits at 37..50
+    flag_t u;       // Is paged?  1 bit at 55
+    uint32 stack;   // Used by call6; 12 bits at 60..71
+} DSBR_t;
 
 // Physical Switches
 typedef struct {
@@ -374,6 +407,7 @@ static inline t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
 #define bit36_is_neg(x) (((x) & (((t_uint64)1)<<35)) != 0)
 #define bit27_is_neg(x) (((x) & (((t_uint64)1)<<26)) != 0)
 #define bit18_is_neg(x) (((x) & (((t_uint64)1)<<17)) != 0)
+#define bit_is_neg(x,n) (((x) & (((t_uint64)1)<<(n-1))) != 0)
 
 // obsolete typedef -- hold named register sub-fields in their inefficient
 // native format.
@@ -385,14 +419,16 @@ static inline t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
 extern t_uint64 reg_A;      // Accumulator, 36 bits
 extern t_uint64 reg_Q;      // Quotient, 36 bits
 extern t_uint64 reg_E;      // Quotient, 36 bits
-//extern t_uint64 reg_X[8]; // Index Registers, 18 bits
-extern uint32 reg_X[8]; // Index Registers, 18 bits; SIMH expects data type to be no larger than needed
+extern uint32 reg_X[8];     // Index Registers, 18 bits; SIMH expects data type to be no larger than needed
 extern IR_t IR;             // Indicator Register
-extern t_uint64 reg_TR;     // Timer Reg, 27 bits -- only valid after calls to SIMH clock routines
+extern BAR_reg_t BAR;       // Base Address Register (BAR); 18 bits
+extern uint32 reg_TR;       // Timer Reg, 27 bits -- only valid after calls to SIMH clock routines
+extern AR_PR_t AR_PR[8];    // Combined Pointer Registers and Address Registers
 extern PPR_t PPR;           // Procedure Pointer Reg, 37 bits, internal only
 extern TPR_t TPR;           // Temporary Pointer Reg, 42 bits, internal only
 extern PTWAM_t PTWAM[16];   // Page Table Word Associative Memory, 51 bits
 extern SDWAM_t SDWAM[16];   // Segment Descriptor Word Associative Memory, 88 bits
+extern DSBR_t DSBR;         // Descriptor Segment Base Register (51 bits)
 
 extern ctl_unit_data_t cu;
 extern cpu_state_t cpu;

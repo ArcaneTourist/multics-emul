@@ -5,12 +5,23 @@
 
 #include "hw6180.h"
 #include "sim_tape.h"
+#include "bits.h"
+
+extern iom_t iom;
 
 static const char *simh_tape_msg(int code); // hack
-//extern t_uint64 M[];  /* memory */
-//extern cpu_ports_t cpu_ports;
-// extern scu_t scu;    // BUG: we'll need more than one for max memory.  Unless we can abstract past the physical HW's capabilities
-extern iom_t iom;
+static const size_t bufsz = 4096 * 1024;
+static struct s_tape_state {
+    // BUG: this should hang off of UNIT structure
+    enum { no_mode, read_mode, write_mode } io_mode;
+    uint8 *bufp;
+    bitstream_t *bitsp;
+} tape_state[ARRAY_SIZE(iom.devices)];
+
+void mt_init()
+{
+    memset(tape_state, 0, sizeof(tape_state));
+}
 
 int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
 {
@@ -41,6 +52,9 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
         complain_msg("MT::iom_cmd", "Bad dev unit-num 0%o (%d decimal)\n", dev_code, dev_code);
         return 1;
     }
+    // BUG: dev_code unused
+
+    struct s_tape_state *tape_statep = &tape_state[chan];
 
     switch(dev_cmd) {
         case 0: {               // CMD 00 Request status
@@ -56,11 +70,16 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             return 0;
         }
         case 5: {               // CMD 05 -- Read Binary Record
-            const size_t bufsz = 4096 * 1024;
-            uint8 buf[bufsz];
+            if (tape_statep->bufp == NULL)
+                if ((tape_statep->bufp = malloc(bufsz)) == NULL) {
+                    complain_msg("MT::iom_cmd", "Malloc error\n");
+                    *majorp = 010;  // BUG: arbitrary error code; config switch
+                    *subp = 1;
+                    return 1;
+                }
             t_mtrlnt tbc;
             int ret;
-            if ((ret = sim_tape_rdrecf(unitp, buf, &tbc, bufsz)) != 0) {
+            if ((ret = sim_tape_rdrecf(unitp, tape_statep->bufp, &tbc, bufsz)) != 0) {
                 complain_msg("MT::iom_cmd", "Cannot read tape: %d - %s\n", ret, simh_tape_msg(ret));
                 *majorp = 010;  // BUG: arbitrary error code; confgi switch
                 *subp = 1;
@@ -68,9 +87,10 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             }
             debug_msg("MT::iom_cmd", "Read %d bytes from simulated tape\n", (int) tbc);
             complain_msg("MT::iom_cmd", "Don't know where in memory to write block\n");
-            // tape_block(buf, tbc, ???);
+            tape_statep->bitsp = bitstm_new(tape_statep->bufp, tbc);
             *majorp = 0;
             *subp = 0;
+            tape_statep->io_mode = read_mode;
             return 0;
         }
         case 051:               // CMD 051 -- Reset Device Status
@@ -85,6 +105,61 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
         }
     }
     return 1;   // not reached
+}
+
+
+int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
+{
+    // debug_msg("MT::iom_io", "Chan 0%o\n", chan);
+
+    if (chan < 0 || chan >= ARRAY_SIZE(iom.devices)) {
+        *majorp = 05;   // Real HW could not be on bad channel
+        *subp = 2;
+        complain_msg("MT::iom_io", "Bad channel %d\n", chan);
+        return 1;
+    }
+
+    DEVICE* devp = iom.devices[chan];
+    if (devp == NULL || devp->units == NULL) {
+        *majorp = 05;
+        *subp = 2;
+        complain_msg("MT::iom_io", "Internal error, no device and/or unit for channel 0%o\n", chan);
+        return 1;
+    }
+    UNIT* unitp = devp->units;
+    // BUG: no dev_code
+
+    struct s_tape_state *tape_statep = &tape_state[chan];
+
+    if (tape_statep->io_mode == no_mode) {
+        // no prior read or write command
+        *majorp = 013;  // MPC Device Data Alert
+        *subp = 02;     // Inconsistent command
+        complain_msg("MT::iom_io", "Bad channel %d\n", chan);
+        return 1;
+    } else if (tape_statep->io_mode == read_mode) {
+        // read
+        if (bitstm_get(tape_statep->bitsp, 36, wordp) != 0) {
+            *majorp = 013;  // MPC Device Data Alert
+            *subp = 02;     // Inconsistent command
+            complain_msg("MT::iom_io", "Read buffer exhausted on channel %d\n", chan);
+            return 1;
+        }
+        *majorp = 0;
+        *subp = 0;      // BUG: do we need to detect end-of-record?
+        return 0;
+    } else {
+        // write
+        complain_msg("MT::iom_io", "Write I/O Unimplemented\n");
+    }
+
+    //*majorp = 05; // Real HW could not be on bad channel
+    //*subp = 2;
+    *majorp = 0;
+    *subp = 0;
+    return 1;
+
+    return 1;
 }
 
 t_stat mt_svc(UNIT *up)

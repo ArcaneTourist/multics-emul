@@ -337,7 +337,6 @@ int scu_cioc(t_uint64 addr)
     // todo: sanity check port connections
     iom_interrupt();
 
-    cancel_run(STOP_BUG);
     return 0;
 }
 

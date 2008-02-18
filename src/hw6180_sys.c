@@ -90,6 +90,7 @@ static void init_memory_iom(void);
 static void hw6180_init(void)
 {
     debug_msg("SYS::init", "Once-only initialization running.\n");
+    mt_init();
 
     // todo: set debug flags for all devices
     cpu_dev.dctrl = 1;  // todo: don't default debug to on
@@ -145,31 +146,24 @@ static void init_memory_iom()
     // BUG: This is for an IOM.  Do we want an IOM or an IOX?
     // The presence of a 0 in the top six bits of word 0 denote an IOM boot from an IOX boot
 
-// " The channel number ("Chan#") is set by the switches on the IOM to be the
-// " channel for the tape subsystem holding the bootload tape. The drive number
-// " for the bootload tape is set by switches on the tape MPC itself.
+    // " The channel number ("Chan#") is set by the switches on the IOM to be the
+    // " channel for the tape subsystem holding the bootload tape. The drive number
+    // " for the bootload tape is set by switches on the tape MPC itself.
 
-int chan = 036;     // 12 bits or 6 bits;   // BUG: unknown; controller channel; max=40?
-//  int port = 0;       // 3 bits;  // SCU port # to which bootload IOM is attached (deduced)
-    int port = iom.scu_port;
+    int chan = 036;     // 12 bits or 6 bits;   // Arbitrary; controller channel; max=40
+    int port = iom.scu_port;    // 3 bits;  // SCU port # to which bootload IOM is attached (deduced)
 
-iom.channels[chan] = DEV_TAPE;
-iom.devices[chan] = &tape_dev;
+    iom.channels[chan] = DEV_TAPE;
+    iom.devices[chan] = &tape_dev;
 
-#if 0
-    // int base = 012;      // 12 bits; IOM base; must be 0012 for Multics
-    // bootload_tape_label.alm comments wrong?
-    // int pi_base = 03613; // 15 bits; BUG: unknown; an87 implies 1200
-#else
-    int base = 014;     // 12 bits; IOM base; must be 0012 for Multics; mailboxes at 1400...
-    int pi_base = 01200;    // 15 bits; BUG: unknown; an87 implies 1200; interrupt cells would be 1200...
-#endif
-    int iom = 0;        // 3 bits; only IOM 0 would use vector 030
+    int base = 014;         // 12 bits; IOM base
+    int pi_base = 01200;    // 15 bits; interrupt cells
+    int iom = 0;            // 3 bits; only IOM 0 would use vector 030
 
     t_uint64 cmd = 5;       // 6 bits; 05 for tape, 01 for cards
     int dev = 0;        // 6 bits: drive number
 
-t_uint64 imu = 0;       // 1 bit; Maybe an is-IMU flag; IMU is later version of IOM
+    t_uint64 imu = 0;       // 1 bit; Maybe an is-IMU flag; IMU is later version of IOM
 
     // arbitrary -- zero first 4K words
     //for (int i = 0; i < 4096; ++i)
@@ -186,7 +180,6 @@ t_uint64 imu = 0;       // 1 bit; Maybe an is-IMU flag; IMU is later version of 
     M[3] = (cmd << 30) | (dev << 24) | 0700000;     // Bootload IDCW
     M[4] = 030 << 18;               // Second IDCW: IOTD to loc 30 (startup fault vector)
 
-    // t_uint64 dis0 = (opcode0_dis << 18);
     t_uint64 dis0 = 0616200;
     M[010 + 2 * iom] = (imu << 34) | dis0;          // system fault vector; DIS 0 instruction
     M[030 + 2 * iom] = dis0;                        // terminate interrupt vector (overwritten by bootload)
@@ -194,16 +187,15 @@ t_uint64 imu = 0;       // 1 bit; Maybe an is-IMU flag; IMU is later version of 
     // IOM Mailbox, at Base*6
     int mbx = base * 64;
     M[mbx+07] = (base << 24) | (02 << 18) | 02;     // Fault channel DCW
-    debug_msg("SYS", "IOM MBX @%0o: %0Lo\n", mbx+7, M[mbx+7]);
+    // debug_msg("SYS", "IOM MBX @%0o: %0Lo\n", mbx+7, M[mbx+7]);
     M[mbx+010] = 04000;                             // Connect channel LPW -> PCW at 000000
 
     // Channel mailbox, at Base*64 + 4*Chan#
     mbx = (base * 64) + 4 * chan;
     M[mbx+0] = (3<<18) | (2<<12) | 3;                   //  Boot dev LPW -> IDCW @ 000003
-    debug_msg("SYS", "Channel MBX @%0o: %0Lo\n", mbx, M[mbx]);
+    // debug_msg("SYS", "Channel MBX @%0o: %0Lo\n", mbx, M[mbx]);
     M[mbx+2] = (base <<24);                         //  Boot dev SCW -> IOM mailbox
     
-// BUG: unknown constants used
 }
 
 static void init_memory_iox()
@@ -258,6 +250,8 @@ static void init_memory_iox()
 
 
 extern UNIT cpu_unit;   // BUG: put in hdr
+extern char* print_instr(t_uint64 word); // BUG: put in hdr
+extern char* print_lpw(t_addr addr);    // BUG: put in hdr
 
 t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
 {
@@ -290,7 +284,7 @@ int activate_timer()
 {
     uint32 t;
     debug_msg("SYS::clock", "TR is %Ld 0%Lo.\n", reg_TR, reg_TR);
-    if (bit27_is_neg(reg_TR)) { // BUG: 27bit reg -- should check bit 26?
+    if (bit27_is_neg(reg_TR)) {
         if ((t = sim_is_active(&TR_clk_unit)) != 0)
             debug_msg("SYS::clock", "TR cancelled with %d time units left.\n", t);
         else

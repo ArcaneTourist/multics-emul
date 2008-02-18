@@ -16,6 +16,7 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest);
 static int add18(t_uint64 a, t_uint64 b, t_uint64 *dest);
 static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2);
 static int32 sign18(t_uint64 x);
+static int do_epp(int epp);
 
 // BUG: move externs to hdr file
 extern int scu_cioc(t_uint64 addr);
@@ -28,28 +29,37 @@ extern int activate_timer();
 
 // ============================================================================
 
-char* print_instr(t_uint64 word)
+static char* instr2text(const instr_t* ip)
 {
     static char buf[100];
-    instr_t instr;
-    decode_instr(&instr, word);
-    instr_t *ip = &instr;
-
     uint op = ip->opcode;
     char *opname = opcodes2text[op];
     if (opname == NULL) {
         strcpy(buf, "<illegal instr>");
     } else {
-        int x = ip->offset;
-        if (bit18_is_neg(x))
-            x = - ((1<<18) - x);
-            sprintf(buf, "%s, offset 0%06o(%+d), inhibit %u, pr %u, tag 0%03o(Tm=%u,Td=0%02o)",
-            opname, 
-            ip->offset, x, 
-            ip->inhibit, ip->pr_bit, ip->tag, ip->tag >> 4, ip->tag & 017);
+        if (ip->pr_bit == 0) {
+            sprintf(buf, "%s, offset 0%06o(%+d), inhibit %u, pr=N, tag 0%03o(Tm=%u,Td=0%02o)",
+                opname, 
+                ip->addr.offset, ip->addr.soffset, 
+                ip->inhibit, ip->tag, ip->tag >> 4, ip->tag & 017);
+        } else {
+            sprintf(buf, "%s, PR %d, offset 0%06o(%+d), inhibit %u, pr=Y, tag 0%03o(Tm=%u,Td=0%02o)",
+                opname, 
+                ip->addr.pr, ip->addr.offset, ip->addr.soffset, 
+                ip->inhibit, ip->tag, ip->tag >> 4, ip->tag & 017);
+        }
     }
     return buf;
 }
+
+
+char* print_instr(t_uint64 word)
+{
+    instr_t instr;
+    decode_instr(&instr, word);
+    return instr2text(&instr);
+}
+
 
 // ============================================================================
 
@@ -90,13 +100,7 @@ static int do_op(instr_t *ip)
         fault_gen(illproc_fault);
         return 1;
     } else {
-        int x = ip->offset;
-        if (bit18_is_neg(x))
-            x = - ((1<<18) - x);
-        debug_msg("OPU", "Opcode 0%0o(%d) -- %s, offset 0%06o(%+d), inhibit %u, pr %u, tag 0%03o(Tm=%u,Td=0%02o)\n",
-            op, bit27, opname, 
-            ip->offset, x, 
-            ip->inhibit, ip->pr_bit, ip->tag, ip->tag >> 4, ip->tag & 017);
+        debug_msg("OPU", "Opcode 0%0o(%d) -- %s\n", op, bit27, instr2text(ip));
     }
     
     // Check instr type for format before addr_mod
@@ -110,7 +114,6 @@ static int do_op(instr_t *ip)
                 // special instr format
                 break;
             default:
-                TPR.CA = ip->offset;
                 addr_mod(ip);       // note that ip == &cu.IR
         }
     } else {
@@ -120,7 +123,6 @@ static int do_op(instr_t *ip)
             case opcode1_a9bd:
                 break;
             default:
-                TPR.CA = ip->offset;
                 addr_mod(ip);       // note that ip == &cu.IR
         }
     }
@@ -522,6 +524,36 @@ static int do_op(instr_t *ip)
                 cancel_run(STOP_WARN);
                 return ret;
             }
+            case opcode0_ldbr: {
+                if (get_addr_mode() != ABSOLUTE_mode) {
+                    fault_gen(illproc_fault);   // BUG: which fault?
+                    return 1;
+                }
+                t_uint64 word1, word2;
+                int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
+                // BUG: Check that SDWAM is enabled (whatever that means)
+                // BUG: Check that PTWAM is enabled (whatever that means)
+                for (int i = 0; i < 16; ++i) {
+                    SDWAM[i].is_full = 0;
+                    SDWAM[i].use = i;
+                    PTWAM[i].is_full = 0;
+                    PTWAM[i].use = i;
+                }
+                // todo: If cache is enabled, reset all cache colume and level full flags
+                DSBR.addr = getbits36(word1, 0, 24);
+                DSBR.bound = getbits36(word2, 0, 14);   // 37-36- 1
+                DSBR.u = getbits36(word2, 18, 1);   // 50-36-1
+                DSBR.stack = getbits36(word2, 23, 12);  // 60-36-1
+                return 0;
+            }
+            case opcode0_epp0:
+                return do_epp(0);
+            case opcode0_epp2:
+                return do_epp(2);
+            case opcode0_epp4:
+                return do_epp(4);
+            case opcode0_epp6:
+                return do_epp(6);
             case opcode0_ldq: { // load Q reg
                 int ret = fetch_op(ip, &reg_Q);
                 if (ret == 0) {
@@ -1143,8 +1175,9 @@ static int do_op(instr_t *ip)
                 break;
             }
             default:
-                debug_msg("OPU", "Unimplemented opcode 0%0o(0)\n", op);
-                fault_gen(oob_fault);   // todo: mechanism to bomb back to simh
+                complain_msg("OPU", "Unimplemented opcode 0%0o(0)\n", op);
+                cancel_run(STOP_BUG);
+                return 1;
         }
     } else {
         switch (op) {
@@ -1205,9 +1238,18 @@ static int do_op(instr_t *ip)
                 }
                 return ret;
             }
+            case opcode1_epp1:
+                return do_epp(1);
+            case opcode1_epp3:
+                return do_epp(4);
+            case opcode1_epp5:
+                return do_epp(5);
+            case opcode1_epp7:
+                return do_epp(7);
             default:
                 debug_msg("OPU", "Unimplemented opcode 0%0o(1)\n", op);
-                fault_gen(oob_fault);   // todo: better mechanism to bomb back to simh
+                cancel_run(STOP_BUG);
+                return 1;
         }
     }
     return 0;
@@ -1415,4 +1457,18 @@ static int32 sign18(t_uint64 x)
     }
     else
         return x;
+}
+
+static int do_epp(int epp)
+{
+    if (get_addr_mode() == BAR_mode) {
+        fault_gen(illproc_fault);   // BUG: which fault?
+        return 1;
+    }
+
+    AR_PR[epp].PR.rnr = TPR.TRR;
+    AR_PR[epp].PR.snr = TPR.TSR;
+    AR_PR[epp].wordno = TPR.CA & MASK18;
+    AR_PR[epp].PR.bitno = TPR.TBR;
+    return 0;
 }
