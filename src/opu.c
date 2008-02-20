@@ -29,40 +29,6 @@ extern int activate_timer();
 
 // ============================================================================
 
-static char* instr2text(const instr_t* ip)
-{
-    static char buf[100];
-    uint op = ip->opcode;
-    char *opname = opcodes2text[op];
-    if (opname == NULL) {
-        strcpy(buf, "<illegal instr>");
-    } else {
-        if (ip->pr_bit == 0) {
-            sprintf(buf, "%s, offset 0%06o(%+d), inhibit %u, pr=N, tag 0%03o(Tm=%u,Td=0%02o)",
-                opname, 
-                ip->addr.offset, ip->addr.soffset, 
-                ip->inhibit, ip->tag, ip->tag >> 4, ip->tag & 017);
-        } else {
-            sprintf(buf, "%s, PR %d, offset 0%06o(%+d), inhibit %u, pr=Y, tag 0%03o(Tm=%u,Td=0%02o)",
-                opname, 
-                ip->addr.pr, ip->addr.offset, ip->addr.soffset, 
-                ip->inhibit, ip->tag, ip->tag >> 4, ip->tag & 017);
-        }
-    }
-    return buf;
-}
-
-
-char* print_instr(t_uint64 word)
-{
-    instr_t instr;
-    decode_instr(&instr, word);
-    return instr2text(&instr);
-}
-
-
-// ============================================================================
-
 void execute_instr(void)
 {
     // execute whatever instruction is in the IR (not whatever the IC points at)
@@ -74,8 +40,8 @@ void execute_instr(void)
 
 static int fetch_op(const instr_t *ip, t_uint64 *wordp)
 {
-    if (ip->is_value) {
-        *wordp = TPR.CA;
+    if (TPR.is_value) {
+        *wordp = TPR.value;
         return 0;
     }
     return fetch_word(TPR.CA, wordp);
@@ -96,11 +62,11 @@ static int do_op(instr_t *ip)
     int bit27 = op % 2;
     op >>= 1;
     if (opname == NULL) {
-        debug_msg("OPU", "Illegal opcode 0%0o(%d)\n", op, bit27);
+        warn_msg("OPU", "Illegal opcode 0%0o(%d)\n", op, bit27);
         fault_gen(illproc_fault);
         return 1;
     } else {
-        debug_msg("OPU", "Opcode 0%0o(%d) -- %s\n", op, bit27, instr2text(ip));
+        if (opt_debug) debug_msg("OPU", "Opcode 0%0o(%d) -- %s\n", op, bit27, instr2text(ip));
     }
     
     // Check instr type for format before addr_mod

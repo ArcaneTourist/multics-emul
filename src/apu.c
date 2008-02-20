@@ -6,7 +6,8 @@
 
 #include "hw6180.h"
 
-static int compute_addr(instr_t *ip);
+static int compute_addr(instr_t *ip, int *more);
+static int addr_append(t_uint64 *wordp);
 
 //=============================================================================
 
@@ -14,7 +15,6 @@ static int32 sign18(t_uint64 x)
 {
     if (bit18_is_neg(x)) {
         int32 r = - ((1<<18) - (x&MASK18));
-        debug_msg("APU::sign18", "0%Lo => 0%o (%+d decimal)\n", x, r, r);
         return r;
     }
     else
@@ -25,7 +25,6 @@ static int32 sign15(uint x)
 {
     if (bit_is_neg(x,15)) {
         int32 r = - ((1<<15) - (x&MASKBITS(15)));
-        debug_msg("APU::sign15", "0%Lo => 0%o (%+d decimal)\n", x, r, r);
         return r;
     }
     else
@@ -95,12 +94,53 @@ int decode_ypair_addr(instr_t* ip, t_uint64* addrp)
         cancel_run(STOP_BUG);
     }
 
-    t_uint64 addr = ip->addr.offset;
+    // NOTE: We assume that the no address modification is expected; the
+    // supplied address is an 18bit absolute memory address.
+
+    t_uint64 addr = ip->addr;
     if (addr % 2 == 1)
         -- addr;
     *addrp = addr;
 
     return 0;
+}
+
+//=============================================================================
+
+char* instr2text(const instr_t* ip)
+{
+    static char buf[100];
+    uint op = ip->opcode;
+    char *opname = opcodes2text[op];
+    if (opname == NULL) {
+        strcpy(buf, "<illegal instr>");
+    } else {
+        if (ip->pr_bit == 0) {
+            int32 offset = ip->addr;
+            int32 soffset = sign18(ip->addr);
+            sprintf(buf, "%s, offset 0%06o(%+d), inhibit %u, pr=N, tag 0%03o(Tm=%u,Td=0%02o)",
+                opname, 
+                offset, soffset, 
+                ip->inhibit, ip->tag, ip->tag >> 4, ip->tag & 017);
+        } else {
+            uint pr = ip->addr >> 15;
+            int32 offset = ip->addr & MASKBITS(15);
+            int32 soffset = sign15(ip->addr);
+            sprintf(buf, "%s, PR %d, offset 0%06o(%+d), inhibit %u, pr=Y, tag 0%03o(Tm=%u,Td=0%02o)",
+                opname, 
+                pr, offset, soffset, 
+                ip->inhibit, ip->tag, ip->tag >> 4, ip->tag & 017);
+        }
+    }
+    return buf;
+}
+
+
+char* print_instr(t_uint64 word)
+{
+    instr_t instr;
+    decode_instr(&instr, word);
+    return instr2text(&instr);
 }
 
 //=============================================================================
@@ -125,7 +165,9 @@ int addr_mod(instr_t *ip)
 
     // BUG: do reg and indir word stuff first?
 
-    TPR.CA = ip->addr.offset;
+    TPR.CA = ip->addr;
+    TPR.is_value = 0;   // BUG: Use "direct operand flag" instead
+    TPR.value = 0xdeadbeef;
 
     // Addr appending below
 
@@ -136,10 +178,12 @@ int addr_mod(instr_t *ip)
     // fetch, not after a transfer!
     if (ptr_reg_flag) {
         // AL39: Page 341, Figure 6-7
-        uint pr = ip->addr.pr;
+        int32 offset = ip->addr & MASKBITS(15);
+        int32 soffset = sign15(offset); // todo: this calc repeated in compute_address()
+        uint pr = ip->addr >> 15;
         TPR.TSR = AR_PR[pr].PR.snr;
         TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
-        TPR.CA = AR_PR[pr].wordno + ip->addr.soffset;
+        TPR.CA = AR_PR[pr].wordno + soffset;
         TPR.bitno = AR_PR[pr].PR.bitno;
 
         // BUG: Enter append mode & stay if execute a transfer
@@ -153,9 +197,10 @@ int addr_mod(instr_t *ip)
         mf1 = bits 29..36   // aka modification field
 #endif
 
-    for (;;) {
-        compute_addr(ip);
-        break;  // BUG
+    int more = 1;
+    while (more) {
+        if (compute_addr(ip, &more) != 0)
+            return 1;
     }
 
     if (addr_mode == BAR_mode) {
@@ -178,10 +223,11 @@ int addr_mod(instr_t *ip)
         return 0;
     }
 
-    complain_msg("APU", "Only ABS mode implemented.\n");
+    // BUG: Do segment handling ala AL39 section 6
+
+    complain_msg("APU", "Only ABS mode w/o segmentation is implemented.\n");
     cancel_run(STOP_BUG);
 
-    // Do segment handling ala AL39 section 6
 
 
 #if 0
@@ -207,7 +253,7 @@ int addr_mod(instr_t *ip)
 }
 
 
-static int compute_addr(instr_t *ip)
+static int compute_addr(instr_t *ip, int *more)
 {
     // Perform a "CA" cycle as per figure 6-2 of AL39.
     // Generate an 18-bit computed address (in TPR.CA) as specified in section 6
@@ -215,135 +261,192 @@ static int compute_addr(instr_t *ip)
     // In our version, this may include replacing TPR.CA with a 36 bit constant or
     // other value if an appropriate modifier (e.g., du) is present.
 
-    uint tm = (ip->tag >> 4) & 03;  // the and is a hint to the compiler for the following switch...
-    uint td = ip->tag & 017;
+    *more = 0;
 
-    int special = 0;    // not used yet; prob not used in this phase
+    offset_t addr;
 
-    switch(tm) {
-        case 0: {   // register (r)
-            if (td == 0)
-                break;
-            int off = ip->addr.soffset;
-            switch(td) {
-                case 0:
-                    break;  // no mod (can't get here anyway)
-                case 1: // ,au
-                    TPR.CA = off + sign18(getbits36(reg_A, 0, 18));
-                    break;
-                case 2: // ,qu
-                    TPR.CA = off + sign18(getbits36(reg_Q, 0, 18));
-                    break;
-                case 3: // ,du
-                    ip->is_value = 1;
-                    TPR.CA = (t_uint64) ip->addr.offset << 18;
-                    debug_msg("APU", "Mod du: Value from offset 0%o; TPR.CA now 0%Lo\n", ip->addr.offset, TPR.CA);
-                    break;
-                case 4: // PPR.IC
-                    TPR.CA = off + PPR.IC;  // BUG: IC assumed to be unsigned
-                    break;
-                case 5:
-                    TPR.CA = off + sign18(getbits36(reg_A, 18, 18));
-                    break;
-                case 6:
-                    TPR.CA = off + sign18(getbits36(reg_Q, 18, 18));
-                    break;
-                case 7: // ,dl
-                    ip->is_value = 1;
-                    // ip->value = offset;
-                    TPR.CA = ip->addr.offset;   // BUG: Should we sign?
-                    debug_msg("APU", "Mod dl: Value from offset 0%o; TPR.CA now 0%o\n", ip->addr.offset, TPR.CA);
-                    break;
-                case 010:
-                case 011:
-                case 012:
-                case 013:
-                case 014:
-                case 015:
-                case 016:
-                case 017:
-                    TPR.CA = off + sign18(reg_X[td&07]);
-                    // if (td&7 == 5)
-                        debug_msg("APU", "Tm=0%o,Td=%02o: offset 0%o + X[%d]=0%o(%+d decimal)==>0%o(+%d) yields 0%Lo (%+Ld decimal)\n",
-                            tm, td, off, td&7, reg_X[td&7], reg_X[td&7], sign18(reg_X[td&7]), sign18(reg_X[td&7]), TPR.CA, TPR.CA);
-                    break;
+    // BUG move out of here.  Offsets only used by du, dl, and r. BUG: Should probably be using CA for offset
+    if (ip->pr_bit == 0) {
+        addr.pr = 0;
+        addr.offset = ip->addr;
+        addr.soffset = sign18(ip->addr);
+    } else {
+        addr.pr = ip->addr >> 15;
+        addr.offset = ip->addr & MASKBITS(15);
+        addr.soffset = sign15(addr.offset);
+    }
+
+    uint tag = ip->tag; // BUG move out of here
+
+    // BUG: Need to do ESN special handling if loop is continued
+
+    for (;;) {
+
+        uint tm = (tag >> 4) & 03;  // the and is a hint to the compiler for the following switch...
+        uint td = tag & 017;
+
+        int special = 0;    // not used yet; prob not used in this phase
+    
+        switch(tm) {
+            case 0: {   // register (r)
+                if (td == 0)
+                    return 0;
+                int off = addr.soffset;
+                switch(td) {
+                    case 0:
+                        break;  // no mod (can't get here anyway)
+                    case 1: // ,au
+                        TPR.CA = off + sign18(getbits36(reg_A, 0, 18));
+                        break;
+                    case 2: // ,qu
+                        TPR.CA = off + sign18(getbits36(reg_Q, 0, 18));
+                        break;
+                    case 3: // ,du
+                        TPR.is_value = 1;   // BUG: Use "direct operand flag" instead
+                        TPR.value = (t_uint64) addr.offset << 18;
+                        debug_msg("APU", "Mod du: Value from offset 0%o is 0%Lo\n", addr.offset, TPR.value);
+                        break;
+                    case 4: // PPR.IC
+                        TPR.CA = off + PPR.IC;  // BUG: IC assumed to be unsigned
+                        break;
+                    case 5:
+                        TPR.CA = off + sign18(getbits36(reg_A, 18, 18));
+                        break;
+                    case 6:
+                        TPR.CA = off + sign18(getbits36(reg_Q, 18, 18));
+                        break;
+                    case 7: // ,dl
+                        TPR.is_value = 1;   // BUG: Use "direct operand flag" instead
+                        TPR.value = addr.offset;    // BUG: Should we sign?
+                        debug_msg("APU", "Mod dl: Value from offset 0%o is 0%Lo\n", addr.offset, TPR.value);
+                        break;
+                    case 010:
+                    case 011:
+                    case 012:
+                    case 013:
+                    case 014:
+                    case 015:
+                    case 016:
+                    case 017:
+                        TPR.CA = off + sign18(reg_X[td&07]);
+                        // if (td&7 == 5)
+                            debug_msg("APU", "Tm=0%o,Td=%02o: offset 0%o + X[%d]=0%o(%+d decimal)==>0%o(+%d) yields 0%Lo (%+Ld decimal)\n",
+                                tm, td, off, td&7, reg_X[td&7], reg_X[td&7], sign18(reg_X[td&7]), sign18(reg_X[td&7]), TPR.CA, TPR.CA);
+                        break;
+                }
+                return 0;
             }
-            break;
-        }
-        case 1: {   // register then indirect (ri)
-            complain_msg("APU", "RI addr mod not implemented.\n");
-            // BUG: Maybe handle special tag (41 itp, 43 its).  Or post handle?
-            special = 1;
-            cancel_run(STOP_BUG);
-            return 1;
-        }
-        case 2: {   // indirect then tally (it)
-            // BUG: Do we need to do segmentation for TPR.CA indir fetch?
-            // BUG: see "it" flowchart for looping; See ESN for looping
-            switch(td) {
-                case 0:
-                    debug_msg("APU", "IT with Td zero not valid in instr word.\n");
-                    fault_gen(f1_fault);    // This mode not ok in instr word
-                    break;
-                case 014: {
-                    t_uint64 iword;
-                    int ret;
-                    int iloc = TPR.CA;
-                    if ((ret = fetch_word(TPR.CA, &iword)) == 0) {
-                        int addr = getbits36(iword, 0, 18);
-                        int tally = getbits36(iword, 18, 12);
-                        int tag = getbits36(iword, 30, 6);
-                        ++tally;
-                        tally &= MASKBITS(12);  // wrap from 4095 to zero
-                        IR.tally_runout = (tally == 0); // BUG: do we need to fault?
-                        --addr;
-                        addr &= MASK18; // wrap from zero to 2^18-1
-                        iword = setbits36(iword, 0, 18, addr);
-                        iword = setbits36(iword, 18, 12, tally);
-                        TPR.CA = addr;
-                        ret = store_word(iloc, iword);
-                    }
-                    return ret;
-                }
-                case 016: {
-                    t_uint64 iword;
-                    int ret;
-                    int iloc = TPR.CA;
-                    if ((ret = fetch_word(TPR.CA, &iword)) == 0) {
-                        int addr = getbits36(iword, 0, 18);
-                        int tally = getbits36(iword, 18, 12);
-                        int tag = getbits36(iword, 30, 6);
-                        TPR.CA = addr;
-                        --tally;
-                        tally &= MASKBITS(12);  // wrap from zero to 4095
-                        IR.tally_runout = (tally == 0); // BUG: do we need to fault?
-                        ++addr;
-                        addr &= MASK18; // wrap from 2^18-1 to zero
-                        iword = setbits36(iword, 0, 18, addr);
-                        iword = setbits36(iword, 18, 12, tally);
-                        ret = store_word(iloc, iword);
-                    }
-                    return ret;
-                }
-                default:
-                    complain_msg("APU", "IT with Td 0%o not implmented.\n", td);
-                    cancel_run(STOP_BUG);
+            case 1: {   // register then indirect (ri)
+                if (td == 3 || td == 7) {
+                    warn_msg("APU", "RI with td==0%o is illegal.\n", td);
+                    fault_gen(illproc_fault);   // need illmod sub-category
                     return 1;
+                }
+                if (td == 0) {
+                    debug_msg("APU", "IR: pre-fetch:  TPR.CA=0%Lo (no register)\n", TPR.CA);
+                } else {
+                    t_uint64 ca = TPR.CA;
+                    TPR.CA += reg_X[td];    // BUG: do we need to treat as signed?
+                    debug_msg("APU", "IR: pre-fetch:  TPR.CA=0%Lo <==  TPR.CA=%Lo + X[%d]=0%o\n",
+                        TPR.CA, reg_X[td], ca);
+                }
+                special = 1;    // BUG: check for possible itp or its modifier in indir word
+                t_uint64 word;
+                if (addr_append(&word) != 0)
+                    return 1;
+                TPR.CA = word >> 18;
+                tag = word & MASKBITS(6);
+                debug_msg("APU", "IR: post-fetch: TPR.CA=0%Lo\n", TPR.CA);
+                // BUG: need to tell next CA to fetch the indir word, not use the instr.  Or maybe end CA & do ESN
+                cancel_run(STOP_IBKPT); // compare to prior runs
+                break;  // Continue a new CA cycle
             }
-            break;
+            case 2: {   // indirect then tally (it)
+                // BUG: see "it" flowchart for looping (Td={15,17}
+                switch(td) {
+                    case 0:
+                        warn_msg("APU", "IT with Td zero not valid in instr word.\n");
+                        fault_gen(f1_fault);    // This mode not ok in instr word
+                        break;
+                    case 014: {
+                        t_uint64 iword;
+                        int ret;
+                        int iloc = TPR.CA;
+                        if ((ret = addr_append(&iword)) == 0) {
+                            int addr = getbits36(iword, 0, 18);
+                            int tally = getbits36(iword, 18, 12);
+                            int tag = getbits36(iword, 30, 6);
+                            ++tally;
+                            tally &= MASKBITS(12);  // wrap from 4095 to zero
+                            IR.tally_runout = (tally == 0); // BUG: do we need to fault?
+                            --addr;
+                            addr &= MASK18; // wrap from zero to 2^18-1
+                            iword = setbits36(iword, 0, 18, addr);
+                            iword = setbits36(iword, 18, 12, tally);
+                            TPR.CA = addr;
+                            ret = store_word(iloc, iword);
+                        }
+                        return ret;
+                    }
+                    // case 015: more=1 depending upon tag
+                    case 016: {
+                        t_uint64 iword;
+                        int ret;
+                        int iloc = TPR.CA;
+                        if ((ret = addr_append(&iword)) == 0) {
+                            int addr = getbits36(iword, 0, 18);
+                            int tally = getbits36(iword, 18, 12);
+                            int tag = getbits36(iword, 30, 6);
+                            TPR.CA = addr;
+                            --tally;
+                            tally &= MASKBITS(12);  // wrap from zero to 4095
+                            IR.tally_runout = (tally == 0); // BUG: do we need to fault?
+                            ++addr;
+                            addr &= MASK18; // wrap from 2^18-1 to zero
+                            iword = setbits36(iword, 0, 18, addr);
+                            iword = setbits36(iword, 18, 12, tally);
+                            ret = store_word(iloc, iword);
+                        }
+                        return ret;
+                    }
+                    default:
+                        complain_msg("APU", "IT with Td 0%o not implmented.\n", td);
+                        cancel_run(STOP_BUG);
+                        return 1;
+                }
+                break;
+            }
+            case 3: {   // indirect then register (ir)
+                complain_msg("APU", "IR addr mod not implemented.\n");
+                // BUG: Maybe handle special tag (41 itp, 43 its).  Or post handle?
+                special = 1;
+                cancel_run(STOP_BUG);
+                return 1;
+            }
         }
-        case 3: {   // indirect then register (ir)
-            complain_msg("APU", "IR addr mod not implemented.\n");
-            // BUG: Maybe handle special tag (41 itp, 43 its).  Or post handle?
-            special = 1;
-            cancel_run(STOP_BUG);
-            return 1;
-        }
+        // BUG: Need to do ESN special handling if loop is continued
     }
 
     return 0;
 }
 
+
+//=============================================================================
+
+static int addr_append(t_uint64 *wordp)
+{
+    // Implements AL39, figure 5-4
+    // NOTE: ri mode is expecting a fetch
+
+    addr_modes_t addr_mode = get_addr_mode();
+    if (addr_mode == ABSOLUTE_mode)
+        return fetch_word(TPR.CA, wordp);
+    complain_msg("APU", "Only ABS mode implemented.\n");
+    cancel_run(STOP_BUG);
+    return 0;
+}
+
+//=============================================================================
 
 #if 0
 addr_modes_t addr_mode = examine indicator register (IR)

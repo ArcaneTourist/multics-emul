@@ -67,20 +67,22 @@ enum dev_type { DEV_NONE, DEV_TAPE, DEV_DISK }; // devices connected to an IOM
 
 /* Format of a 36 bit instruction word */
 typedef struct {
-    struct {
-        // 18 bits at 0..17; 18 bit offset or seg/offset pair
-        uint raw18;     // all 18 bits
-        uint pr;        // first 3 bits of above if (pr_bit==1)
-        uint offset;    // unsigned offset, 15 or 18 bits
-        int soffset;    // signed offset, 15 or 18 bits
-    } addr;
+    uint addr;  // 18 bits at 0..17; 18 bit offset or seg/offset pair
     uint opcode;    /* 10 bits at 18..27 */
     uint inhibit;   /* 1 bit at 28 */
     uint pr_bit;    // 1 bit at 29; use offset[0..2] as pointer reg
     uint tag;       /* 6 bits at 30..35 */
-    uint is_value;  // is offset a value or an address? (du or dl modifiers)
+    //uint is_value;    // is offset a value or an address? (du or dl modifiers)
     //t_uint64 value;   // 36bit value from opcode constant via du/dl
 } instr_t;
+
+typedef struct {
+    // 18 bits at 0..17 of an instruction or indir word
+    // uint raw18;      // all 18 bits
+    uint pr;        // first 3 bits of above if (pr_bit==1)
+    uint offset;    // unsigned offset, 15 or 18 bits
+    int soffset;    // signed offset, 15 or 18 bits
+} offset_t;
 
 
 /* Indicator register (14 bits [only positions 18..32 have meaning]) */
@@ -177,6 +179,8 @@ typedef struct {
     uint TBR;   // Current bit offset as calculated from ITS and ITP
     t_uint64 CA;// Current computed addr relative to the segment in TPR.TSR; Normally 18? bits but sized to hold 36bit non-address operands
     int bitno;
+    uint is_value;  // is offset a value or an address? (du or dl modifiers)
+    t_uint64 value; // 36bit value from opcode constant via du/dl
 } TPR_t;
 
 
@@ -416,6 +420,7 @@ static inline t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
 // ============================================================================
 // === Variables
 
+extern int opt_debug;
 extern t_uint64 reg_A;      // Accumulator, 36 bits
 extern t_uint64 reg_Q;      // Quotient, 36 bits
 extern t_uint64 reg_E;      // Quotient, 36 bits
@@ -448,6 +453,8 @@ extern int decode_ypair_addr(instr_t* ip, t_uint64* addrp);
 extern int fetch_instr(uint IC, instr_t *ip);
 extern char *bin2text(t_uint64 word, int n);
 extern void iom_interrupt(void);
+extern char* instr2text(const instr_t* ip);
+extern char* print_instr(t_uint64 word);
 
 extern int fetch_word(uint addr, t_uint64 *wordp);
 extern int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p);

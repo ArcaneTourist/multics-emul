@@ -183,6 +183,7 @@ iom_t iom;  // only one for now
 
 //-----------------------------------------------------------------------------
 //***  Other Externs
+int opt_debug;
 extern int bootimage_loaded;    // only relevent for the boot CPU ?
 extern uint32 sim_emax;
 
@@ -208,7 +209,7 @@ static int fault2prio[32] = {
 //-----------------------------------------------------------------------------
 //***  Function prototypes
 
-t_stat control_unit(void);
+static t_stat control_unit(void);
 int fetch_instr(uint IC, instr_t *ip);
 void execute_ir(void);
 void fault_gen(enum faults f);
@@ -321,8 +322,6 @@ void cancel_run(enum sim_stops reason)
     // Maybe we should generate an OOB fault?
 
     (void) sim_cancel_step();
-    // sim_interval = -100; // insufficient
-    // sim_interval = 0;
     if (cancel == 0 || reason < cancel)
         cancel = reason;
     debug_msg("CU", "Cancel requested: %d\n", reason);
@@ -351,6 +350,8 @@ t_stat sim_instr(void)
         // return STOP_MEMCLEAR;
     }
 
+    opt_debug = (cpu_dev.dctrl != 0);   // todo: should CPU control all debug settings?
+
     // BUG: todo: load registers that SIMH user might have modified
 
     // Setup clocks
@@ -365,14 +366,10 @@ ninstr = 0;
 
     while (reason == 0) {   /* loop until halted */
         if (sim_interval <= 0) { /* check clock queue */
-            //int quit = sim_interval <= -100;  // BUG: HACK
             // process any SIMH timed events including keyboard halt
             if ((reason = sim_process_event()) != 0) break;
-            //if (quit) {
-            //  reason = STOP_BUG;
-            //  break;
-            //}
         }
+#if 0
         uint32 t;
         {
             if ((t = sim_is_active(&TR_clk_unit)) == 0)
@@ -380,9 +377,13 @@ ninstr = 0;
             else
                 debug_msg("MAIN::clock", "TR is running with %d time units left.\n", t);
         }
-// fflush(stdout); printf("\n\r"); fflush(stdout);
-fflush(stdout); printf("\n"); fflush(stdout);
-debug_msg("MAIN", "IC: %o, CYCLE: %u, SIM INTERVAL: %d, TR: %d\n", PPR.IC, ncycles, sim_interval, t);
+#endif
+if (opt_debug) {
+    // fflush(stdout); printf("\n\r"); fflush(stdout);
+    // fflush(stdout); printf("\n"); fflush(stdout);
+    printf("\n");
+    debug_msg("MAIN", "IC: %o\n", PPR.IC);
+}
         reason = control_unit();
         ++ ncycles;
         sim_interval--; // todo: maybe only per instr or by brkpoint type?
@@ -393,17 +394,10 @@ debug_msg("MAIN", "IC: %o, CYCLE: %u, SIM INTERVAL: %d, TR: %d\n", PPR.IC, ncycl
     }
 
     uint32 delta = sim_os_msec() - start;
-#if 0
-    if (delta == 0)
-        warn_msg("CU", "Step: zero seconds: %d cycles, %d instructions\n", ncycles, ninstr);
-    else
+    //if (delta > 2000)
+    if (delta > 10)
         warn_msg("CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
             (float) delta / 1000, ncycles, ncycles*1000/delta, ninstr, ninstr*1000/delta);
-#else
-    if (delta > 2000)
-        warn_msg("CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
-            (float) delta / 1000, ncycles, ncycles*1000/delta, ninstr, ninstr*1000/delta);
-#endif
 
     // BUG: pack private variables into SIMH's world
     saved_IC = PPR.IC;
@@ -427,7 +421,7 @@ debug_msg("MAIN", "IC: %o, CYCLE: %u, SIM INTERVAL: %d, TR: %d\n", PPR.IC, ncycl
 //=============================================================================
 
 
-t_stat control_unit(void)
+static t_stat control_unit(void)
 {
     // ------------------------------------------------------------------------
     //
@@ -464,7 +458,7 @@ t_stat control_unit(void)
 
     switch(cycle) {
         case FETCH_cycle:
-            debug_msg("CU", "Cycle = FETCH; IC = %0o (%dd)\n", PPR.IC, PPR.IC);
+            if (opt_debug) debug_msg("CU", "Cycle = FETCH; IC = %0o (%dd)\n", PPR.IC, PPR.IC);
             // If execution of the current pair is complete, the processor
             // checks two? internal flags for group 7 faults and/or interrupts.
             if (events.any) {
@@ -472,7 +466,7 @@ t_stat control_unit(void)
                     (void) cancel_run(STOP_IBKPT);
                 if (events.low_group != 0) {
                     // BUG: don't need test below now that we detect 1-6 here
-                debug_msg("CU", "Fault detected prior to FETCH\n");
+                    debug_msg("CU", "Fault detected prior to FETCH\n");
                     cycle = FAULT_cycle;
                     break;
                 }
@@ -484,7 +478,7 @@ t_stat control_unit(void)
                     break;
                 }
                 if (events.int_pending) {
-                debug_msg("CU", "Interrupt detected prior to FETCH\n");
+                    debug_msg("CU", "Interrupt detected prior to FETCH\n");
                     cycle = INTERRUPT_cycle;
                     break;
                 }
@@ -576,15 +570,13 @@ t_stat control_unit(void)
                         break;
                 }
             }
-            events.any = 0;
+            events.any = 0;     // BUG: What about interrupts, other faults, etc?
 
             PPR.PRR = 0;    // set ring zero
             uint addr = switches.FLT_BASE + 2 * fault; // ABSOLUTE mode
             // Force computed addr and xed opcode into the instruction
             // register and execute (during FAULT CYCLE not EXECUTE CYCLE).
-            cu.IR.addr.raw18 = addr;
-            cu.IR.addr.offset = addr;
-            cu.IR.addr.soffset = sign18(addr);  // unused; for debug
+            cu.IR.addr = addr;
             cu.IR.opcode = (opcode0_xed << 1);
             cu.IR.inhibit = 1;
             cu.IR.pr_bit = 0;
@@ -647,7 +639,7 @@ t_stat control_unit(void)
             // when we're ready to execute the odd half of the pair
             // todo: check for IC matching curr instr or at least even/odd sanity
             if (! cpu.ic_odd) {
-                debug_msg("CU", "Cycle = EXEC, even instr\n");
+                if (opt_debug) debug_msg("CU", "Cycle = EXEC, even instr\n");
                 if (sim_brk_summ) {
                     if (sim_brk_test (PPR.IC, SWMASK ('E'))) {
                         reason = STOP_IBKPT;    /* stop simulation */
@@ -669,7 +661,7 @@ t_stat control_unit(void)
                 // todo: simplify --- cycle won't be EXEC anymore
                 if (events.any && events.low_group && events.low_group < 7) {
                     // faulted
-                    debug_msg("CU", "Probable fault after EXEC even instr\n");
+                    warn_msg("CU", "Probable fault after EXEC even instr\n");
                 } else {
                     if (cycle == EXEC_cycle) {
                             if (!cpu.xfr && PPR.IC == IC_temp) {
@@ -679,12 +671,12 @@ t_stat control_unit(void)
                                 cycle = FETCH_cycle;
                             }
                     } else {
-                        debug_msg("CU", "Changed from EXEC cycle to %d, not updating IC\n", cycle);
+                        warn_msg("CU", "Changed from EXEC cycle to %d, not updating IC\n", cycle);
                     }
                 }
 #endif
             } else {
-                debug_msg("CU", "Cycle = EXEC, odd instr\n");
+                if (opt_debug) debug_msg("CU", "Cycle = EXEC, odd instr\n");
                 // We assume IC was advanced after even instr
                 decode_instr(&cu.IR, cu.IRODD);
                 if (sim_brk_summ) {
@@ -698,7 +690,7 @@ t_stat control_unit(void)
                 // todo: simplify --- cycle won't be EXEC anymore
                 if (events.any && events.low_group && events.low_group < 7) {
                     // faulted
-                    debug_msg("CU", "Probable fault after EXEC odd instr\n");
+                    warn_msg("CU", "Probable fault after EXEC odd instr\n");
                 } else {
                     if (cycle == EXEC_cycle && !cpu.xfr && PPR.IC == IC_temp) {
                         cpu.ic_odd = 0; // finished with odd half; BUG: restart issues?
@@ -892,22 +884,11 @@ int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
 
 void decode_instr(instr_t *ip, t_uint64 word)
 {
+    ip->addr = getbits36(word, 0, 18);
     ip->opcode = getbits36(word, 18, 10);
     ip->inhibit = getbits36(word, 28, 1);
     ip->pr_bit = getbits36(word, 29, 1);
-    ip->addr.raw18 = getbits36(word, 0, 18);
-    if (ip->pr_bit == 0) {
-        ip->addr.pr = 0;
-        ip->addr.offset = ip->addr.raw18;
-        ip->addr.soffset = sign18(ip->addr.raw18);
-    } else {
-        ip->addr.pr = ip->addr.raw18 >> 15;
-        ip->addr.offset = ip->addr.raw18 & MASKBITS(15);
-        ip->addr.soffset = sign15(ip->addr.offset);
-    }
     ip->tag = getbits36(word, 30, 6);
-    ip->is_value = 0;   // OPU or APU will set if appropriate
-    //ip->value = 0;
 }
 
 //=============================================================================
