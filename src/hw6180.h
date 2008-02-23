@@ -76,13 +76,13 @@ typedef struct {
     //t_uint64 value;   // 36bit value from opcode constant via du/dl
 } instr_t;
 
-typedef struct {
-    // 18 bits at 0..17 of an instruction or indir word
-    // uint raw18;      // all 18 bits
-    uint pr;        // first 3 bits of above if (pr_bit==1)
-    uint offset;    // unsigned offset, 15 or 18 bits
-    int soffset;    // signed offset, 15 or 18 bits
-} offset_t;
+//typedef struct {
+//  // 18 bits at 0..17 of an instruction or indir word
+//  // uint raw18;      // all 18 bits
+//  uint pr;        // first 3 bits of above if (pr_bit==1)
+//  uint offset;    // unsigned offset, 15 or 18 bits
+//  int soffset;    // signed offset, 15 or 18 bits
+//} offset_t;
 
 
 /* Indicator register (14 bits [only positions 18..32 have meaning]) */
@@ -177,8 +177,10 @@ typedef struct {
     uint TRR;   // Current effective ring number, 3 bits
     uint TSR;   // Current effective segment number, 15 bits
     uint TBR;   // Current bit offset as calculated from ITS and ITP
+    // BUG: This CA should be 18 bits
     t_uint64 CA;// Current computed addr relative to the segment in TPR.TSR; Normally 18? bits but sized to hold 36bit non-address operands
     int bitno;
+    // BUG: CA value should probably be placed in ctl_unit_data_t
     uint is_value;  // is offset a value or an address? (du or dl modifiers)
     t_uint64 value; // 36bit value from opcode constant via du/dl
 } TPR_t;
@@ -239,8 +241,9 @@ typedef struct {
     /* word 5 */
     uint CA;        // 18 bits at 5[0..17]; computed address value (offset) used in the last address preparation cycle
     // cu bits for repeats, execute double, restarts, etc
-    uint CT_HOLD;   // 6 bits at 5[30..35]; contents of the "remember modifier" register
 #endif
+
+    uint CT_HOLD;   // 6 bits at 5[30..35]; contents of the "remember modifier" register
 
     /* word 6 */
     instr_t IR;     /* Working instr register; addr & tag are modified */
@@ -263,10 +266,10 @@ typedef struct {
     uint enabled;   // internal flag, not part of the register
 } PTWAM_t;
 
-// SDWAM registers, 88 bits each
+// SDW registers, 88 bits each
 typedef struct {
     //uint addr;        // 24bit main memory addr -- page table or page segment
-    //uint r1;          // 3 bits
+    uint r1;            // 3 bits
     //uint r2;          // 3 bits
     //uint r3;          // 3 bits
     //uint bound;       // 14 bits; 14 high order bits of furtherest Y-block16
@@ -283,7 +286,7 @@ typedef struct {
     uint is_full;   // flag; PTW is valid
     uint use;       // counter, 4 bits
     uint enabled;   // internal flag, not part of the register
-} SDWAM_t;
+} SDW_t;
 
 // Descriptor Segment Base Register (51 bits)
 typedef struct {
@@ -432,7 +435,7 @@ extern AR_PR_t AR_PR[8];    // Combined Pointer Registers and Address Registers
 extern PPR_t PPR;           // Procedure Pointer Reg, 37 bits, internal only
 extern TPR_t TPR;           // Temporary Pointer Reg, 42 bits, internal only
 extern PTWAM_t PTWAM[16];   // Page Table Word Associative Memory, 51 bits
-extern SDWAM_t SDWAM[16];   // Segment Descriptor Word Associative Memory, 88 bits
+extern SDW_t SDWAM[16];     // Segment Descriptor Word Associative Memory, 88 bits
 extern DSBR_t DSBR;         // Descriptor Segment Base Register (51 bits)
 
 extern ctl_unit_data_t cu;

@@ -14,6 +14,9 @@ scu.o: *.h
 iom.o: *.h
 mt.o: *.h
 
+wc:
+	wc hw6180_cpu.c hw6180_sys.c opcode_text.c misc.c opu.c bits.c apu.c scu.c iom.c mt.c hw6180.h
+
 bit-test.o: *.h
 bit-test: bit-test.o bits.o
 scan-tape: scan-tape.o misc.o bits.o opcode_text.o

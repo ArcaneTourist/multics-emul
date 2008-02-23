@@ -6,8 +6,25 @@
 
 #include "hw6180.h"
 
-static int compute_addr(instr_t *ip, int *more);
+enum atag_tm { atag_r = 0, atag_ri = 1, atag_it = 2, atag_ir = 3 };
+
+typedef struct {    // BUG
+    int32 soffset; // Signed copy of CA (15 or 18 bits if from instr; 18 bits if from indir word)
+    uint32 tag;
+    flag_t more;
+    enum atag_tm special;
+} ca_temp_t;
+
+static int compute_addr(instr_t *ip, ca_temp_t *ca_tempp);
 static int addr_append(t_uint64 *wordp);
+static int do_esn_segmentation(instr_t *ip, ca_temp_t *ca_tempp);
+
+//=============================================================================
+
+static t_bool is_transfer_op(int op)
+{
+    return 0;   // BUG
+}
 
 //=============================================================================
 
@@ -48,12 +65,15 @@ void set_addr_mode(addr_modes_t mode)
     if (mode == ABSOLUTE_mode) {
         IR.abs_mode = 1;
         IR.not_bar_mode = 1;
+        debug_msg("APU", "Setting absolute mode.\n";
     } else if (mode == APPEND_mode) {       // BUG: is this correct?
         IR.abs_mode = 0;
         IR.not_bar_mode = 1;
+        debug_msg("APU", "Setting append mode.\n";
     } else if (mode == BAR_mode) {
         IR.abs_mode = 0;    // BUG: is this correct?
         IR.not_bar_mode = 0;
+        debug_msg("APU", "Setting bar mode.\n";
     } else {
         complain_msg("APU", "Unable to determine address mode.\n");
         cancel_run(STOP_BUG);
@@ -74,11 +94,12 @@ addr_modes_t get_addr_mode()
     // BUG: addr mode depends upon instr's operand
 
     if (IR.not_bar_mode == 0) {
-        complain_msg("APU", "Unsure of mode -- seems to be BAR\n");
+        warn_msg("APU", "Unsure of mode -- seems to be BAR\n");
+        cancel_run(STOP_WARN);
         return BAR_mode;
     }
 
-    complain_msg("APU", "Unsure of mode -- seems to be APPEND\n");
+    warn_msg("APU", "Unsure of mode -- seems to be APPEND\n");
     return APPEND_mode;
 }
 
@@ -145,7 +166,6 @@ char* print_instr(t_uint64 word)
 
 //=============================================================================
 
-
 int addr_mod(instr_t *ip)
 {
     // Generate 18bit computed address TPR.CA
@@ -171,23 +191,33 @@ int addr_mod(instr_t *ip)
 
     // Addr appending below
 
+    addr_modes_t orig_mode = get_addr_mode();
     addr_modes_t addr_mode = get_addr_mode();
     int ptr_reg_flag = ip->pr_bit;
+    ca_temp_t ca_temp;  // BUG: hack
 
-    // BUG: this check should only be done after a sequential instr
-    // fetch, not after a transfer!
-    if (ptr_reg_flag) {
+    // BUG: The following check should only be done after a sequential
+    // instr fetch, not after a transfer!  We're only called by do_op(),
+    // so this criteria is *almost* met.   Need to detect transfers.
+
+    if (ptr_reg_flag == 0) {
+        ca_temp.soffset = sign18(ip->addr);
+    } else {
+        set_addr_mode(addr_mode = APPEND_mode);
         // AL39: Page 341, Figure 6-7
         int32 offset = ip->addr & MASKBITS(15);
-        int32 soffset = sign15(offset); // todo: this calc repeated in compute_address()
+        ca_temp.soffset = sign15(offset);
         uint pr = ip->addr >> 15;
         TPR.TSR = AR_PR[pr].PR.snr;
         TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
-        TPR.CA = AR_PR[pr].wordno + soffset;
+        TPR.CA = AR_PR[pr].wordno + ca_temp.soffset;
         TPR.bitno = AR_PR[pr].PR.bitno;
 
         // BUG: Enter append mode & stay if execute a transfer
     }
+
+    ca_temp.tag = ip->tag;
+
 
 #if 0
     ???
@@ -197,11 +227,32 @@ int addr_mod(instr_t *ip)
         mf1 = bits 29..36   // aka modification field
 #endif
 
-    int more = 1;
-    while (more) {
-        if (compute_addr(ip, &more) != 0)
+    ca_temp.more = 1;
+    int mult = 0;
+    while (ca_temp.more) {
+        if (compute_addr(ip, &ca_temp) != 0) {
+            debug_msg("APU", "Final (incomplete) CA: 0%0Lo\n", TPR.CA);
             return 1;
+        }
+        if (ca_temp.more)
+            mult = 1;
+        ca_temp.soffset = sign18(TPR.CA);
+        if (ca_temp.more)
+            debug_msg("APU", "Pre Seg: Continuing indirect fetches\n");
+        if (do_esn_segmentation(ip, &ca_temp) != 0) {
+            debug_msg("APU", "Final (incomplete) CA: 0%0Lo\n", TPR.CA);
+            return 1;
+        }
+        if (ca_temp.more)
+            debug_msg("APU", "Post Seg: Continuing indirect fetches\n");
+        if (ca_temp.more)
+            mult = 1;
     }
+    if (mult) {
+            debug_msg("APU", "Final CA: 0%0Lo\n", TPR.CA);
+    }
+
+    addr_mode = get_addr_mode();    // may have changed
 
     if (addr_mode == BAR_mode) {
         if (addr_mode == BAR_mode && ptr_reg_flag == 0) {
@@ -217,20 +268,20 @@ int addr_mod(instr_t *ip)
     // (aka ptr_reg_flag) is on or the its or itp modifiers appear in
     // an indirect word
 
-    // BUG: detect its and itp
+    // BUG: detect its and itp -- DONE
     if (addr_mode == ABSOLUTE_mode && ptr_reg_flag == 0) {
         // TPR.CA is the 18-bit absolute main memory addr
         return 0;
     }
 
-    // BUG: Do segment handling ala AL39 section 6
+    // BUG: Do segment handling ala AL39 section 6 -- DONE
 
-    complain_msg("APU", "Only ABS mode w/o segmentation is implemented.\n");
-    cancel_run(STOP_BUG);
+    warn_msg("APU", "addr_mod: None ABS mode may be incomplete.\n");
+    cancel_run(STOP_WARN);
 
 
 
-#if 0
+#if 0 // MOSTLY DONE?
     // From Section 4:
     if (addr_mode == BAR_mode && ptr_reg_flag == 0)
         // 18bit offset rel to the BAR
@@ -253,7 +304,7 @@ int addr_mod(instr_t *ip)
 }
 
 
-static int compute_addr(instr_t *ip, int *more)
+static int compute_addr(instr_t *ip, ca_temp_t *ca_tempp)
 {
     // Perform a "CA" cycle as per figure 6-2 of AL39.
     // Generate an 18-bit computed address (in TPR.CA) as specified in section 6
@@ -261,37 +312,24 @@ static int compute_addr(instr_t *ip, int *more)
     // In our version, this may include replacing TPR.CA with a 36 bit constant or
     // other value if an appropriate modifier (e.g., du) is present.
 
-    *more = 0;
-
-    offset_t addr;
-
-    // BUG move out of here.  Offsets only used by du, dl, and r. BUG: Should probably be using CA for offset
-    if (ip->pr_bit == 0) {
-        addr.pr = 0;
-        addr.offset = ip->addr;
-        addr.soffset = sign18(ip->addr);
-    } else {
-        addr.pr = ip->addr >> 15;
-        addr.offset = ip->addr & MASKBITS(15);
-        addr.soffset = sign15(addr.offset);
-    }
-
-    uint tag = ip->tag; // BUG move out of here
+    ca_tempp->more = 0;
 
     // BUG: Need to do ESN special handling if loop is continued
 
-    for (;;) {
+    // for (;;) {
 
-        uint tm = (tag >> 4) & 03;  // the and is a hint to the compiler for the following switch...
-        uint td = tag & 017;
+        // uint tm = (ca_tempp->tag >> 4) & 03; // the and is a hint to the compiler for the following switch...
+        enum atag_tm tm = (ca_tempp->tag >> 4) & 03;    // the and is a hint to the compiler for the following switch...
 
-        int special = 0;    // not used yet; prob not used in this phase
+        uint td = ca_tempp->tag & 017;
+
+        ca_tempp->special = tm;
     
         switch(tm) {
-            case 0: {   // register (r)
+            case atag_r: {  // Tm=0 -- register (r)
                 if (td == 0)
                     return 0;
-                int off = addr.soffset;
+                int off = ca_tempp->soffset;
                 switch(td) {
                     case 0:
                         break;  // no mod (can't get here anyway)
@@ -303,8 +341,8 @@ static int compute_addr(instr_t *ip, int *more)
                         break;
                     case 3: // ,du
                         TPR.is_value = 1;   // BUG: Use "direct operand flag" instead
-                        TPR.value = (t_uint64) addr.offset << 18;
-                        debug_msg("APU", "Mod du: Value from offset 0%o is 0%Lo\n", addr.offset, TPR.value);
+                        TPR.value = (t_uint64) TPR.CA << 18;
+                        debug_msg("APU", "Mod du: Value from offset 0%Lo is 0%Lo\n", TPR.CA, TPR.value);
                         break;
                     case 4: // PPR.IC
                         TPR.CA = off + PPR.IC;  // BUG: IC assumed to be unsigned
@@ -317,8 +355,8 @@ static int compute_addr(instr_t *ip, int *more)
                         break;
                     case 7: // ,dl
                         TPR.is_value = 1;   // BUG: Use "direct operand flag" instead
-                        TPR.value = addr.offset;    // BUG: Should we sign?
-                        debug_msg("APU", "Mod dl: Value from offset 0%o is 0%Lo\n", addr.offset, TPR.value);
+                        TPR.value = TPR.CA; // BUG: Should we sign?
+                        debug_msg("APU", "Mod dl: Value from offset 0%Lo is 0%Lo\n", TPR.CA, TPR.value);
                         break;
                     case 010:
                     case 011:
@@ -336,7 +374,7 @@ static int compute_addr(instr_t *ip, int *more)
                 }
                 return 0;
             }
-            case 1: {   // register then indirect (ri)
+            case atag_ri: { // Tm=1 -- register then indirect (ri)
                 if (td == 3 || td == 7) {
                     warn_msg("APU", "RI with td==0%o is illegal.\n", td);
                     fault_gen(illproc_fault);   // need illmod sub-category
@@ -350,18 +388,21 @@ static int compute_addr(instr_t *ip, int *more)
                     debug_msg("APU", "IR: pre-fetch:  TPR.CA=0%Lo <==  TPR.CA=%Lo + X[%d]=0%o\n",
                         TPR.CA, reg_X[td], ca);
                 }
-                special = 1;    // BUG: check for possible itp or its modifier in indir word
                 t_uint64 word;
                 if (addr_append(&word) != 0)
                     return 1;
+                debug_msg("APU", "IR: fetch:  word at TPR.CA=0%Lo is 0%Lo\n",
+                    TPR.CA, word);
                 TPR.CA = word >> 18;
-                tag = word & MASKBITS(6);
-                debug_msg("APU", "IR: post-fetch: TPR.CA=0%Lo\n", TPR.CA);
-                // BUG: need to tell next CA to fetch the indir word, not use the instr.  Or maybe end CA & do ESN
+                ca_tempp->tag = word & MASKBITS(6);
+                debug_msg("APU", "IR: post-fetch: TPR.CA=0%Lo, tag=0%o\n", TPR.CA, ca_tempp->tag);
                 cancel_run(STOP_IBKPT); // compare to prior runs
-                break;  // Continue a new CA cycle
+                // break;   // Continue a new CA cycle
+                ca_tempp->more = 1;     // Continue a new CA cycle
+                // BUG: flowchart says start CA, but we do ESN
+                return 0;
             }
-            case 2: {   // indirect then tally (it)
+            case atag_it: { // Tm=2 -- indirect then tally (it)
                 // BUG: see "it" flowchart for looping (Td={15,17}
                 switch(td) {
                     case 0:
@@ -416,20 +457,123 @@ static int compute_addr(instr_t *ip, int *more)
                 }
                 break;
             }
-            case 3: {   // indirect then register (ir)
+            case atag_ir: { // TM=3 -- indirect then register (ir)
                 complain_msg("APU", "IR addr mod not implemented.\n");
                 // BUG: Maybe handle special tag (41 itp, 43 its).  Or post handle?
-                special = 1;
                 cancel_run(STOP_BUG);
                 return 1;
             }
         }
         // BUG: Need to do ESN special handling if loop is continued
-    }
+    //}
 
     return 0;
 }
 
+
+//=============================================================================
+
+static int do_esn_segmentation(instr_t *ip, ca_temp_t *ca_tempp)
+{
+    // Implements the portion of AL39 figure 6-10 that is below the "CA CYCLE" box
+
+    if (ca_tempp->special && (TPR.CA % 2) == 0) {
+        // Just did an "ir" or "ri" addr modification
+        if (ca_tempp->tag == 041) {
+            // itp
+            set_addr_mode(APPEND_mode);
+            t_uint64 word1, word2;
+            // BUG: are we supposed to fetch?
+            int ret = fetch_pair(TPR.CA, &word1, &word2);
+            if (ret != 0)
+                return ret;
+            uint n = getbits36(word1, 0, 3);
+            TPR.TSR = AR_PR[n].PR.snr;
+            if (! SDWAM[TPR.TSR].enabled) {
+                warn_msg("APU", "SDWAM[%d] is not enabled\n", TPR.TSR);
+                cancel_run(STOP_WARN);
+            }
+            uint sdw_r1 = SDWAM[TPR.TSR].r1;
+            TPR.TRR = max3(AR_PR[n].PR.rnr, sdw_r1, TPR.TRR);
+            TPR.TBR = getbits36(word2, 21, 6);
+            ca_tempp->tag = word2 & MASKBITS(6);
+            uint i_mod_tm = ca_tempp->tag >> 4;
+            uint r;
+            if (ca_tempp->special == atag_ir)
+                r = cu.CT_HOLD;
+            else if (ca_tempp->special == atag_ri && (i_mod_tm == atag_r || i_mod_tm == atag_ri)) {
+                uint i_mod_td = ca_tempp->tag & MASKBITS(4);
+                r = i_mod_td;
+            } else {
+                complain_msg("APU", "ITP addr mod with undefined r-value (tm=0%o,new-tm=0%o)\n", ca_tempp->special, i_mod_tm);
+                cancel_run(STOP_BUG);
+                r = 0;
+            }
+            uint i_wordno = getbits36(word2, 0, 18);
+            TPR.CA = AR_PR[n].wordno + i_wordno + r;
+            ca_tempp->more = 1;
+            complain_msg("APU", "ITP not fully understood?\n");
+            cancel_run(STOP_BUG);
+            return 0;
+        } else if (ca_tempp->tag == 043) {
+            // its
+            set_addr_mode(APPEND_mode);
+            t_uint64 word1, word2;
+            // BUG: are we supposed to fetch?
+            debug_msg("APU", "ITS: CA initially 0%o\n", TPR.CA);
+            int ret = fetch_pair(TPR.CA, &word1, &word2);
+            if (ret != 0)
+                return ret;
+            TPR.TSR =  getbits36(word1, 3, 15);
+            uint its_rn = getbits36(word1, 18, 3);
+            if (! SDWAM[TPR.TSR].enabled) {
+                warn_msg("APU", "SDWAM[%d] is not enabled\n", TPR.TSR);
+                cancel_run(STOP_WARN);
+            }
+            uint sdw_r1 = SDWAM[TPR.TSR].r1;
+            TPR.TRR = max3(its_rn, sdw_r1, TPR.TRR);
+            TPR.TBR = getbits36(word2, 21, 6);
+            ca_tempp->tag = word2 & MASKBITS(6);
+
+            uint i_mod_tm = ca_tempp->tag >> 4;
+            debug_msg("APU", "ITS: TPR.TSR = 0%o, rn=0%o, sdw.r1=0%o, TPR.TRR=0%o, TPR.TBR=0%o, tag=0%o(tm=0%o)\n",
+                TPR.TSR, its_rn, sdw_r1, TPR.TRR, TPR.TBR, ca_tempp->tag, i_mod_tm);
+            uint r;
+            if (ca_tempp->special == atag_ir)
+                r = cu.CT_HOLD;
+            else if (ca_tempp->special == atag_ri && (i_mod_tm == atag_r || i_mod_tm == atag_ri)) {
+                uint i_mod_td = ca_tempp->tag & MASKBITS(4);
+                r = i_mod_td;
+            } else {
+                complain_msg("APU", "ITS addr mod with undefined r-value (tm=0%o,new-tm=0%o)\n", ca_tempp->special, i_mod_tm);
+                cancel_run(STOP_BUG);
+                r = 0;
+            }
+            uint i_wordno = getbits36(word2, 0, 18);
+            TPR.CA = i_wordno + r;
+            debug_msg("APU", "ITS: CA = wordno=0%o + r=0%o => 0%o\n", i_wordno, r, TPR.CA);
+            ca_tempp->more = 1;
+            complain_msg("APU", "ITS not fully understood?\n");
+            cancel_run(STOP_BUG);
+            return 0;
+        }
+    }
+
+    // If we need an indirect word, we should return to the top of the ESN flow (AL39, figure 6-8)
+    if (ca_tempp->more)
+        return 0;
+
+    if (ip->opcode == (opcode0_rtcd << 1)) {
+        complain_msg("APU", "RTCD operand not implemented.\n");
+        cancel_run(STOP_BUG);
+    } else if (ip->opcode == (opcode0_call6 << 1) || is_transfer_op(ip->opcode)) {
+        complain_msg("APU", "Call6 and transfer operands not implemented.\n");
+        cancel_run(STOP_BUG);
+    } else {
+        // BUG: What does the question "Appending unit data movement?" mean?
+    }
+    return 0;
+}
 
 //=============================================================================
 
@@ -441,7 +585,7 @@ static int addr_append(t_uint64 *wordp)
     addr_modes_t addr_mode = get_addr_mode();
     if (addr_mode == ABSOLUTE_mode)
         return fetch_word(TPR.CA, wordp);
-    complain_msg("APU", "Only ABS mode implemented.\n");
+    complain_msg("APU", "addr_append: Only ABS mode implemented.\n");
     cancel_run(STOP_BUG);
     return 0;
 }

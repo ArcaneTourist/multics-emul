@@ -77,7 +77,7 @@ AR_PR_t AR_PR[8];   // Combined Pointer Registers (42 bits) and Address Register
 PPR_t PPR;      // Procedure Pointer Reg, 37 bits, internal only
 TPR_t TPR;      // Temporary Pointer Reg, 42 bits, internal only
 DSBR_t DSBR;    // Descriptor Segment Base Register, 51 bits
-SDWAM_t SDWAM[16];  // Segment Descriptor Word Associative Memory, 88 bits
+SDW_t SDWAM[16];    // Segment Descriptor Word Associative Memory, 88 bits
 PTWAM_t PTWAM[16];  // Page Table Word Associative Memory, 51 bits
 // static fault_reg_t FR;   // Fault Register, 35 bits
 // CMR;     // Cache Mode Register, 28 bits
@@ -777,7 +777,8 @@ int fetch_instr(uint IC, instr_t *ip)
 
     if (get_addr_mode() != ABSOLUTE_mode) {
         // BUG: IC needs conversion to abs mem addr
-        abort();
+        complain_msg("CU::fetch", "IC=0%o:  Not in absolute mode.\n", IC);
+        cancel_run(STOP_BUG);
     }
 
     // todo: check for read breakpoints

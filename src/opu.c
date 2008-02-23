@@ -17,6 +17,7 @@ static int add18(t_uint64 a, t_uint64 b, t_uint64 *dest);
 static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2);
 static int32 sign18(t_uint64 x);
 static int do_epp(int epp);
+static int do_an_op(instr_t *ip);   // todo: hack, fold into do_op
 
 // BUG: move externs to hdr file
 extern int scu_cioc(t_uint64 addr);
@@ -50,8 +51,24 @@ static int fetch_op(const instr_t *ip, t_uint64 *wordp)
 
 // ============================================================================
 
-
 static int do_op(instr_t *ip)
+{
+    addr_modes_t orig_mode = get_addr_mode();
+    uint orig_ic = PPR.IC;
+    int ret = do_an_op(ip);
+    addr_modes_t mode = get_addr_mode();
+    if (orig_mode != mode) {
+        if (orig_ic == PPR.IC) {
+            set_addr_mode(orig_mode);
+            debug_msg("OPU", "Resetting addr mode for sequential instr\n");
+        } else
+            debug_msg("OPU", "Address mode has been changed with a transfer instr.  Was 0%o, now 0%o\n", orig_ic, PPR.IC);
+        cancel_run(STOP_IBKPT);
+    }
+}
+
+
+static int do_an_op(instr_t *ip)
 {
     // Returns non-zero on error or non-group-7  fault
     // BUG: check for illegal modifiers
