@@ -29,7 +29,7 @@ enum faults {
     shutdown_fault = 0, store_fault = 1, f1_fault = 3,
     timer_fault = 4, connect_fault = 8,
     illproc_fault = 10, startup_fault = 12, overflow_fault = 13,
-    div_fault = 14, trouble_fault = 31,
+    div_fault = 14, dir_flt0_fault = 16, acc_viol_fault = 20, trouble_fault = 31,
     //
     oob_fault=32    // out-of-band, simulator only
 };
@@ -207,6 +207,11 @@ typedef struct {
             IC  bits [0..17] of word 4
     */
 
+    /* word 1 */
+    struct {
+        unsigned oosb:1;    // out of segment bounds
+    } word1flags;
+
 #if 0
     /* word 0 */
     // PPR portions copied from Appending Unit
@@ -217,7 +222,8 @@ typedef struct {
     uint FCT;           /* Fault counter; 3 bits at 0[33..35];
 
     /* word 1 */
-    uint64 word1bits;   /* Word1, bits [0..19] and [35] */
+    //uint64 word1bits; /* Word1, bits [0..19] and [35] */
+
     uint IA;        /* 4 bits @ 1[20..23] */
     uint IACHN;     /* 3 bits @ 1[24..26] */
     uint CNCHN;     /* 3 bits @ 1[27..29] */
@@ -254,39 +260,69 @@ typedef struct {
     
 } ctl_unit_data_t;
 
-
-// PTWAM registers, 51 bits each
+// PTW --36 bits -- AN87, page 1-17 or AL39
 typedef struct {
-    //uint addr;        // 18 bits; upper 18 bits of 24bit main memory addr of page
-    //uint modified;    // flag
-    //uint ptr;     // 15 bits; effective segment #
-    //uint pageno;  // 12 bits; 12 high order bits of CA used to fetch this PTW from mem
-    uint is_full;   // flag; PTW is valid
-    uint use;       // counter, 4 bits
-    uint enabled;   // internal flag, not part of the register
+    uint addr;      // 18 bits; mod 64 abs main memory addr of page aka upper 18 bits; bits 0..17
+    // uint did;    // 4 bits; bit 18..21
+    // flag_t d;
+    // flag_t p;
+    flag_t u;       // used; bit 26
+    // flag_t o;
+    // flag_t y;
+    flag_t m;       // modified; bit 29
+    // flag_t q;
+    // flag_t w;
+    // flag_t s;
+    flag_t f;       // directed fault (0=>page non in memory, so fault); bit 33
+    uint fc;        // which directed fault; bits 34..35
+} PTW_t;
+
+
+// PTWAM registers, 51 bits stored by sptr & sptp.  Some bits of PTW are
+// ignored by those instructions.
+typedef struct {
+    PTW_t ptw;
+    struct {
+        uint ptr;       // 15 bits; effective segment #
+        uint pageno;    // 12 bits; 12 high order bits of CA used to fetch this PTW from mem
+        uint is_full;   // flag; PTW is valid
+        uint use;       // counter, 4 bits
+        uint enabled;   // internal flag, not part of the register
+    } assoc;
 } PTWAM_t;
 
-// SDW registers, 88 bits each
+// SDW (72 bits)
 typedef struct {
-    //uint addr;        // 24bit main memory addr -- page table or page segment
-    uint r1;            // 3 bits
-    //uint r2;          // 3 bits
-    //uint r3;          // 3 bits
-    //uint bound;       // 14 bits; 14 high order bits of furtherest Y-block16
-    //uint r;           // flag; read perm
-    //uint e;           // flag; exec perm
-    //uint w;           // flag; write perm
-    //uint p;           // flag; priv
-    //uint u;           // flag; unpaged
-    //uint g;           // flag; gate control
-    //uint c;           // flag; cache control
-    //uint cl;          // 14 bits; (inbound) call limiter
-    //uint modified;    // flag
-    //uint ptr;         // 15 bits; effective segment #
-    uint is_full;   // flag; PTW is valid
-    uint use;       // counter, 4 bits
-    uint enabled;   // internal flag, not part of the register
+    // even word:
+    uint addr;      // 24bit main memory addr -- page table or page segment
+    uint r1;        // 3 bits
+    uint r2;        // 3 bits
+    uint r3;        // 3 bits
+    flag_t f;       // In SDW bit 33, stored by ssdp but not ssdr
+    uint fc;        // directed fault; Bits 34..35 of even word; in SDW, but not SDWAM?
+    // odd word:
+    uint bound;     // 14 bits; 14 high order bits of furtherest Y-block16
+    uint r;         // flag; read perm
+    uint e;         // flag; exec perm
+    uint w;         // flag; write perm
+    uint p;         // flag; priv
+    uint u;             // flag; unpaged; bit 19 odd word of SDW
+    uint g;         // flag; gate control
+    uint c;         // flag; cache control
+    uint cl;            // 14 bits; (inbound) call limiter; aka eb
 } SDW_t;
+
+// SDWAM registers (88 bits each)
+typedef struct {
+    SDW_t sdw;
+    struct {
+        //uint modified;    // flag
+        uint ptr;           // 15 bits; effective segment #
+        uint is_full;   // flag; this SDW is valid
+        uint use;       // counter, 4 bits
+        uint enabled;   // internal flag, not part of the register
+    } assoc;
+} SDWAM_t;
 
 // Descriptor Segment Base Register (51 bits)
 typedef struct {
@@ -435,7 +471,7 @@ extern AR_PR_t AR_PR[8];    // Combined Pointer Registers and Address Registers
 extern PPR_t PPR;           // Procedure Pointer Reg, 37 bits, internal only
 extern TPR_t TPR;           // Temporary Pointer Reg, 42 bits, internal only
 extern PTWAM_t PTWAM[16];   // Page Table Word Associative Memory, 51 bits
-extern SDW_t SDWAM[16];     // Segment Descriptor Word Associative Memory, 88 bits
+extern SDWAM_t SDWAM[16];   // Segment Descriptor Word Associative Memory, 88 bits
 extern DSBR_t DSBR;         // Descriptor Segment Base Register (51 bits)
 
 extern ctl_unit_data_t cu;
@@ -458,10 +494,16 @@ extern char *bin2text(t_uint64 word, int n);
 extern void iom_interrupt(void);
 extern char* instr2text(const instr_t* ip);
 extern char* print_instr(t_uint64 word);
+extern void decode_instr(instr_t *ip, t_uint64 word);
 
 extern int fetch_word(uint addr, t_uint64 *wordp);
+extern int fetch_abs_word(uint addr, t_uint64 *wordp);
 extern int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p);
+extern int fetch_abs_pair(uint addr, t_uint64* word0p, t_uint64* word1p);
+extern int fetch_appended(uint addr, t_uint64 *wordp);
 extern int store_word(uint addr, t_uint64 word);
+extern int store_abs_word(uint addr, t_uint64 word);
+extern int store_appended(uint offset, t_uint64 word);
 
 extern void set_addr_mode(addr_modes_t mode);
 extern addr_modes_t get_addr_mode(void);

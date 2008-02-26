@@ -259,7 +259,7 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
     //  (t_uint64) addr, val, uptr, sw);
 #if 1
     if (uptr == &cpu_unit) {
-        // memory request
+        // memory request -- print memory specified by SIMH absolute M[addr]
         if (sw & SWMASK('M')) {
             char *instr = print_instr(M[addr]);
             fprintf(ofile, "%012Lo %s\n", M[addr], instr);

@@ -517,10 +517,10 @@ static int do_an_op(instr_t *ip)
                 // BUG: Check that SDWAM is enabled (whatever that means)
                 // BUG: Check that PTWAM is enabled (whatever that means)
                 for (int i = 0; i < 16; ++i) {
-                    SDWAM[i].is_full = 0;
-                    SDWAM[i].use = i;
-                    PTWAM[i].is_full = 0;
-                    PTWAM[i].use = i;
+                    SDWAM[i].assoc.is_full = 0;
+                    SDWAM[i].assoc.use = i;
+                    PTWAM[i].assoc.is_full = 0;
+                    PTWAM[i].assoc.use = i;
                 }
                 // todo: If cache is enabled, reset all cache colume and level full flags
                 DSBR.addr = getbits36(word1, 0, 24);
@@ -1000,8 +1000,8 @@ static int do_an_op(instr_t *ip)
                 int enable = TPR.CA & 3;        // Bits 16 and 17 of 18-bit CA
                 int i;
                 for (i = 0; i < 16; ++i) {
-                    SDWAM[i].is_full = 0;
-                    SDWAM[i].use = i;
+                    SDWAM[i].assoc.is_full = 0;
+                    SDWAM[i].assoc.use = i;
                     if (clear) {
                         ret = 1;
                         debug_msg("OPU::cams", "Clear mode is unimplemented\n");
@@ -1010,9 +1010,9 @@ static int do_an_op(instr_t *ip)
                         // -- what are cache blocks?
                     }
                     if (enable == 2)
-                        SDWAM[i].enabled = 1;
+                        SDWAM[i].assoc.enabled = 1;
                     else if (enable == 1)
-                        SDWAM[i].enabled = 0;
+                        SDWAM[i].assoc.enabled = 0;
                 }
                 return ret;
             }
@@ -1203,8 +1203,8 @@ static int do_an_op(instr_t *ip)
                 int enable = TPR.CA & 3;        // Bits 16 and 17 of 18-bit CA
                 int i;
                 for (i = 0; i < 16; ++i) {
-                    PTWAM[i].is_full = 0;
-                    PTWAM[i].use = i;
+                    PTWAM[i].assoc.is_full = 0;
+                    PTWAM[i].assoc.use = i;
                     if (sel_clear) {
                         ret = 1;
                         debug_msg("OPU::camp", "Selective Clear mode is Unimplemented\n");
@@ -1215,9 +1215,9 @@ static int do_an_op(instr_t *ip)
                         // -- what are cache blocks and dirs?
                     }
                     if (enable == 2)
-                        PTWAM[i].enabled = 1;
+                        PTWAM[i].assoc.enabled = 1;
                     else if (enable == 1)
-                        PTWAM[i].enabled = 0;
+                        PTWAM[i].assoc.enabled = 0;
                 }
                 return ret;
             }
@@ -1453,5 +1453,8 @@ static int do_epp(int epp)
     AR_PR[epp].PR.snr = TPR.TSR;
     AR_PR[epp].wordno = TPR.CA & MASK18;
     AR_PR[epp].PR.bitno = TPR.TBR;
+    char buf[20];
+    sprintf(buf, "OPU::epp%d", epp);;
+    debug_msg(buf, "PR[%o]=TPR -- rnr=0%o, snr=0%o, wordno=%o, bitno=%o\n", epp, AR_PR[epp].PR.rnr, AR_PR[epp].PR.snr, AR_PR[epp].wordno, AR_PR[epp].PR.bitno);
     return 0;
 }

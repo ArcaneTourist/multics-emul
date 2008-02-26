@@ -77,7 +77,7 @@ AR_PR_t AR_PR[8];   // Combined Pointer Registers (42 bits) and Address Register
 PPR_t PPR;      // Procedure Pointer Reg, 37 bits, internal only
 TPR_t TPR;      // Temporary Pointer Reg, 42 bits, internal only
 DSBR_t DSBR;    // Descriptor Segment Base Register, 51 bits
-SDW_t SDWAM[16];    // Segment Descriptor Word Associative Memory, 88 bits
+SDWAM_t SDWAM[16];  // Segment Descriptor Word Associative Memory, 88 bits
 PTWAM_t PTWAM[16];  // Page Table Word Associative Memory, 51 bits
 // static fault_reg_t FR;   // Fault Register, 35 bits
 // CMR;     // Cache Mode Register, 28 bits
@@ -395,7 +395,7 @@ if (opt_debug) {
 
     uint32 delta = sim_os_msec() - start;
     //if (delta > 2000)
-    if (delta > 10)
+    if (delta > 1000)
         warn_msg("CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
             (float) delta / 1000, ncycles, ncycles*1000/delta, ninstr, ninstr*1000/delta);
 
@@ -773,26 +773,53 @@ void fault_gen(enum faults f)
 
 int fetch_instr(uint IC, instr_t *ip)
 {
-    // returns non-zero if fault detected
-
-    if (get_addr_mode() != ABSOLUTE_mode) {
-        // BUG: IC needs conversion to abs mem addr
-        complain_msg("CU::fetch", "IC=0%o:  Not in absolute mode.\n", IC);
-        cancel_run(STOP_BUG);
-    }
-
+    // Returns non-zero if a fault in groups 1-6 is detected
     // todo: check for read breakpoints
 
-    decode_instr(ip, M[IC]);    // BUG: skips fetch_word
-    return 0;
+    if (get_addr_mode() == ABSOLUTE_mode) {
+        decode_instr(ip, M[IC]);    // WARNING: skips fetch_word (but we're in absolute mode)
+        return 0;
+    }
+
+    // BUG: IC needs conversion to abs mem addr
+    warn_msg("CU::fetch-instr", "IC=0%o:  Not in absolute mode.\n", IC);
+    t_uint64 word;
+    int ret = fetch_word(IC, &word);
+    decode_instr(ip, word);
+    cancel_run(STOP_WARN);
+    return ret;
 }
 
 //=============================================================================
 
 int fetch_word(uint addr, t_uint64 *wordp)
 {
+    // todo: Allow SIMH to use segmented addressing to specify breakpoints. Next, check for such.
+    // Returns non-zero if a fault in groups 1-6 is detected
+
+    addr_modes_t mode = get_addr_mode();
+
+    if (mode == APPEND_mode) {
+        return fetch_appended(addr, wordp);
+    } else if (mode == ABSOLUTE_mode) {
+        return fetch_abs_word(addr, wordp);
+    } else if (mode == BAR_mode) {
+        complain_msg("CU::fetch", "Addr=0%o:  BAR mode unimplemented.\n", addr);
+        cancel_run(STOP_BUG);
+        return fetch_abs_word(addr, wordp);
+    } else {
+        complain_msg("CU::fetch", "Addr=0%o:  Unknown addr mode %d.\n", addr, mode);
+        cancel_run(STOP_BUG);
+        return fetch_abs_word(addr, wordp);
+    }
+
+}
+
+
+int fetch_abs_word(uint addr, t_uint64 *wordp)
+{
     // Fetch word at 24-bit absolute address addr.
-    // Eeturns non-zero if fault in groups 1-6 detected
+    // Returns non-zero if a fault in groups 1-6 is detected
 
     // todo: check for read breakpoints
 
@@ -825,12 +852,38 @@ int fetch_word(uint addr, t_uint64 *wordp)
         if (sim_brk_test (addr, SWMASK ('M')))
             (void) cancel_run(STOP_IBKPT);
 
-    *wordp = M[addr];
+    *wordp = M[addr];   // absolute memory reference
     return 0;
 }
 
 
 int store_word(uint addr, t_uint64 word)
+{
+    // todo: Allow SIMH to use segmented addressing to specify breakpoints. Next, check for such.
+    // Returns non-zero if a fault in groups 1-6 is detected
+
+    addr_modes_t mode = get_addr_mode();
+
+    if (mode == APPEND_mode) {
+        int ret = store_appended(addr, word);
+        complain_msg("CU::store", "Addr=0%o:  Append mode untested.\n", addr);
+        cancel_run(STOP_WARN);
+        return ret;
+    } else if (mode == ABSOLUTE_mode) {
+        return store_abs_word(addr, word);
+    } else if (mode == BAR_mode) {
+        complain_msg("CU::store", "Addr=0%o:  BAR mode unimplemented.\n", addr);
+        cancel_run(STOP_BUG);
+        return store_abs_word(addr, word);
+    } else {
+        complain_msg("CU::store", "Addr=0%o:  Unknown addr mode %d.\n", addr, mode);
+        cancel_run(STOP_BUG);
+        return 1;   // BUG: gen fault
+    }
+}
+
+
+int store_abs_word(uint addr, t_uint64 word)
 {
     // Store word to location given by 24bit abs memory addr
 
@@ -859,15 +912,33 @@ int store_word(uint addr, t_uint64 word)
         if (sim_brk_test (addr, SWMASK ('M')))
             (void) cancel_run(STOP_IBKPT);
 
-    M[addr] = word;
+    M[addr] = word; // absolute memory reference
     return 0;
 }
 
 
-int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
+int fetch_abs_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
 {
     // Fetch even and odd words at Y-pair given by 24-bit absolute address addr.
     // Returns non-zero if fault in groups 1-6 detected
+
+    int ret;
+    uint Y = (addr % 2 == 0) ? addr : addr - 1;
+
+    if ((ret = fetch_abs_word(Y, word0p) != 0)) {
+        return ret;
+    }
+    if ((ret = fetch_abs_word(Y+1, word1p) != 0)) {
+        return ret;
+    }
+    return 0;
+}
+
+int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
+{
+    // ERROR: Send to appending unit -- it's probably the final addr that must be even, not the offset
+
+    // return fetch_pair(addr, word0p, word1p);
 
     int ret;
     uint Y = (addr % 2 == 0) ? addr : addr - 1;
@@ -906,7 +977,7 @@ void tape_block(unsigned char *p, uint32 len, uint32 addr)
     bitstream_t *bp = bitstm_new(p, len);
     uint32 nbits = len * 8;
     while (nbits >= 36) {
-        bitstm_get(bp, 36, &M[addr++]);
+        bitstm_get(bp, 36, &M[addr++]);     // absolute addresses
         nbits -= 36;
     }
     if (nbits != 0) {
@@ -965,7 +1036,7 @@ static t_stat cpu_ex (t_value *eval_array, t_addr addr, UNIT *uptr, int32 switch
     // NOTE: We ignore UNIT, because all CPUS see the same memory
     // SIMH Documention is incorrect; SIMH code expects examine() to only
     // write a single value (often a member of an array of size sim_emax)
-    memcpy(eval_array, &M[addr], sizeof(M[0]));
+    memcpy(eval_array, &M[addr], sizeof(M[0])); // SIMH absolute reference
     return 0;
 }
 
@@ -973,6 +1044,6 @@ static t_stat cpu_dep (t_value v, t_addr addr, UNIT *uptr, int32 switches)
 {
     // BUG: sanity check args
     // NOTE: We ignore UNIT, because all CPUS see the same memory
-    M[addr] = v;
+    M[addr] = v;        // SIMH absolute reference
     return 0;
 }

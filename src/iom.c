@@ -7,6 +7,8 @@
     3.10 some more physical switches
 
     Config switch: 3 positions -- Standard GCOS, Extended GCOS, Multics
+
+    Note that all M[addr] references are absolute (The IOM has no access to the CPU's appending hardware.)
 */
 
 #include "hw6180.h"
