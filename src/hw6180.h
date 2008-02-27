@@ -495,6 +495,8 @@ extern void iom_interrupt(void);
 extern char* instr2text(const instr_t* ip);
 extern char* print_instr(t_uint64 word);
 extern void decode_instr(instr_t *ip, t_uint64 word);
+extern char* print_ptw(t_uint64 word);
+extern char* print_sdw(t_uint64 word0, t_uint64 word1);
 
 extern int fetch_word(uint addr, t_uint64 *wordp);
 extern int fetch_abs_word(uint addr, t_uint64 *wordp);

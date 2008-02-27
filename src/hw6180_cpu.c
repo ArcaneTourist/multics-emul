@@ -786,6 +786,7 @@ int fetch_instr(uint IC, instr_t *ip)
     t_uint64 word;
     int ret = fetch_word(IC, &word);
     decode_instr(ip, word);
+    debug_msg("CU::fetch-instr", "Fetched word %012Lo => %s\n", word, instr2text(ip));
     cancel_run(STOP_WARN);
     return ret;
 }
@@ -800,7 +801,8 @@ int fetch_word(uint addr, t_uint64 *wordp)
     addr_modes_t mode = get_addr_mode();
 
     if (mode == APPEND_mode) {
-        return fetch_appended(addr, wordp);
+        int ret = fetch_appended(addr, wordp);
+        return ret;
     } else if (mode == ABSOLUTE_mode) {
         return fetch_abs_word(addr, wordp);
     } else if (mode == BAR_mode) {

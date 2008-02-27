@@ -186,7 +186,7 @@ static int do_an_op(instr_t *ip)
             case opcode0_staq: {
                 // BUG: check for illegal modifiers
                 t_uint64 word1, word2;
-                uint y = TPR.CA - TPR.CA % 2;
+                uint y = TPR.CA - TPR.CA % 2;   // force even
                 int ret = store_word(y, reg_A);
                 if (ret == 0)
                     ret = store_word(y+1, reg_Q);
@@ -236,16 +236,6 @@ static int do_an_op(instr_t *ip)
                 IR.zero = reg_X[n] == 0;
                 IR.neg = bit18_is_neg(reg_X[n]);
                 return 0;
-#if 0
-                int ret;
-                t_uint64 word;
-                if ((ret = fetch_op(ip, &word)) == 0) {
-                    IR.zero = word == 0;
-                    IR.neg = bit36_is_neg(word);
-                    ret = store_word(reg_X[n], word);
-                }
-                return ret;
-#endif
             }
             case opcode0_lda: {
                 int ret = fetch_op(ip, &reg_A);
@@ -310,14 +300,14 @@ static int do_an_op(instr_t *ip)
                     fault_gen(illproc_fault);
                     return 1;
                 }
-                return scu_cioc(TPR.CA);
+                return scu_cioc(TPR.CA);    // don't convert via appending
             }
             case opcode0_smcm: { // priv
                 if (get_addr_mode() != ABSOLUTE_mode) {
                     fault_gen(illproc_fault);
                     return 1;
                 }
-                return scu_set_cpu_mask(TPR.CA);
+                return scu_set_cpu_mask(TPR.CA);    // don't convert via appending
             }
             case opcode0_sscr: { // priv
                 // set system controller register (to value in AQ)
@@ -527,6 +517,8 @@ static int do_an_op(instr_t *ip)
                 DSBR.bound = getbits36(word2, 0, 14);   // 37-36- 1
                 DSBR.u = getbits36(word2, 18, 1);   // 50-36-1
                 DSBR.stack = getbits36(word2, 23, 12);  // 60-36-1
+                debug_msg("OPU::ldbr", "DSBR: addr=0%o, bound=0%o(%u), u=%d, stack=0%o\n",
+                    DSBR.addr, DSBR.bound, DSBR.bound, DSBR.u, DSBR.stack);
                 return 0;
             }
             case opcode0_epp0:
@@ -1224,7 +1216,7 @@ static int do_an_op(instr_t *ip)
             case opcode1_epp1:
                 return do_epp(1);
             case opcode1_epp3:
-                return do_epp(4);
+                return do_epp(3);
             case opcode1_epp5:
                 return do_epp(5);
             case opcode1_epp7:

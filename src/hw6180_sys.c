@@ -255,23 +255,30 @@ extern char* print_lpw(t_addr addr);    // BUG: put in hdr
 
 t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
 {
-    // debug_msg("SYS::fprint_sym", "addr=0%Lo, valp=%p, unit=%p, sw=0%o\n",
-    //  (t_uint64) addr, val, uptr, sw);
-#if 1
     if (uptr == &cpu_unit) {
         // memory request -- print memory specified by SIMH absolute M[addr]
         if (sw & SWMASK('M')) {
+            // M -> instr
             char *instr = print_instr(M[addr]);
             fprintf(ofile, "%012Lo %s\n", M[addr], instr);
         } else if (sw & SWMASK('L')) {
+            // L -> LPW
             fprintf(ofile, "%012Lo %s\n", M[addr], print_lpw(addr));
+        } else if (sw & SWMASK('P')) {
+            // P -> PTW
+            char *s = print_ptw(M[addr]);
+            fprintf(ofile, "%012Lo %s\n", M[addr], s);
+        } else if (sw & SWMASK('S')) {
+            // S -> SDW
+            char *s = print_sdw(M[addr], M[addr+1]);
+            fprintf(ofile, "%012Lo %012Lo %s\n", M[addr], M[addr+1], s);
         } else {
             fprintf(ofile, "%012Lo", M[addr]);
         }
+        fflush(ofile);
         return SCPE_OK;
     } else
         return SCPE_ARG;
-#endif
 }
 
 t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
