@@ -206,6 +206,8 @@ static int fault2prio[32] = {
     18, 19,  0,  0,  0,  0,  0,  3
 };
 
+static int is_eis[1024];    // hack
+
 //-----------------------------------------------------------------------------
 //***  Function prototypes
 
@@ -214,6 +216,7 @@ int fetch_instr(uint IC, instr_t *ip);
 void execute_ir(void);
 void fault_gen(enum faults f);
 void decode_instr(instr_t *ip, t_uint64 word);
+static void init_ops();
 
 void tape_block(unsigned char *p, uint32 len, uint32 addr);
 
@@ -295,6 +298,8 @@ t_stat cpu_reset (DEVICE *dptr)
     // the user to load a boot tape image before starting the CPU...
 
     debug_msg("CPU", "Reset\n");
+
+    init_ops();
 
     bootimage_loaded = 0;
     memset(&events, 0, sizeof(events));
@@ -579,8 +584,8 @@ static t_stat control_unit(void)
             cu.IR.addr = addr;
             cu.IR.opcode = (opcode0_xed << 1);
             cu.IR.inhibit = 1;
-            cu.IR.pr_bit = 0;
-            cu.IR.tag = 0;
+            cu.IR.mods.single.pr_bit = 0;
+            cu.IR.mods.single.tag = 0;
 
             // Maybe just set a flag and run the EXEC case?
             // Maybe the following increments and tests are handled by EXEC and/or the XED opcode?
@@ -787,7 +792,6 @@ int fetch_instr(uint IC, instr_t *ip)
     int ret = fetch_word(IC, &word);
     decode_instr(ip, word);
     debug_msg("CU::fetch-instr", "Fetched word %012Lo => %s\n", word, instr2text(ip));
-    cancel_run(STOP_WARN);
     return ret;
 }
 
@@ -869,7 +873,6 @@ int store_word(uint addr, t_uint64 word)
     if (mode == APPEND_mode) {
         int ret = store_appended(addr, word);
         complain_msg("CU::store", "Addr=0%o:  Append mode untested.\n", addr);
-        cancel_run(STOP_WARN);
         return ret;
     } else if (mode == ABSOLUTE_mode) {
         return store_abs_word(addr, word);
@@ -961,8 +964,15 @@ void decode_instr(instr_t *ip, t_uint64 word)
     ip->addr = getbits36(word, 0, 18);
     ip->opcode = getbits36(word, 18, 10);
     ip->inhibit = getbits36(word, 28, 1);
-    ip->pr_bit = getbits36(word, 29, 1);
-    ip->tag = getbits36(word, 30, 6);
+    if (! (ip->is_eis_multiword = is_eis[ip->opcode])) {
+        ip->mods.single.pr_bit = getbits36(word, 29, 1);
+        ip->mods.single.tag = getbits36(word, 30, 6);
+    } else {
+        ip->mods.mf1.ar = getbits36(word, 29, 1);
+        ip->mods.mf1.rl = getbits36(word, 30, 1);
+        ip->mods.mf1.id = getbits36(word, 31, 1);
+        ip->mods.mf1.reg = getbits36(word, 32, 4);
+    }
 }
 
 //=============================================================================
@@ -986,6 +996,8 @@ void tape_block(unsigned char *p, uint32 len, uint32 addr)
         complain_msg("CPU::boot", "Internal error.   Some bits left over while reading tape\n");
     }
 }
+
+//=============================================================================
 
 void anal36 (const char* tag, t_uint64 word)
 {
@@ -1031,6 +1043,7 @@ char *bin2text(t_uint64 word, int n)
     return str;
 }
 
+//=============================================================================
 
 static t_stat cpu_ex (t_value *eval_array, t_addr addr, UNIT *uptr, int32 switches)
 {
@@ -1048,4 +1061,14 @@ static t_stat cpu_dep (t_value v, t_addr addr, UNIT *uptr, int32 switches)
     // NOTE: We ignore UNIT, because all CPUS see the same memory
     M[addr] = v;        // SIMH absolute reference
     return 0;
+}
+
+//=============================================================================
+
+static void init_ops()
+{
+    // hack -- todo: cleanup
+
+    memset(is_eis, 0, sizeof(is_eis));
+    is_eis[(opcode1_mlr<<1)|1] = 1;
 }

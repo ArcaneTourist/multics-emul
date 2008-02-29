@@ -65,15 +65,27 @@ enum dev_type { DEV_NONE, DEV_TAPE, DEV_DISK }; // devices connected to an IOM
 // ============================================================================
 // === Struct typdefs
 
+/* MF fields of EIS multi-word instructions -- 7 bits */
+typedef struct {
+    flag_t ar;
+    flag_t rl;
+    flag_t id;
+    uint reg;   // 4 bits
+} eis_mf_t;
+
 /* Format of a 36 bit instruction word */
 typedef struct {
     uint addr;  // 18 bits at 0..17; 18 bit offset or seg/offset pair
     uint opcode;    /* 10 bits at 18..27 */
     uint inhibit;   /* 1 bit at 28 */
-    uint pr_bit;    // 1 bit at 29; use offset[0..2] as pointer reg
-    uint tag;       /* 6 bits at 30..35 */
-    //uint is_value;    // is offset a value or an address? (du or dl modifiers)
-    //t_uint64 value;   // 36bit value from opcode constant via du/dl
+    union {
+        struct {
+            uint pr_bit;    // 1 bit at 29; use offset[0..2] as pointer reg
+            uint tag;       /* 6 bits at 30..35 */
+        } single;
+        eis_mf_t mf1;
+    } mods;
+    flag_t is_eis_multiword;    // set true for relevent opcodes
 } instr_t;
 
 //typedef struct {
@@ -506,6 +518,9 @@ extern int fetch_appended(uint addr, t_uint64 *wordp);
 extern int store_word(uint addr, t_uint64 word);
 extern int store_abs_word(uint addr, t_uint64 word);
 extern int store_appended(uint offset, t_uint64 word);
+extern eis_mf_t* parse_mf(uint mf, eis_mf_t* mfp);
+extern int fetch_mf_ops(const eis_mf_t* mf1p, t_uint64* word1p, const eis_mf_t* mf2p, t_uint64* word2p, const eis_mf_t* mf3p, t_uint64* word3p);
+void fix_mf_len(uint *np, const eis_mf_t* mfp);
 
 extern void set_addr_mode(addr_modes_t mode);
 extern addr_modes_t get_addr_mode(void);
