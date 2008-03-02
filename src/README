@@ -1,0 +1,13 @@
+This emulator runs under SIMH.
+
+SIM additions
+	Flags for the examine command:
+		-m -- display memory as machine instruction
+		-l -- display memory as LPW
+		-p -- display memory as PTW
+		-s -- display memory as SDW
+	Address forms
+		#<number> -- absolute address
+		<number> -- either absolute or relative to TPR.TSR depending upon processor mode
+		<seg>|<offset> -- appending mode for the given segment and offset
+		<seg>$<offset> -- appending mode for the given segment and offset

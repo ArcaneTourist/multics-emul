@@ -1,6 +1,11 @@
 #include "hw6180.h"
+#include <ctype.h>
 
 extern uint32 sim_brk_types, sim_brk_dflt, sim_brk_summ; /* breakpoint info */
+extern t_addr (*sim_vm_parse_addr)(DEVICE *, char *, char **);
+extern void (*sim_vm_fprint_addr)(FILE *, DEVICE *, t_addr);
+static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr);
+static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr addr);
 
 extern DEVICE cpu_dev;
 extern DEVICE tape_dev;
@@ -90,6 +95,10 @@ static void init_memory_iom(void);
 static void hw6180_init(void)
 {
     debug_msg("SYS::init", "Once-only initialization running.\n");
+
+    sim_vm_parse_addr = parse_addr;
+    sim_vm_fprint_addr = fprint_addr;
+
     mt_init();
 
     // todo: set debug flags for all devices
@@ -175,7 +184,8 @@ static void init_memory_iom()
     //  3/0, 6/Chan#, 30/0, 3/Port -- NOT 3/0, 12/Chan#, 24/0, 3/Port# -- also non-zero port may not be valid for low bits
     M[1] = ((t_uint64) chan << 27) | port;      // Bootload channel PCW, word 2
     // 12/Base, 6/0, 15/PIbase, 3/IOM#
-    M[2] = ((t_uint64) base << 24) | (pi_base << 3) | iom;  // Info used by bootloaded pgm
+    // M[2] = ((t_uint64) base << 24) | (pi_base << 3) | iom;   // Info used by bootloaded pgm
+    M[2] = ((t_uint64) base << 24) | pi_base;   // Info used by bootloaded pgm -- force iom zero
     // 6/Command, 6/Device#, 6/0, 18/700000; Bootload IDCW - Command is 05 for tape, 01 for cards.
     M[3] = (cmd << 30) | (dev << 24) | 0700000;     // Bootload IDCW
     M[4] = 030 << 18;               // Second IDCW: IOTD to loc 30 (startup fault vector)
@@ -337,4 +347,60 @@ t_stat XX_clk_svc(UNIT *up)
 #else
     return 2;
 #endif
+}
+
+//=============================================================================
+
+static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
+{
+    *optr = cptr;
+    //if (strcmp(dptr->name, "CPU") != 0) {
+    //  return 0;
+    //}
+    int force_abs = 0;
+    int force_seg = 0;
+    if (*cptr == '#') {     // SIMH won't let us use '='
+        force_abs = 1;
+        ++ cptr;
+    } else if (*cptr == '|' || *cptr == '$') {
+        force_seg = 1;
+        ++ cptr;
+    }
+    if (!isdigit(*cptr) || *cptr == '8' || *cptr == '9')
+        return 0;
+    int seg = -1;
+    unsigned int offset;
+    sscanf(cptr, "%o", &offset);
+    cptr += strspn(cptr, "01234567");
+    if (*cptr == '|' || *cptr == '$') {
+        if (force_abs || force_seg)
+            return 0;
+        ++ cptr;
+        seg = offset;
+        sscanf(cptr, "%o", &offset);
+        cptr += strspn(cptr, "01234567");
+    }
+    if (force_abs || (seg == -1 && get_addr_mode() == ABSOLUTE_mode)) {
+        *optr = cptr;
+        return offset;
+    }
+    uint addr;
+    uint saved_seg = -1;
+    if (seg != -1) {
+        TPR.TSR = seg;
+    }
+    if (get_seg_addr(offset, 0, &addr) != 0) {
+        if (saved_seg != -1)
+            TPR.TSR = saved_seg;
+        return 0;
+    }
+    if (saved_seg != -1)
+        TPR.TSR = saved_seg;
+    *optr = cptr;
+    return addr;
+}
+
+static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr addr)
+{
+    fprintf(stream, "%06o", addr);
 }

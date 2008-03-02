@@ -545,6 +545,10 @@ static int compute_addr(instr_t *ip, ca_temp_t *ca_tempp)
                             iword = setbits36(iword, 0, 18, addr);
                             iword = setbits36(iword, 18, 12, tally);
                             TPR.CA = addr;
+                            if (opt_debug) {
+                                // give context for appending msgs
+                                debug_msg("APU", "IT(di): addr now 0%o, tally 0%o\n", addr, tally);
+                            }
                             ret = store_word(iloc, iword);
                         }
                         return ret;
@@ -566,6 +570,10 @@ static int compute_addr(instr_t *ip, ca_temp_t *ca_tempp)
                             addr &= MASK18; // wrap from 2^18-1 to zero
                             iword = setbits36(iword, 0, 18, addr);
                             iword = setbits36(iword, 18, 12, tally);
+                            if (opt_debug) {
+                                // give context for appending msgs
+                                debug_msg("APU", "IT(id): addr now 0%o, tally 0%o\n", addr, tally);
+                            }
                             ret = store_word(iloc, iword);
                         }
                         return ret;
@@ -757,6 +765,11 @@ int store_appended(uint offset, t_uint64 word)
 
 //=============================================================================
 
+int get_seg_addr(uint offset, uint perm_mode, uint *addrp)
+{
+    // BUG: causes faults
+    return page_in(offset, perm_mode, addrp);
+}
 
 static int page_in(uint offset, uint perm_mode, uint *addrp)
 {

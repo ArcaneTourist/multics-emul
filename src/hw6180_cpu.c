@@ -503,6 +503,8 @@ static t_stat control_unit(void)
                 cycle = FAULT_cycle;
             if (fetch_word(PPR.IC - PPR.IC % 2 + 1, &cu.IRODD) != 0)
                 cycle = FAULT_cycle;
+            if (opt_debug && get_addr_mode() != ABSOLUTE_mode)
+                debug_msg("CU", "Fetched odd half of instructio pair\n");
             break;
 
 #if 0
