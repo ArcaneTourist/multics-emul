@@ -252,8 +252,6 @@ int scu_set_cpu_mask(t_uint64 addr)
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
     return scu_set_mask(addr, cpu_no);  // BUG: is this right?
-    cancel_run(STOP_IBKPT);
-    return 1;
 }
 
 

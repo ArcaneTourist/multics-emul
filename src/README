@@ -11,3 +11,5 @@ SIM additions
 		<number> -- either absolute or relative to TPR.TSR depending upon processor mode
 		<seg>|<offset> -- appending mode for the given segment and offset
 		<seg>$<offset> -- appending mode for the given segment and offset
+	Breakpoints
+		br -M	-- Break on memory fetch or store (absolute location)

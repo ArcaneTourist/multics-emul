@@ -72,7 +72,7 @@ static t_uint64 saved_IC;
 BAR_reg_t BAR;      // Base Addr Register; 18 bits
 //static uint32 saved_BAR;
 uint32 reg_TR;      // Timer Reg, 27 bits -- only valid after calls to SIMH clock routines
-static t_uint64 RALR;   // Ring Alarm Reg, 3 bits
+uint8 reg_RALR; // Ring Alarm Reg, 3 bits
 AR_PR_t AR_PR[8];   // Combined Pointer Registers (42 bits) and Address Registers (24 bits)
 PPR_t PPR;      // Procedure Pointer Reg, 37 bits, internal only
 TPR_t TPR;      // Temporary Pointer Reg, 42 bits, internal only
@@ -96,8 +96,7 @@ PTWAM_t PTWAM[16];  // Page Table Word Associative Memory, 51 bits
 REG cpu_reg[] = {
     // name="PC", loc=PC, radix=<8>, width=36, offset=<0>, depth=<1>, flags=, qptr=
     { ORDATA (IC, saved_IC, 18) },
-    // { ORDATA (IR, saved_IR, 14), REG_RO },
-    { GRDATA (IR, saved_IR, 2, 14, 0), REG_RO },
+    { GRDATA (IR, saved_IR, 2, 18, 0), REG_RO },
     { ORDATA (A, reg_A, 36) },
     { ORDATA (Q, reg_Q, 36) },
     { ORDATA (E, reg_E, 36) },
@@ -227,7 +226,6 @@ static int32 sign18(t_uint64 x)
 {
     if (bit18_is_neg(x)) {
         int32 r = - ((1<<18) - (x&MASK18));
-        // debug_msg("APU::sign18", "0%Lo => 0%o (%+d decimal)\n", x, r, r);
         return r;
     }
     else
@@ -406,7 +404,22 @@ if (opt_debug) {
 
     // BUG: pack private variables into SIMH's world
     saved_IC = PPR.IC;
-    t_uint64 temp =
+    save_IR(&saved_IR);
+        
+    return reason;
+}
+
+void save_IR(t_uint64* wordp)
+{
+    // Saves 14 or 15 IR bits to the lower half of *wordp.
+    // Upper half of *wordp zeroed and unused lower bits are zeroed.
+
+    // Note that most of AN87 and AL39 ignores bit 32.  Only section
+    // 3 of AL38 describes this bit which is only available on DPS8M.
+    // It's also part of the saved control unit data, but not listed
+    // in the description of CU data nor the rcu or scu instructions.
+
+    *wordp =
         (IR.zero << (35-18)) |
         (IR.neg << (35-19)) |
         (IR.carry << (35-20)) |
@@ -417,11 +430,8 @@ if (opt_debug) {
         (IR.mid_instr_intr_fault << (35-30)) |
         (IR.abs_mode << (35-31)) |
         (IR.hex_mode << (35-32));
-    saved_IR = (temp >> 18);    // chop down to lower 14 bits
-        
-    return reason;
 }
-
+        
 
 //=============================================================================
 
@@ -467,8 +477,10 @@ static t_stat control_unit(void)
             // If execution of the current pair is complete, the processor
             // checks two? internal flags for group 7 faults and/or interrupts.
             if (events.any) {
-                if (break_on_fault)
+                if (break_on_fault) {
+                    warn_msg("CU", "Fault: auto breakpoint\n");
                     (void) cancel_run(STOP_IBKPT);
+                }
                 if (events.low_group != 0) {
                     // BUG: don't need test below now that we detect 1-6 here
                     debug_msg("CU", "Fault detected prior to FETCH\n");
@@ -497,8 +509,10 @@ static t_stat control_unit(void)
             // handle the fault at the even word and then an EXEC cycle will want to
             // later execute junk from cu.IRODD.   Actually, perhaps fault should always lead to
             // a fetch rather than an EXEC.  On the other hand, our fetch_instr and fetch_word
-            // can never fault anyway.
+            // can never fault anyway.  BUG: Update -- Not true -- appending mode can fault
             cycle = EXEC_cycle;
+            TPR.TSR = PPR.PSR;
+            TPR.TRR = PPR.PRR;
             if (fetch_instr(PPR.IC - PPR.IC % 2, &cu.IR) != 0)
                 cycle = FAULT_cycle;
             if (fetch_word(PPR.IC - PPR.IC % 2 + 1, &cu.IRODD) != 0)
@@ -597,8 +611,10 @@ static t_stat control_unit(void)
             debug_msg("CU", "calling execute_ir() for xed\n");
             uint IC_temp = PPR.IC;
             execute_ir();   // executing in FAULT CYCLE, not EXECUTE CYCLE
-            if (break_on_fault)
+            if (break_on_fault) {
+                warn_msg("CU", "Fault: auto breakpoint\n");
                 (void) cancel_run(STOP_IBKPT);
+            }
             if (events.any && events.fault[fault2group[trouble_fault]] == trouble_fault) {
                 // Fault occured during execution, so fault_gen() flagged
                 // a trouble fault
@@ -613,7 +629,7 @@ static t_stat control_unit(void)
                     events.any = 1;
                 // BUG: kill cpu.xfr
                 if (!cpu.xfr && PPR.IC == IC_temp) {
-                    debug_msg("CU", "no re-fault, no transfer -- incrementing IC\n");
+                    warn_msg("CU", "no re-fault, no transfer -- incrementing IC\n");
                     // BUG: Faulted instr doesn't get re-invoked?
                             (void) cancel_run(STOP_IBKPT);
                     ++ PPR.IC;
@@ -627,7 +643,7 @@ static t_stat control_unit(void)
                     // Note that we don't automatically return to the original
                     // ring, but hopefully we're executed an rcu instruction
                     // to set the correct ring
-                    set_addr_mode(saved_addr_mode);
+                    // set_addr_mode(saved_addr_mode);  // FIXED BUG: this wasn't appropriate
                 } else {
                     debug_msg("CU", "no re-fault, but a transfer done -- not incrementing IC\n");
                 }
@@ -645,10 +661,13 @@ static t_stat control_unit(void)
             // todo: Assumption: IC will be at curr instr, even
             // when we're ready to execute the odd half of the pair
             // todo: check for IC matching curr instr or at least even/odd sanity
+            TPR.TSR = PPR.PSR;
+            TPR.TRR = PPR.PRR;
             if (! cpu.ic_odd) {
                 if (opt_debug) debug_msg("CU", "Cycle = EXEC, even instr\n");
                 if (sim_brk_summ) {
                     if (sim_brk_test (PPR.IC, SWMASK ('E'))) {
+                        warn_msg("CU", "Execution Breakpoint\n");
                         reason = STOP_IBKPT;    /* stop simulation */
                         break;
                     }
@@ -688,6 +707,7 @@ static t_stat control_unit(void)
                 decode_instr(&cu.IR, cu.IRODD);
                 if (sim_brk_summ) {
                     if (sim_brk_test (PPR.IC, SWMASK ('E'))) {
+                        warn_msg("CU", "Execution Breakpoint\n");
                         reason = STOP_IBKPT;    /* stop simulation */
                         break;
                     }
@@ -784,16 +804,19 @@ int fetch_instr(uint IC, instr_t *ip)
     // todo: check for read breakpoints
 
     if (get_addr_mode() == ABSOLUTE_mode) {
+        if (IC >= ARRAY_SIZE(M)) {
+            complain_msg("CU::fetch-instr", "Addr 0%o (%d decimal) is too large\n", IC, IC);
+            (void) cancel_run(STOP_BUG);
+        }
         decode_instr(ip, M[IC]);    // WARNING: skips fetch_word (but we're in absolute mode)
         return 0;
     }
 
-    // BUG: IC needs conversion to abs mem addr
-    warn_msg("CU::fetch-instr", "IC=0%o:  Not in absolute mode.\n", IC);
     t_uint64 word;
     int ret = fetch_word(IC, &word);
     decode_instr(ip, word);
-    debug_msg("CU::fetch-instr", "Fetched word %012Lo => %s\n", word, instr2text(ip));
+    if (opt_debug)
+        debug_msg("CU::fetch-instr", "Fetched word %012Lo => %s\n", word, instr2text(ip));
     return ret;
 }
 
@@ -851,14 +874,16 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
     }
 
     if (addr >= ARRAY_SIZE(M)) {
-            complain_msg("CU::fetch", "Addr 0%o (%d decimal) is too large\n");
+            complain_msg("CU::fetch", "Addr 0%o (%d decimal) is too large\n", addr, addr);
             (void) cancel_run(STOP_BUG);
             return 0;
     }
 
     if (sim_brk_summ)
-        if (sim_brk_test (addr, SWMASK ('M')))
+        if (sim_brk_test (addr, SWMASK ('M'))) {
+            warn_msg("CU::fetch", "Memory Breakpoint\n");
             (void) cancel_run(STOP_IBKPT);
+        }
 
     *wordp = M[addr];   // absolute memory reference
     return 0;
@@ -874,7 +899,6 @@ int store_word(uint addr, t_uint64 word)
 
     if (mode == APPEND_mode) {
         int ret = store_appended(addr, word);
-        complain_msg("CU::store", "Addr=0%o:  Append mode untested.\n", addr);
         return ret;
     } else if (mode == ABSOLUTE_mode) {
         return store_abs_word(addr, word);
@@ -908,18 +932,55 @@ int store_abs_word(uint addr, t_uint64 word)
         //cancel_run(STOP_WARN);
     }
     if (addr <= 030) {
-        //debug_msg("CU::fetch", "Fetch from 0..030 for addr 0%o\n", addr);
+        //debug_msg("CU::store", "Fetch from 0..030 for addr 0%o\n", addr);
     }
     if (addr >= ARRAY_SIZE(M)) {
-            complain_msg("CU::fetch", "Addr 0%o (%d decimal) is too large\n");
+            complain_msg("CU::store", "Addr 0%o (%d decimal) is too large\n");
             (void) cancel_run(STOP_BUG);
             return 0;
     }
     if (sim_brk_summ)
-        if (sim_brk_test (addr, SWMASK ('M')))
+        if (sim_brk_test (addr, SWMASK ('M'))) {
+            warn_msg("CU::store", "Memory Breakpoint\n");
             (void) cancel_run(STOP_IBKPT);
+        }
 
     M[addr] = word; // absolute memory reference
+    return 0;
+}
+
+int store_abs_pair(uint addr, t_uint64 word0, t_uint64 word1)
+{
+    // Store to even and odd words at Y-pair given by 24-bit absolute address addr.
+    // Returns non-zero if fault in groups 1-6 detected
+
+    int ret;
+    uint Y = (addr % 2 == 0) ? addr : addr - 1;
+
+    if ((ret = store_abs_word(Y, word0)) != 0) {
+        return ret;
+    }
+    if ((ret = store_abs_word(Y+1, word1)) != 0) {
+        return ret;
+    }
+    return 0;
+}
+
+int store_pair(uint addr, t_uint64 word0, t_uint64 word1)
+{
+    // Store to even and odd words at Y-pair given by address addr.
+    // Returns non-zero if fault in groups 1-6 detected
+    // BUG: Is it the offset that must be even or the final addr that must be even?  (Or both?)
+
+    int ret;
+    uint Y = (addr % 2 == 0) ? addr : addr - 1;
+
+    if ((ret = store_word(Y, word0)) != 0) {
+        return ret;
+    }
+    if ((ret = store_word(Y+1, word1)) != 0) {
+        return ret;
+    }
     return 0;
 }
 
@@ -932,10 +993,10 @@ int fetch_abs_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
     int ret;
     uint Y = (addr % 2 == 0) ? addr : addr - 1;
 
-    if ((ret = fetch_abs_word(Y, word0p) != 0)) {
+    if ((ret = fetch_abs_word(Y, word0p)) != 0) {
         return ret;
     }
-    if ((ret = fetch_abs_word(Y+1, word1p) != 0)) {
+    if ((ret = fetch_abs_word(Y+1, word1p)) != 0) {
         return ret;
     }
     return 0;
@@ -943,21 +1004,71 @@ int fetch_abs_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
 
 int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
 {
-    // ERROR: Send to appending unit -- it's probably the final addr that must be even, not the offset
-
-    // return fetch_pair(addr, word0p, word1p);
+    // BUG: Is it the offset that must be even or the final addr that must be even?  (Or both?)
 
     int ret;
     uint Y = (addr % 2 == 0) ? addr : addr - 1;
 
-    if ((ret = fetch_word(Y, word0p) != 0)) {
+    if ((ret = fetch_word(Y, word0p)) != 0) {
         return ret;
     }
-    if ((ret = fetch_word(Y+1, word1p) != 0)) {
+    if ((ret = fetch_word(Y+1, word1p)) != 0) {
         return ret;
     }
     return 0;
 }
+
+
+static int fetch_yblock(uint addr, uint n, t_uint64 *wordsp)
+{
+    // Fetch words from Y-block addr.
+    // Returns non-zero if fault in groups 1-6 detected
+    // BUG: Is it the offset that must be zero mod n or the final addr that must be zero mod n?  (Or both?)
+
+    int ret;
+    uint Y = addr / n;
+    Y *= n;
+
+    for (int i = 0; i < n; ++i)
+        if ((ret = fetch_word(Y++, wordsp++)) != 0)
+            return ret;
+    return 0;
+}
+
+
+int fetch_yblock8(uint addr, t_uint64 *wordsp)
+{
+    return fetch_yblock(addr, 8, wordsp);
+}
+
+
+static int store_yblock(uint addr, int n, const t_uint64 *wordsp)
+{
+    // Store words of to Y-block addr.
+    // Returns non-zero if fault in groups 1-6 detected
+    // BUG: Is it the offset that must be zero mod n or the final addr that must be zero mod n?  (Or both?)
+
+    int ret;
+    uint Y = addr / n;
+    Y *= n;
+
+    for (int i = 0; i < n; ++i)
+        if ((ret = store_word(Y++, *wordsp++)) != 0)
+            return ret;
+    return 0;
+}
+
+int store_yblock8(uint addr, const t_uint64 *wordsp)
+{
+    return store_yblock(addr, 8, wordsp);
+}
+
+int store_yblock16(uint addr, const t_uint64 *wordsp)
+{
+    return store_yblock(addr, 16, wordsp);
+}
+
+
 
 //=============================================================================
 
@@ -1073,4 +1184,5 @@ static void init_ops()
 
     memset(is_eis, 0, sizeof(is_eis));
     is_eis[(opcode1_mlr<<1)|1] = 1;
+    is_eis[(opcode1_cmpc<<1)|1] = 1;
 }

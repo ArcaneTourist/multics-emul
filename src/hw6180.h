@@ -110,7 +110,7 @@ typedef struct {
     // parity_error;        // bit 26
     // parity_mask;         // bit 27
     uint not_bar_mode;      // bit 28
-    // truncation;          // bit 29
+    uint truncation;        // bit 29
     uint mid_instr_intr_fault;  // bit 30
     uint abs_mode;          // bit 31
     uint hex_mode;          // bit 32
@@ -485,6 +485,7 @@ extern TPR_t TPR;           // Temporary Pointer Reg, 42 bits, internal only
 extern PTWAM_t PTWAM[16];   // Page Table Word Associative Memory, 51 bits
 extern SDWAM_t SDWAM[16];   // Segment Descriptor Word Associative Memory, 88 bits
 extern DSBR_t DSBR;         // Descriptor Segment Base Register (51 bits)
+extern uint8 reg_RALR;      // Ring Alarm Reg, 3 bits
 
 extern ctl_unit_data_t cu;
 extern cpu_state_t cpu;
@@ -518,9 +519,17 @@ extern int fetch_appended(uint addr, t_uint64 *wordp);
 extern int store_word(uint addr, t_uint64 word);
 extern int store_abs_word(uint addr, t_uint64 word);
 extern int store_appended(uint offset, t_uint64 word);
+extern int store_abs_pair(uint addr, t_uint64 word0, t_uint64 word1);
+extern int store_pair(uint addr, t_uint64 word0, t_uint64 word1);
 extern eis_mf_t* parse_mf(uint mf, eis_mf_t* mfp);
 extern int fetch_mf_ops(const eis_mf_t* mf1p, t_uint64* word1p, const eis_mf_t* mf2p, t_uint64* word2p, const eis_mf_t* mf3p, t_uint64* word3p);
-void fix_mf_len(uint *np, const eis_mf_t* mfp);
+void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits);
+extern void mpy(t_int64 a, t_int64 b, t_uint64* hip, t_uint64 *lowp);
+extern void save_IR(t_uint64* wordp);
+extern int store_yblock8(uint addr, const t_uint64 *wordsp);
+extern int fetch_yblock8(uint addr, t_uint64 *wordsp);
+extern int store_yblock16(uint addr, const t_uint64 *wordsp);
+extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
 
 extern void set_addr_mode(addr_modes_t mode);
 extern addr_modes_t get_addr_mode(void);

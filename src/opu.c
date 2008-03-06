@@ -6,16 +6,19 @@ static inline t_uint64 lrotate36(t_uint64 x, unsigned n);
 static inline void lrotate72(t_uint64* ap, t_uint64* bp, unsigned n);
 static inline t_int64 negate36(t_uint64 x);
 static inline int negate72(t_uint64* a, t_uint64* b);
+static inline uint min(uint a, uint b);
 
 static int do_op(instr_t *ip);
 static int op_add(instr_t *ip, t_uint64 *operand);
 static int op_and(instr_t *ip, t_uint64 *op, t_uint64 *op2, t_uint64 *dest1, t_uint64 *dest2);
 static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest);
 static int add18(t_uint64 a, t_uint64 b, t_uint64 *dest);
-static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2);
+static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2, int is_unsigned);
 static int32 sign18(t_uint64 x);
+static t_int64 sign36(t_uint64 x);
 static int do_epp(int epp);
 static int do_an_op(instr_t *ip);   // todo: hack, fold into do_op
+static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p);
 
 // BUG: move externs to hdr file
 extern int scu_cioc(t_uint64 addr);
@@ -60,10 +63,12 @@ static int do_op(instr_t *ip)
         if (orig_ic == PPR.IC) {
             set_addr_mode(orig_mode);
             debug_msg("OPU", "Resetting addr mode for sequential instr\n");
-        } else
-            debug_msg("OPU", "Address mode has been changed with a transfer instr.  Was 0%o, now 0%o\n", orig_ic, PPR.IC);
-        cancel_run(STOP_IBKPT);
+        } else {
+            warn_msg("OPU", "Address mode has been changed with a transfer instr.  Was 0%o, now 0%o\n", orig_ic, PPR.IC);
+            cancel_run(STOP_IBKPT);
+        }
     }
+    return ret;
 }
 
 
@@ -88,6 +93,7 @@ static int do_an_op(instr_t *ip)
     // Check instr type for format before addr_mod
     // Todo: check efficiency of lookup table versus switch table
     // Also consider placing calls to addr_mod() in next switch table
+    flag_t initial_tally = IR.tally_runout;
     if (ip->is_eis_multiword) {
         debug_msg("OPU", "Skipping addr_mod() for EIS instr.\n");
     } else if (bit27 == 0) {
@@ -209,6 +215,27 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
+            case opcode0_lreg: {
+                t_uint64 words[8];
+                int ret;
+                if ((ret = fetch_yblock8(TPR.CA, words)) == 0) {
+                    reg_X[0] = words[0] >> 18;
+                    reg_X[1] = words[0] & MASK18;
+                    reg_X[2] = words[1] >> 18;
+                    reg_X[3] = words[1] & MASK18;
+                    reg_X[4] = words[2] >> 18;
+                    reg_X[5] = words[2] & MASK18;
+                    reg_X[6] = words[3] >> 18;
+                    reg_X[7] = words[3] & MASK18;
+                    reg_A = words[4];
+                    reg_Q = words[5];
+                    reg_E = getbits36(words[6], 0, 7);
+                    // reg_TR not loaded
+                    // reg_RALR not loaded
+                }
+                return ret;
+            }
+
             case opcode0_lxl0:  // Load Index Reg N from lower
             case opcode0_lxl1:
             case opcode0_lxl2:
@@ -228,6 +255,19 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_sta:
                 return store_word(TPR.CA, reg_A);
+            case opcode0_sreg: {
+                t_uint64 words[8];
+                words[0] = (reg_X[0] << 18) | reg_X[1];
+                words[1] = (reg_X[2] << 18) | reg_X[3];
+                words[2] = (reg_X[4] << 18) | reg_X[5];
+                words[3] = (reg_X[6] << 18) | reg_X[7];
+                words[4] = reg_A;
+                words[5] = reg_Q;
+                words[6] = setbits36(0, 0, 7, reg_E);
+                words[7] = setbits36(0, 0, 27, reg_TR);
+                words[7] = setbits36(words[7], 33, 3, reg_RALR);
+                return store_yblock8(TPR.CA, words);
+            }
             case opcode0_stac: {
                 // BUG: check for illegal modifiers
                 t_uint64 word;
@@ -256,6 +296,34 @@ static int do_an_op(instr_t *ip)
                 if (ret == 0)
                     ret = store_word(y+1, reg_Q);
                 return ret;
+            }
+            // stba
+            // stbq
+            case opcode0_stc1: {
+                t_uint64 word;
+                save_IR(&word);
+                word = setbits36(word, 25, 1, initial_tally);
+                word |= ((PPR.IC + 1) << 18);
+                return store_word(TPR.CA, word);
+            }
+            case opcode0_stc2: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    word &= MASK18;
+                    word |= ((PPR.IC + 2) << 18);
+                }
+                return store_word(TPR.CA, word);
+            }
+            case opcode0_stca: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    for (int i = 0; i < 6; ++i) {
+                        if ((ip->mods.single.tag & (1<<(5-i))) != 0)
+                            word = setbits36(word, i * 6, 6, getbits36(reg_A, i * 6, 6));
+                    }
+                }
             }
             case opcode0_stq:   // Store Q register
                 return store_word(TPR.CA, reg_Q);
@@ -304,7 +372,19 @@ static int do_an_op(instr_t *ip)
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 reg_A >>= n;
                 IR.zero = reg_A == 0;
+                IR.neg = bit36_is_neg(reg_A);   // possible for "shift" of zero bits
+                return 0;
+            }
+            case opcode0_ars: {
+                unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
+                uint fill = bit36_is_neg(reg_A);
+                t_uint64 tmp = reg_A;
+                reg_A >>= n;
+                if (fill)
+                    reg_A = setbits36(reg_A, 0, n, MASKBITS(n));
+                IR.zero = reg_A == 0;
                 IR.neg = bit36_is_neg(reg_A);
+                debug_msg("OPU::ars", "%012Lo>>%d ==> %012Lo\n", tmp, n, reg_A);
                 return 0;
             }
             case opcode0_llr: {     // Long left rotate
@@ -382,6 +462,30 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_ada:
                 return op_add(ip, &reg_A);
+            // adaq
+            // adl
+            // adla
+            case opcode0_adla: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    reg_A += word;
+                    if ((IR.carry = reg_A & MASK36) != 0)
+                        reg_A &= MASK36;
+                    IR.zero = reg_A == 0;
+                    IR.neg = bit36_is_neg(reg_A);
+                }
+                return ret;
+            }
+            case opcode0_adlaq: {   // Add logical to AQ
+                int n = op & 07;
+                t_uint64 word1, word2;
+                int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
+                if (ret == 0) {
+                    ret = add72(reg_A, reg_Q, &word1, &word2, 1);
+                }
+                return ret;
+            }
             case opcode0_adlx0:     // Add logical to X[n]
             case opcode0_adlx1:
             case opcode0_adlx2:
@@ -451,7 +555,7 @@ static int do_an_op(instr_t *ip)
                 int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
                 if (ret == 0)
                     if ((ret = negate72(&word1, &word2)) == 0)
-                        ret = add72(reg_A, reg_Q, &word1, &word2);
+                        ret = add72(reg_A, reg_Q, &word1, &word2, 0);
                 return ret;
             }
             case opcode0_sblq: {    // Subtract logical from Q
@@ -468,6 +572,19 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
 
+            case opcode0_mpy: {
+                t_uint64 word;
+                int ret;
+                if ((ret = fetch_op(ip, &word)) == 0) {
+                    t_uint64 q = reg_Q;
+                    mpy(sign36(word), sign36(reg_Q), &reg_A, &reg_Q);
+                    IR.zero = reg_Q == 0 && reg_A == 0;
+                    IR.neg = bit36_is_neg(reg_A);
+                    debug_msg("OPU::mpy", "0%Lo * 0%Lo ===> A=0%Lo, Q=0%Lo\n", word, q, reg_A, reg_Q);
+                    debug_msg("OPU::mpy", "%Ld * %Ld ===> A=%Ld, Q=%Ld\n", word, q, reg_A, reg_Q);
+                }
+                return ret;
+            }
             case opcode0_div: {
                 int ret;
                 t_uint64 word;
@@ -934,7 +1051,54 @@ static int do_an_op(instr_t *ip)
             case opcode0_epp6:
                 return do_epp(6);
 
+            // lpri
+            // lprp*
+            // spbp*
+            case opcode0_spri: {
+                if (get_addr_mode() == BAR_mode) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                t_uint64 words[16];
+                for (int i = 0; i < 8; ++i)
+                    spri_to_words(i, words+2*i, words+2*i+1);
+                return store_yblock16(TPR.CA, words);
+            }
 
+            case opcode0_spri0:
+            case opcode0_spri2:
+            case opcode0_spri4:
+            case opcode0_spri6: {
+                if (get_addr_mode() == BAR_mode) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                int n = op & 07;
+                t_uint64 word0, word1;
+                spri_to_words(n, &word0, &word1);
+                return store_pair(TPR.CA, word0, word1);
+            }
+
+            case opcode0_xec: {
+                // todo: combine with xec
+                // todo: re-implement via setting flags and return to control_unit()
+                // todo: fault if xec invokes xec
+                // todo: handle rpd repeats
+                // BUG: EIS multiword instructions may not be handled
+                t_uint64 word0;
+                instr_t IR;
+                if (fetch_instr(TPR.CA, &IR) != 0) {
+                    debug_msg("OPU::opcode::xec", "fetch instr: error or fault\n");
+                    return 1;   // faulted
+                }
+                debug_msg("OPU::opcode::xec", "executing instr at 0%Lo\n", TPR.CA);
+                if (do_op(&IR) != 0) {
+                    debug_msg("OPU::opcode::xec", "fault or error executing instr\n");
+                    return 1;
+                }
+                debug_msg("OPU::opcode::xec", "finished\n");
+                return 0;
+            }
             case opcode0_xed: {
                 // todo: re-implement via setting flags and return to control_unit()
                 // todo: fault if xed invokes xed
@@ -958,7 +1122,7 @@ static int do_an_op(instr_t *ip)
                 }
                 debug_msg("OPU::opcode::xed", "executing even instr at 0%Lo\n", y);
                 if (do_op(&IR) != 0) {
-                    debug_msg("OPU::opcode::xed", "fault or error executing even instr\n");
+                    warn_msg("OPU::opcode::xed", "fault or error executing even instr\n");
                     return 1;
                 }
                 // -----------
@@ -972,7 +1136,7 @@ static int do_an_op(instr_t *ip)
                     }
                     debug_msg("OPU::opcode::xed", "executing odd instr at 0%Lo\n", y);
                     if (do_op(&IR) != 0) {
-                        debug_msg("OPU::opcode::xed", "fault or error executing odd instr\n");
+                        warn_msg("OPU::opcode::xed", "fault or error executing odd instr\n");
                         return 1;
                     }
                 }
@@ -1055,6 +1219,26 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
+            // lptp
+            // lptr
+            // lra
+            // lsdp
+            // lsdr
+            // rcu
+            // scpr
+            // scu
+            case opcode0_sdbr: {
+                t_uint64 word0, word1;
+                word0 = DSBR.addr << 12;
+                word1 = setbits36(0, 0, 14, DSBR.bound);    // 37-36-1=0
+                word1 = setbits36(word1, 0, 18, DSBR.u);    // 55-36-1=18
+                word1 = setbits36(word1, 0, 23, DSBR.stack); // 60-36-1=23
+                return store_pair(TPR.CA, word0, word1);
+            }
+            // sptp
+            // sptr
+            // ssdp
+            // ssdr
             case opcode0_cams: {    // Clear Associative Memory Segments
                 if (get_addr_mode() != ABSOLUTE_mode) {
                     fault_gen(illproc_fault);
@@ -1156,11 +1340,18 @@ static int do_an_op(instr_t *ip)
             case opcode0_cioc: { // priv
                 // Connect I/O channel
                 debug_msg("OPU", "CIOC\n");
-                if (get_addr_mode() != ABSOLUTE_mode) {
+                if (get_addr_mode() == BAR_mode) {
                     fault_gen(illproc_fault);
                     return 1;
                 }
-                return scu_cioc(TPR.CA);    // don't convert via appending
+                int ret;
+                uint addr;
+                if (get_addr_mode() == APPEND_mode) {
+                    if ((ret = get_seg_addr(TPR.CA, 0, &addr)) != 0)
+                        return ret;
+                } else 
+                    addr = TPR.CA;
+                return scu_cioc(addr);  // we do convert via appending
             }
             case opcode0_smcm: { // priv
                 if (get_addr_mode() != ABSOLUTE_mode) {
@@ -1247,8 +1438,9 @@ static int do_an_op(instr_t *ip)
 
             case opcode0_absa: {    // priv
                 addr_modes_t mode;
-                if ((mode == get_addr_mode()) != APPEND_mode) {
+                if ((mode = get_addr_mode()) != APPEND_mode) {
                     if (mode == ABSOLUTE_mode) {
+                        warn_msg("OPU::absa", "Absolute mode undefined\n");
                         (void) store_word(TPR.CA, TPR.CA);  // results undefined, perform arbitrary action
                         cancel_run(STOP_WARN);
                         return 0;
@@ -1260,7 +1452,7 @@ static int do_an_op(instr_t *ip)
                 uint addr;
                 int ret;
                 if ((ret = get_seg_addr(TPR.CA, 0, &addr)) == 0)
-                    ret = store_word(TPR.CA, addr);
+                    reg_A = addr << 12; // upper 24 bits
                 return ret;
             }
 
@@ -1360,18 +1552,26 @@ static int do_an_op(instr_t *ip)
                 uint ta2 = getbits36(word2, 21, 2);
                 uint n1 = getbits36(word1, 24, 12); // string len
                 uint n2 = getbits36(word2, 24, 12);
-                fix_mf_len(&n1, &ip->mods.mf1);
-                fix_mf_len(&n2, &mf2);
+                int nbits1 = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
+                fix_mf_len(&n1, &ip->mods.mf1, nbits1);
+                int nbits2 = (ta2 == 0) ? 9 : (ta2 == 1) ? 6 : 4;
+                fix_mf_len(&n2, &mf2, nbits2);
                 int easy = 0;
-                debug_msg("OPU::mlr", "y1=0%o, y2=0%o, cn1=0%o, cn2=0%o, ta1=0%o, ta2=0%o, n1=%d, n2=%d\n", y1, y2, cn1, cn2, ta1, ta2, n1, n2);
-                if (n1 == n2 && ta1 == ta2 && cn1 == 0 && cn2 == 0) {
+                debug_msg("OPU::mlr", "y1=0%o, y2=0%o, cn1=0%o, cn2=0%o, ta1=0%o, ta2=0%o, n1=0%o(%d), n2=0%o(%d)\n", y1, y2, cn1, cn2, ta1, ta2, n1, n1, n2, n2);
+                if (ta1 == ta2 && cn1 == 0 && cn2 == 0) {
                     int nbits = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
                     int nparts = 36 / nbits;
-                    if (n1 % nparts == 0) {
-                        // equal number of full words
+                    debug_msg("OPU::mlr", "nbits = %d; nparts = %d\n", nbits, nparts);
+                    if (n1 % nparts == 0 && n2 % nparts == 0) {
+                        // full words
                         easy = 1;
-                        int nwords = n1 / nparts;
+                        int nwords = min(n1,n2) / nparts;
+                        int saved_debug = opt_debug;
                         for (int i = 0; i < nwords; ++i) {
+                            if (i == 1)
+                                opt_debug = 0;
+                            if (i == nwords - 1)
+                                opt_debug = saved_debug;
                             uint addr1, addr2;
                             if (get_mf_an_addr(y1, &ip->mods.mf1, &addr1) != 0)
                                 return 1;
@@ -1388,8 +1588,33 @@ static int do_an_op(instr_t *ip)
                             ++ y1;
                             ++ y2;
                         }
-                        warn_msg("OPU::mlr", "Results unverified.\n");
-                        cancel_run(STOP_WARN);
+                        opt_debug = saved_debug;
+                        if (n1 > n2)
+                            IR.truncation = 1;
+                            if (t)
+                                fault_gen(overflow_fault);
+                        else if (n1 < n2) {
+                            t_uint64 word = 0;
+                            for (int i = 0; i < nparts; ++i)
+                                word = (word << nbits) | (fill & MASKBITS(nbits));
+                            uint addr2;
+                            for (int i = n1; i < n2; ++i) {
+                                if (i == n1+1)
+                                    opt_debug = 0;
+                                if (i == n2 - 1)
+                                    opt_debug = saved_debug;
+                                if (get_mf_an_addr(y2, &mf2, &addr2) != 0)
+                                    return 1;
+                                debug_msg("OPU::mlr", "i=%d; copying fill(0%o=>0%Lo) to 0%o=>0%o\n", i, fill, word, y2, addr2);
+                                if (store_abs_word(addr2, word) != 0)
+                                    return 1;
+                                //y2 += nparts;
+                                ++ y2;
+                            }
+                        }
+                        opt_debug = saved_debug;
+                        warn_msg("OPU::mlr", "Auto Breakpoint.\n");
+                        cancel_run(STOP_IBKPT);
                     }
                 }
                 if (! easy) {
@@ -1397,6 +1622,59 @@ static int do_an_op(instr_t *ip)
                     cancel_run(STOP_BUG);
                 }
                 return 0;
+            }
+
+            case opcode1_cmpc: {
+                uint fill = ip->addr >> 9;
+                uint t = (ip->addr >> 8) & 1;
+                uint mf2bits = ip->addr & MASKBITS(7);
+                eis_mf_t mf2;
+                t_uint64 word1, word2;
+                if (fetch_mf_ops(&ip->mods.mf1, &word1, parse_mf(mf2bits, &mf2), &word2, NULL, NULL) != 0)
+                    return 1;
+                PPR.IC += 3;
+                uint y1 = getbits36(word1, 0, 18);  // addr
+                uint y2 = getbits36(word2, 0, 18);
+                uint cn1 = getbits36(word1, 18, 3); // 1st char position
+                uint cn2 = getbits36(word2, 18, 3);
+                uint ta1 = getbits36(word1, 21, 2); // data type
+                uint n1 = getbits36(word1, 24, 12); // string len
+                uint n2 = getbits36(word2, 24, 12);
+                int nbits1 = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
+                fix_mf_len(&n1, &ip->mods.mf1, nbits1);
+                int easy = 0;
+                debug_msg("OPU::cmpc", "mf2 = {ar=%d, rl=%d, id=%d, reg=0%o}\n",
+                    mf2.ar, mf2.rl, mf2.id, mf2.reg);
+                debug_msg("OPU::cmpc", "y1=0%o, y2=0%o, cn1=0%o, cn2=0%o, ta1=0%o, n1=%d, n2=%d\n", y1, y2, cn1, cn2, ta1, n1, n2);
+                uint addr1, addr2;
+                // t_uint64 word1, word2;
+                if (get_mf_an_addr(y1, &ip->mods.mf1, &addr1) != 0)
+                    return 1;
+                if (get_mf_an_addr(y2, &mf2, &addr2) != 0)
+                    return 1;
+                if (fetch_abs_word(addr1, &word1) != 0)
+                    return 1;
+                if (fetch_abs_word(addr2, &word2) != 0)
+                    return 1;
+                debug_msg("OPU::cmpc", "first word at 0%o:  %012Lo\n", addr1, word1);
+                debug_msg("OPU::cmpc", "second word at 0%o: %012Lo\n", addr2, word2);
+                complain_msg("OPU::cmpc", "Unimplemented.\n");
+                cancel_run(STOP_BUG);
+                return 0;
+            }
+
+            case opcode1_spri1:
+            case opcode1_spri3:
+            case opcode1_spri5:
+            case opcode1_spri7: {
+                if (get_addr_mode() == BAR_mode) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                int n = op & 07;
+                t_uint64 word0, word1;
+                spri_to_words(n, &word0, &word1);
+                return store_pair(TPR.CA, word0, word1);
             }
 
             default:
@@ -1424,14 +1702,15 @@ static int op_add(instr_t *ip, t_uint64 *dest)
 
 static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
 {
-    
     uint sign1 = a >> 35;
     uint sign2 = b >> 35;
     t_uint64 result = a + b;
     uint signr = result >> 35;
     if ((result >> 36) != 0) {
+        // BUG: generates inappropriate? carry when adding a negative to a positive number
         IR.carry = 1;
-        warn_msg("OPU::add36", "0%012Lo + 0%012Lo ==> carry on result 0%012Lo\n", a, b, result);
+        warn_msg("OPU::add36", "0%012Lo (%Ld) + 0%012Lo (%Ld) ==> carry on result 0%012Lo (%Ld => %Ld)\n",
+            a, sign36(a), b, sign36(b), result, sign36(result), sign36(result & MASK36));
         result &= MASK36;
     } else {
         IR.carry = 0;
@@ -1439,7 +1718,8 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
     IR.zero = result == 0;
     IR.neg = signr;
     if (sign1 == sign2 && signr != sign1) {
-        warn_msg("OPU::add36", "0%012Lo + 0%012Lo ==> overflow on result 0%12Lo\n", a, b, result);
+        warn_msg("OPU::add36", "0%012Lo (%Ld) + 0%012Lo (%Ld) ==> overflow on result 0%12Lo (%Ld)\n",
+            a, sign36(a), b, sign36(b), result, sign36(result));
         IR.overflow = 1;
         if (IR.overflow_mask == 0) {
             fault_gen(overflow_fault);
@@ -1486,7 +1766,7 @@ static int add18(t_uint64 a, t_uint64 b, t_uint64 *dest)
 
 // ----------------------------------------------------------------------------
 
-static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2)
+static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2, int is_unsigned)
 {
     t_uint64 word1, word2;
 
@@ -1503,16 +1783,18 @@ static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2)
     IR.carry = (hi >> 36) != 0;
     if (IR.carry)
         hi &= MASK36;
+
     IR.zero = lo == 0 && hi == 0;
     int signr = hi >> 35;
     IR.neg = signr;
-    if (sign1 == sign2 && signr != sign1) {
-        IR.overflow = 1;
-        if (IR.overflow_mask == 0) {
-            fault_gen(overflow_fault);
-            return 1;
+    if (! is_unsigned)
+        if (sign1 == sign2 && signr != sign1) {
+            IR.overflow = 1;
+            if (IR.overflow_mask == 0) {
+                fault_gen(overflow_fault);
+                return 1;
+            }
         }
-    }
 
     *dest1 = hi;
     *dest2 = lo;
@@ -1618,6 +1900,24 @@ static int32 sign18(t_uint64 x)
         return x;
 }
 
+static t_int64 sign36(t_uint64 x)
+{
+    if (bit36_is_neg(x)) {
+        t_int64 r = - (((t_int64)1<<36) - (x&MASK36));
+        return r;
+    }
+    else
+        return x;
+}
+
+
+// ============================================================================
+
+static inline uint min(uint a, uint b)
+{
+    return (a < b) ? a : b;
+}
+
 // ============================================================================
 
 static int do_epp(int epp)
@@ -1638,3 +1938,16 @@ static int do_epp(int epp)
 }
 
 // ============================================================================
+
+static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p)
+{
+    t_uint64 word0, word1;
+    word0 = setbits36(0, 3, 15, AR_PR[reg].PR.snr);
+    word0 = setbits36(word0, 18, 3, AR_PR[reg].PR.rnr);
+    word0 |= 043;
+
+    word1 = setbits36(0, 0, 18, AR_PR[reg].wordno);
+    word1 = setbits36(0, 0, 21, AR_PR[reg].PR.bitno); // 36-(72-57)
+    *word0p = word0;
+    *word1p = word1;
+}

@@ -10,6 +10,8 @@ void debug_msg(const char* who, const char* format, ...)
 {
     if (cpu_dev.dctrl == 0)     // todo: should CPU control all debug settings?
         return;
+    if (opt_debug == 0)
+        return;
     va_list ap;
     va_start(ap, format);
     msg("Debug", who, format, ap);

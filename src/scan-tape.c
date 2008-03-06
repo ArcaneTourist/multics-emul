@@ -6,6 +6,7 @@
 #include "hw6180.h"
 #include "bits.h"
 DEVICE cpu_dev; // hack
+int opt_debug = 0;
 
 void anal36 (const char* tag, t_uint64 word);
 char *bin(t_uint64 word, int n);
@@ -273,12 +274,17 @@ void anal36 (const char* tag, t_uint64 word)
         printf("instr: <none>\n");
     else  {
         char o[80];
-        if (instr.offset == 0)
+        if (instr.addr == 0)
             sprintf(o, "zero");
         else
-            sprintf(o, "%d decimal", instr.offset);
-        printf("instr: %s, offset %016o (%s); inhibit %d, pr %d, tag %02u\n",
-            opname, (unsigned) instr.offset, o, instr.inhibit, instr.pr_bit, instr.tag);
+            sprintf(o, "%d decimal", instr.addr);
+        if (instr.is_eis_multiword) {
+            printf("instr: %s, offset %016o (%s); inhibit %d, EIS multi-word\n",
+                opname, (unsigned) instr.addr, o, instr.inhibit);
+        } else {
+            printf("instr: %s, offset %016o (%s); inhibit %d, pr %d, tag %02u\n",
+                opname, (unsigned) instr.addr, o, instr.inhibit, instr.mods.single.pr_bit, instr.mods.single.tag);
+        }
     }
     //printf("bin64: %s\n", bin(word, 64));
     //printf("bin36: %s\n", bin(word, 36));
@@ -309,10 +315,10 @@ char *bin(t_uint64 word, int n)
 
 void decode_instr(instr_t *ip, t_uint64 word)
 {
-    ip->offset = getbits36(word, 0, 18);
+    ip->addr = getbits36(word, 0, 18);
     ip->opcode = getbits36(word, 18, 10);
     ip->inhibit = getbits36(word, 28, 1);
-    ip->pr_bit = getbits36(word, 29, 1);
-    ip->tag = getbits36(word, 30, 6);
+    ip->mods.single.pr_bit = getbits36(word, 29, 1);
+    ip->mods.single.tag = getbits36(word, 30, 6);
 }
 

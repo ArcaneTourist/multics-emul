@@ -266,22 +266,37 @@ extern char* print_lpw(t_addr addr);    // BUG: put in hdr
 t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
 {
     if (uptr == &cpu_unit) {
-        // memory request -- print memory specified by SIMH absolute M[addr]
+        // memory request -- print memory specified by SIMH absolute M[addr].  However
+        // note that parse_addr() was called by SIMH to determine the absolute addr.
         if (sw & SWMASK('M')) {
             // M -> instr
             char *instr = print_instr(M[addr]);
-            fprintf(ofile, "%012Lo %s\n", M[addr], instr);
+            fprintf(ofile, "%012Lo %s", M[addr], instr);
         } else if (sw & SWMASK('L')) {
             // L -> LPW
-            fprintf(ofile, "%012Lo %s\n", M[addr], print_lpw(addr));
+            fprintf(ofile, "%012Lo %s", M[addr], print_lpw(addr));
         } else if (sw & SWMASK('P')) {
             // P -> PTW
             char *s = print_ptw(M[addr]);
-            fprintf(ofile, "%012Lo %s\n", M[addr], s);
+            fprintf(ofile, "%012Lo %s", M[addr], s);
         } else if (sw & SWMASK('S')) {
             // S -> SDW
             char *s = print_sdw(M[addr], M[addr+1]);
-            fprintf(ofile, "%012Lo %012Lo %s\n", M[addr], M[addr+1], s);
+            fprintf(ofile, "%012Lo %012Lo %s", M[addr], M[addr+1], s);
+        } else if (sw & SWMASK('A')) {
+            t_uint64 word = M[addr];
+            fprintf(ofile, "%012Lo ", word);
+            for (int i = 0; i < 4; ++i) {
+                uint c = word >> 27;
+                word = (word << 9) & MASKBITS(36);
+                if (c <= 0177 && isprint(c)) {
+                    fprintf(ofile, " '%c'", c);
+                } else {
+                    fprintf(ofile, " \\%03o", c);
+                }
+            }
+        } else if (sw) {
+            return SCPE_ARG;
         } else {
             fprintf(ofile, "%012Lo", M[addr]);
         }
