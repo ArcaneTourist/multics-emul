@@ -349,6 +349,23 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_stz:   // store zero
                 return store_word(TPR.CA, 0);
+            case opcode0_sxl0:
+            case opcode0_sxl1:
+            case opcode0_sxl2:
+            case opcode0_sxl3:
+            case opcode0_sxl4:
+            case opcode0_sxl5:
+            case opcode0_sxl6:
+            case opcode0_sxl7: {
+                int n = op & 07;
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    word = (word & (MASK18<<18)) | reg_X[n];
+                    ret = store_word(TPR.CA, word);
+                }
+                return ret;
+            }
 
             case opcode0_alr: {
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
@@ -1270,12 +1287,7 @@ static int do_an_op(instr_t *ip)
 
             case opcode0_rscr: { // priv
                 // read system controller register (to AQ)
-                if (get_addr_mode() != ABSOLUTE_mode) {
-                    fault_gen(illproc_fault);
-                    return 1;
-                }
                 int ret = 0;
-                // uint y = getbits36(TPR.CA, 0, 2);        // BUG: CA is 18 bits, not 36
                 uint y = (TPR.CA >> 16) & 3;    // 18bit CA
                 uint ea = y << 15;
                 debug_msg("OPU::opcode::rscr", "EA is 0%04o\n", ea);

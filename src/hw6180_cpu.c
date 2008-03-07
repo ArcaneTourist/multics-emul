@@ -162,6 +162,14 @@ DEVICE tape_dev = {
     NULL, DEV_DEBUG
 };
 
+DEVICE opcon_dev = {
+    "Operator's console", NULL, NULL, NULL,
+    0, 10, 8, 1, 8, 8,
+    NULL, NULL, NULL,
+    NULL, NULL, NULL,
+    NULL, DEV_DEBUG
+};
+
 //-----------------------------------------------------------------------------
 //*** Other Globals holding state values
 //      If SIMH uses known devices to switch between CPUs, we'll have to 

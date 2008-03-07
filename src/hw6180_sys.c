@@ -9,6 +9,7 @@ static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr addr);
 
 extern DEVICE cpu_dev;
 extern DEVICE tape_dev;
+extern DEVICE opcon_dev;
 //extern DEVICE dsk_dev;
 extern REG cpu_reg[];
 extern t_uint64 M[];
@@ -146,7 +147,12 @@ static void hw6180_init(void)
     iom.scu_port = 0;
     iom.ports[0] = iom.scu_port;    // port A connected to SCU
     scu.ports[iom.scu_port] = 0;
+
+    int con_chan = 012; // channels 010 and higher are probed for an operators console
+    iom.channels[con_chan] = DEV_CON;
+    iom.devices[con_chan] = &opcon_dev;
 }
+
 
 static void init_memory_iom()
 {
@@ -159,11 +165,11 @@ static void init_memory_iom()
     // " channel for the tape subsystem holding the bootload tape. The drive number
     // " for the bootload tape is set by switches on the tape MPC itself.
 
-    int chan = 036;     // 12 bits or 6 bits;   // Arbitrary; controller channel; max=40
+    int tape_chan = 036;        // 12 bits or 6 bits;   // Arbitrary; controller channel; max=40
     int port = iom.scu_port;    // 3 bits;  // SCU port # to which bootload IOM is attached (deduced)
 
-    iom.channels[chan] = DEV_TAPE;
-    iom.devices[chan] = &tape_dev;
+    iom.channels[tape_chan] = DEV_TAPE;
+    iom.devices[tape_chan] = &tape_dev;
 
     int base = 014;         // 12 bits; IOM base
     int pi_base = 01200;    // 15 bits; interrupt cells
@@ -182,7 +188,7 @@ static void init_memory_iom()
 
     M[0] = 0720201;                 // Bootload channel PCW, word 1 (this is an 18 bit value)
     //  3/0, 6/Chan#, 30/0, 3/Port -- NOT 3/0, 12/Chan#, 24/0, 3/Port# -- also non-zero port may not be valid for low bits
-    M[1] = ((t_uint64) chan << 27) | port;      // Bootload channel PCW, word 2
+    M[1] = ((t_uint64) tape_chan << 27) | port;     // Bootload channel PCW, word 2
     // 12/Base, 6/0, 15/PIbase, 3/IOM#
     // M[2] = ((t_uint64) base << 24) | (pi_base << 3) | iom;   // Info used by bootloaded pgm
     M[2] = ((t_uint64) base << 24) | pi_base;   // Info used by bootloaded pgm -- force iom zero
@@ -201,12 +207,16 @@ static void init_memory_iom()
     M[mbx+010] = 04000;                             // Connect channel LPW -> PCW at 000000
 
     // Channel mailbox, at Base*64 + 4*Chan#
-    mbx = (base * 64) + 4 * chan;
+    mbx = (base * 64) + 4 * tape_chan;
     M[mbx+0] = (3<<18) | (2<<12) | 3;                   //  Boot dev LPW -> IDCW @ 000003
     // debug_msg("SYS", "Channel MBX @%0o: %0Lo\n", mbx, M[mbx]);
     M[mbx+2] = (base <<24);                         //  Boot dev SCW -> IOM mailbox
     
 }
+
+#if 0
+
+init_memory_iox() untested.   Never updated for a console
 
 static void init_memory_iox()
 {
@@ -257,6 +267,7 @@ static void init_memory_iox()
     M[001406] = 03034;          // channel link word
     M[001407] = (0400 << 27) | 0400;    // lpw
 }
+#endif
 
 
 extern UNIT cpu_unit;   // BUG: put in hdr

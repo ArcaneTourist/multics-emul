@@ -20,7 +20,7 @@ else
 #CC = gcc -std=c99 -O3 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I .
 CC = gcc -std=c99 -O3 -DUSE_INT64 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I ..
 #CC = gcc -std=c99 -O3 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I ..
-LDFLAGS=-lm -lrt
+LDFLAGS=-lm -lrt -lgmp
 endif
 ifeq ($(USE_NETWORK),)
 else

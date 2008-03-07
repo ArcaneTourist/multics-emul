@@ -43,7 +43,7 @@ enum sim_stops {
     STOP_ODD_FETCH,
     STOP_IBKPT,         // breakpoint
 };
-enum dev_type { DEV_NONE, DEV_TAPE, DEV_DISK }; // devices connected to an IOM
+enum dev_type { DEV_NONE, DEV_TAPE, DEV_CON, DEV_DISK };    // devices connected to an IOM
 
 
 // ============================================================================

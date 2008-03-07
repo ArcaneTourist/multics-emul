@@ -1,7 +1,7 @@
 include Makefile.defs
 
 
-multics_objs: hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o bits.o apu.o scu.o iom.o mt.o math.o
+multics_objs: hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o bits.o apu.o scu.o iom.o mt.o math.o console.o
 
 hw6180_cpu.o: *.h
 hw6180_sys.o: *.h
@@ -16,7 +16,7 @@ mt.o: *.h
 math.o: *.h
 
 wc:
-	wc hw6180_cpu.c hw6180_sys.c opcode_text.c misc.c opu.c bits.c apu.c scu.c iom.c mt.c hw6180.h
+	wc hw6180_cpu.c hw6180_sys.c opcode_text.c misc.c opu.c bits.c apu.c scu.c iom.c mt.c math.c console.c hw6180.h
 
 bit-test.o: *.h
 bit-test: bit-test.o bits.o

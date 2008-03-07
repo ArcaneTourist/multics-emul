@@ -205,7 +205,7 @@ static int do_channel(int chan, pcw_t *p)
     int ret = 0;
     chan_status.chan = chan;
 
-    debug_msg("IOM::do-chan", "Starting for channel %d\n", chan);
+    debug_msg("IOM::do-chan", "Starting for channel 0%o (%d)\n", chan);
 
     // First, send any PCW command to the device
 
@@ -524,7 +524,8 @@ static int dev_send_pcw(int chan, pcw_t *p)
     debug_msg("IOM::dev-send-pcw", "\n");
 
     DEVICE* devp = iom.devices[chan];
-    if (devp == NULL || devp->units == NULL) {
+    // if (devp == NULL || devp->units == NULL)
+    if (devp == NULL) {
         // BUG: no device connected, what's the fault code(s) ?
         chan_status.power_off = 1;
         iom_fault(chan, __LINE__, 0, 0);
@@ -543,6 +544,11 @@ static int dev_send_pcw(int chan, pcw_t *p)
         case DEV_TAPE: {
             int ret = mt_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chan_status.major, &chan_status.substatus);
             debug_msg("IOM::dev-send-pcw", "MT returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
+            return 0;   // ignore ret in favor of chan_status.{major,substatus}
+        }
+        case DEV_CON: {
+            int ret = con_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chan_status.major, &chan_status.substatus);
+            debug_msg("IOM::dev-send-pcw", "CON returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
             return 0;   // ignore ret in favor of chan_status.{major,substatus}
         }
         default:
