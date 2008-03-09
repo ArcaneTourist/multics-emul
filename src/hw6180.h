@@ -390,6 +390,24 @@ typedef struct {
 } iom_t;
 
 
+typedef struct {
+    int unimplemented;
+} eis_bit_desc;
+typedef struct {
+    uint addr;  // 18 bits at  0..17
+    uint cn;    //  3 bits at 18..20; character position
+    uint ta;    //  2 bits at 21..22; data type
+    uint n;     // 12 bits at 24..35; length
+    // convenience members, not part of stored word
+    int nbits;
+    // tracking info for get_eis_an() and put_eis_an()
+    uint bitpos;
+    flag_t first;
+    t_uint64 word;
+} eis_alpha_desc_t;
+// eis_num_desc
+
+
 // ============================================================================
 // === Operations on 36-bit pseudo words
 /*
@@ -534,6 +552,12 @@ extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
 extern int addr_mod(const instr_t *ip);
 extern SDW_t* get_sdw();
 extern int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop);
+extern const char* eis_alpha_desc_to_text(const eis_alpha_desc_t* descp);
+extern void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* descp);
+extern const char* mf2text(const eis_mf_t* mfp);
+extern int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib);
+extern int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib);
+extern int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp);
 
 extern void set_addr_mode(addr_modes_t mode);
 extern addr_modes_t get_addr_mode(void);

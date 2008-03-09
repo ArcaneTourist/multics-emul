@@ -200,6 +200,8 @@ eis_mf_t* parse_mf(uint mf, eis_mf_t* mfp)
 
 static int fetch_mf_op(uint opnum, const eis_mf_t* mfp, t_uint64* wordp)
 {
+    // Fetch an EIS operand via a MF
+
     uint addr = PPR.IC;
     if (fetch_word(PPR.IC + opnum, wordp) != 0)
         return 1;
@@ -225,6 +227,62 @@ int fetch_mf_ops(const eis_mf_t* mf1p, t_uint64* word1p, const eis_mf_t* mf2p, t
             return 1;
     return 0;
 }
+
+//=============================================================================
+
+const char* mf2text(const eis_mf_t* mfp)
+{
+    static char bufs[2][100];
+    static int which = 0;
+    which = !which;
+    char *bufp = bufs[which];
+    sprintf(bufp, "{ar=%d, rl=%d, id=%d, reg=0%o}", mfp->ar, mfp->rl, mfp->id, mfp->reg);
+    return bufp;
+}
+
+const char* eis_alpha_desc_to_text(const eis_alpha_desc_t* descp)
+{
+    static char bufs[2][100];
+    static int which = 0;
+    which = !which;
+    char *bufp = bufs[which];
+
+    sprintf(bufp, "{y=0%o, char-no=0%o, ta=%o, n=0%o(%d)}",
+        descp->addr, descp->cn, descp->ta, descp->n, descp->n);
+    return bufp;
+}
+
+//=============================================================================
+
+void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* descp)
+{
+    // Return absolute address for EIS operand in Alphanumeric Data Descriptor Format
+    descp->addr = getbits36(word, 0, 18);
+    descp->cn = getbits36(word, 18, 3);
+    descp->ta = getbits36(word, 21, 2); // data type
+    descp->n = getbits36(word, 24, 12);
+    descp->nbits = (descp->ta == 0) ? 9 : (descp->ta == 1) ? 6 : (descp->ta == 2) ? 4 : -1;
+    if (descp->nbits == -1) {
+        complain_msg("APU::EIS", "Illegal ta value in MF\n");
+        fault_gen(illproc_fault);
+        cancel_run(STOP_BUG);
+    }
+    fix_mf_len(&descp->n, mfp, descp->nbits);
+    if (descp->nbits == 9) {
+        if ((descp->cn & 1) != 0) {
+            complain_msg("APU::EIS", "TA of 0 (9bit) not legal with cn of %d\n", descp->cn);
+            fault_gen(illproc_fault);
+        } else
+            descp->cn /= 2;
+    }
+    if (descp->nbits * descp->cn >= 36) {
+        complain_msg("APU::EIS", "Data type TA of %d (%d bits) does not allow char pos of %d\n", descp->ta, descp->nbits, descp->cn);
+        fault_gen(illproc_fault);
+    }
+    descp->first = 1;
+}
+
+//=============================================================================
 
 void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
 {
@@ -282,6 +340,225 @@ void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
         }
     }
 }
+
+//=============================================================================
+
+int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
+{
+    // Return a single char via an EIS descriptor.  Fetches new words as needed.
+    const char* moi = "APU::eis-an-get";
+
+    if (descp->n == 0) {
+        warn_msg(moi, "Descriptor exhausted\n");
+        return 1;
+    }
+    if (descp->first)
+        descp->bitpos = 36;
+
+    if (descp->bitpos == 36) {
+        // fetch a new src word
+        uint addr1;
+        uint bitno1;
+        debug_msg(moi, "Finding src word.\n");
+        if (get_mf_an_addr(descp->addr, mfp, &addr1, &bitno1) != 0) {
+            warn_msg(moi, "Failed\n");
+            return 1;
+        }
+        if (bitno1 != 0) {
+            debug_msg(moi, "Src bitno is %d\n", bitno1);
+            if (!descp->first) {
+                warn_msg(moi, "Non-zero bitno after first char?\n");
+                cancel_run(STOP_IBKPT);
+            }
+        }
+        debug_msg(moi, "Fetching src word.\n");
+        if (fetch_abs_word(addr1, &descp->word) != 0) {
+            warn_msg(moi, "Failed\n");
+            return 1;
+        }
+        ++ descp->addr;
+        descp->bitpos = bitno1;
+        if (descp->first) {
+            descp->first = 0;
+            if (descp->cn != 0) {
+                descp->bitpos += descp->cn * descp->nbits;
+                debug_msg(moi, "Cn is %d, so initial bitpos is %d\n", descp->cn, descp->bitpos);
+            } else
+                debug_msg(moi, "Cn is zero, initial bitpos is %d\n", descp->bitpos);
+        }
+    }
+
+    *nib = getbits36(descp->word, descp->bitpos, descp->nbits);
+    if (opt_debug)
+        debug_msg(moi, "%dbit char at bit %d of word %012Lo, value is 0%o\n", descp->nbits, descp->bitpos, descp->word, *nib);
+    -- descp->n;
+    descp->bitpos += descp->nbits;
+    return 0;
+}
+
+//=============================================================================
+
+
+int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
+{
+    // Save a single char via an EIS descriptor.  Stores words when needed.  Call
+    // save_eis_an() to force a store.
+
+    const char* moi = "APU::eis-an-put";
+
+    if (descp->n == 0) {
+        warn_msg(moi, "Descriptor exhausted\n");
+        return 1;
+    }
+    if (descp->first) {
+        descp->bitpos = -1;
+        descp->word = 0;    // makes debug output easier to read
+    }
+
+    if (descp->bitpos == 36) {
+        // BUG: this might be possible if page faulted on earlier write attempt?
+        warn_msg(moi, "Internal error\n");
+        return 1;
+    }
+
+    if (descp->bitpos == -1) {
+        if (descp->first) {
+            // Load source word if output doesn't start at position zero
+            uint addr2;
+            uint bitno2;
+            debug_msg(moi, "First put, Checking dest word addr\n"); // it might specify a char offset
+            if (get_mf_an_addr(descp->addr, mfp, &addr2, &bitno2) != 0) {   // no incr of addr, not storing
+                warn_msg(moi, "Failed\n");
+                return 1;
+            }
+            if (bitno2 != 0 || descp->cn != 0) {
+                debug_msg(moi, "Fetching first dest word (cn = %d, not all bits will be set).\n", descp->cn);
+                if (fetch_abs_word(addr2, &descp->word) != 0) {
+                    warn_msg(moi, "Failed.\n");
+                    return 1;
+                }
+            } else {
+                debug_msg(moi, "No need to fetch first dest word.\n");
+            }
+            descp->first = 0;
+            descp->bitpos = 0;
+            if (descp->cn != 0)
+                descp->bitpos = descp->cn * descp->nbits;
+            if (bitno2 != 0) {
+                debug_msg(moi, "Dest addr bitno is %d\n", bitno2);
+                descp->bitpos += bitno2;
+            }
+            debug_msg(moi, "Inital put, dest cn=%d, dest addr bitno=%d, output bitpos is %d\n", descp->cn, bitno2, descp->bitpos);
+            descp->first = 0;
+        } else {
+            // Set output position to zero (and sanity check char offsets)
+            uint addr2;
+            uint bitno2;
+            if (get_mf_an_addr(descp->addr, mfp, &addr2, &bitno2) != 0) {   // no incr of addr, not storing
+                warn_msg(moi, "Failed\n");
+                return 1;
+            }
+            if (bitno2 != 0) {
+                warn_msg(moi, "Put has bitno %d for non-first word\n", bitno2);
+                cancel_run(STOP_BUG);
+            }
+            descp->bitpos = 0;
+            descp->word = 0;    // makes debug output easier to read
+        }
+    }
+
+    t_uint64 tmp = descp->word;
+    descp->word = setbits36(descp->word, descp->bitpos, descp->nbits, nib);
+    if (opt_debug)
+        debug_msg(moi, "Setting %d-bit char at position %2d of %012Lo to 0%o: %012Lo\n",
+            descp->nbits, descp->bitpos, tmp, nib, descp->word);
+
+    -- descp->n;
+    descp->bitpos += descp->nbits;
+
+    if (descp->bitpos == 36) {
+        // output it
+        uint addr2;
+        debug_msg(moi, "Word is full, finding dest addr.\n");
+        uint bitno2;
+        if (get_mf_an_addr(descp->addr, mfp, &addr2, &bitno2) != 0) {
+            warn_msg(moi, "Failed.\n");
+            return 1;
+        }
+        //if (bitno2 != 27) {
+        //  warn_msg(moi, "Bitno is %d, not 27 while storing dest.\n", bitno2);
+        //  cancel_run(STOP_WARN);
+        //}
+        //if (bitno2 != 0) {
+        //  warn_msg("OPU::mlr", "Bitno is %d, not zero while storing dest.\n", bitno2);
+        //  cancel_run(STOP_WARN);
+        //}
+        // Bitno should be irrelevent -- we should have folded in the word at first output
+        debug_msg(moi, "Storing %012Lo to addr 0%o\n", descp->word, addr2);
+        if (store_abs_word(addr2, descp->word) != 0) {
+            warn_msg(moi, "Failed.\n");
+            return 1;
+        }
+        ++ descp->addr;
+        descp->bitpos = -1;
+    }
+
+    return 0;
+}
+
+//=============================================================================
+
+int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
+{
+    // Save buffered output to memory via an EIS descriptor.  Call this at the
+    // end of loops in EIS opcodes.
+
+    const char* moi = "APU::eis-an-save";
+
+    if (descp->bitpos == -1)
+        return 0;
+
+    // write all or part of buffered word to memory
+
+    debug_msg(moi, "Finding dest addr.\n");
+
+    uint addr2;
+    uint bitno2;
+    if (get_mf_an_addr(descp->addr, mfp, &addr2, &bitno2) != 0) {
+        warn_msg(moi, "Failed.\n");
+        return 1;
+    }
+    if (bitno2 + descp->nbits != descp->bitpos) {
+        warn_msg(moi, "Dest addr bitno of %d does not match current output bitno of %d minus %d\n",
+            bitno2, descp->bitpos, descp->nbits);
+        cancel_run(STOP_BUG);
+    }
+
+    if (descp->bitpos == 36) {
+        warn_msg(moi, "Odd, dest is a full word.\n");   // why didn't we write it during loop?
+        cancel_run(STOP_WARN);
+    } else {
+        debug_msg(moi, "Dest word isn't full.  Loading dest from memory 0%o and folding.\n", addr2);
+        t_uint64 word;
+        if (fetch_abs_word(addr2, &word) != 0) {
+            warn_msg(moi, "Failed.\n");
+            return 1;
+        }
+        t_uint64 tmp = descp->word;
+        descp->word = setbits36(descp->word, descp->bitpos, 36 - descp->bitpos, word);
+        debug_msg("OPU::mlr", "Combined buffered dest %012Lo with fetched %012Lo: %012Lo\n", tmp, word, descp->word);
+    }
+    debug_msg(moi, "Storing %012Lo to 0%o.\n", descp->word, addr2);
+    if (store_abs_word(addr2, descp->word) != 0) {
+        warn_msg(moi, "Failed.\n");
+        return 1;
+    }
+    ++ descp->addr;
+    descp->bitpos = -1;
+    return 0;
+}
+
+//=============================================================================
 
 int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop)
 {
@@ -366,6 +643,9 @@ void fnord()
 
 int addr_mod_eis_addr_reg(instr_t *ip)
 {
+    // Called by OPU for selected EIS instructions.  OPU calls addr_mod() for
+    // other instructions.
+
     // TODO: instr2text() also needs to understand this
     uint op = ip->opcode;
     int bit27 = op % 2;
@@ -412,6 +692,7 @@ int addr_mod_eis_addr_reg(instr_t *ip)
 
 int addr_mod(const instr_t *ip)
 {
+    // Called by OPU for most instructions
     // Generate 18bit computed address TPR.CA
     // Returns non-zero on error or group 1-6 fault
 

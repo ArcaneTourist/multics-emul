@@ -1682,7 +1682,7 @@ static int do_an_op(instr_t *ip)
                 uint n2 = getbits36(word2, 24, 12);
                 int nbits1 = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
                 fix_mf_len(&n1, &ip->mods.mf1, nbits1);
-                int easy = 0;
+
                 debug_msg("OPU::cmpc", "mf2 = {ar=%d, rl=%d, id=%d, reg=0%o}\n",
                     mf2.ar, mf2.rl, mf2.id, mf2.reg);
                 debug_msg("OPU::cmpc", "y1=0%o, y2=0%o, cn1=0%o, cn2=0%o, ta1=0%o, n1=%d, n2=%d\n", y1, y2, cn1, cn2, ta1, n1, n2);
@@ -2018,7 +2018,7 @@ static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p)
 // ============================================================================
 
 
-static int op_mlr(const instr_t* ip)
+static int op_old_mlr(const instr_t* ip)
 {
 
     uint fill = ip->addr >> 9;
@@ -2193,7 +2193,7 @@ static int op_mlr(const instr_t* ip)
                 if (first) {
                     first = 0;
                     if (cn1 != 0)
-                        bitpos1 = cn1 * nbits1;
+                        bitpos1 = cn1 * nbits1; // BUG: ERROR: should be +=
                     if (cn2 != 0)
                         bitpos2 = cn2 * nbits2;
                     debug_msg("OPU::mlr", "Checking dest word addr\n"); // it might specify a char offset
@@ -2366,4 +2366,64 @@ static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, in
     warn_msg(buf, "Unimplemented\n");
     cancel_run(STOP_BUG);
     return 1;
+}
+
+static int op_mlr(const instr_t* ip)
+{
+
+    // BUG: Detection of GBCD overpunch is not done
+
+    uint fill = ip->addr >> 9;
+    uint t = (ip->addr >> 8) & 1;
+    uint mf2bits = ip->addr & MASKBITS(7);
+
+    eis_mf_t mf2;
+    (void) parse_mf(mf2bits, &mf2);
+    debug_msg("OPU::mlr", "mf2 = %s\n", mf2text(&mf2));
+
+    t_uint64 word1, word2;
+    if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
+        return 1;
+
+    PPR.IC += 3;
+
+    eis_alpha_desc_t desc1;
+    parse_eis_alpha_desc(word1, &ip->mods.mf1, &desc1);
+    eis_alpha_desc_t desc2;
+    parse_eis_alpha_desc(word2, &mf2, &desc2);
+
+    debug_msg("OPU::mlr", "desc1: %s;  desc2: %s\n", eis_alpha_desc_to_text(&desc1), eis_alpha_desc_to_text(&desc2));
+
+    int ret = 0;
+
+    // while (desc1.n > 0 && desc2.n > 0)
+    while (desc2.n > 0) {
+        uint nib;
+        if (desc1.n == 0)
+            nib = MASKBITS(desc2.nbits);
+        else
+            if (get_eis_an(&ip->mods.mf1, &desc1, &nib) != 0) { // must fetch when needed
+                ret = 1;
+                break;
+            }
+        if (put_eis_an(&mf2, &desc2, nib) != 0) {   // must fetch/store when needed
+            ret = 1;
+            break;
+        }
+    }
+    if (ret == 0) {
+        IR.truncation = desc.n1 != 0;
+        if (IR.truncation && t) {
+            fault_gen(overflow_fault);  // truncation
+            ret = 1;
+        }
+    }
+    // write unsaved data (if any)
+    if (save_eis_an(&mf2, &desc2) != 0)
+        return 1;
+
+    warn_msg("OPU::mlr", "Need to verify; auto breakpoint\n");
+    cancel_run(STOP_WARN);
+    debug_msg("OPU::mlr", "finished.\n");
+    return ret;
 }
