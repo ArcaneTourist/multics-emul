@@ -17,15 +17,15 @@ typedef struct {    // BUG
 
 static const int page_size = 1024;      // CPU allows [2^6 .. 2^12]; multics uses 2^10
 
-static int compute_addr(instr_t *ip, ca_temp_t *ca_tempp);
+static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp);
 static int addr_append(t_uint64 *wordp);
 static int do_esn_segmentation(instr_t *ip, ca_temp_t *ca_tempp);
-static int do_its_itp(instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01);
+static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01);
 static int page_in(uint offset, uint perm_mode, uint *addrp);
 static void decode_PTW(t_uint64 word, PTW_t *ptwp);
 static int set_PTW_used(uint addr);
 static void decode_SDW(t_uint64 word0, t_uint64 word1, SDW_t *sdwp);
-static SDW_t* get_sdw(void);
+// static SDW_t* get_sdw(void);
 static SDWAM_t* page_in_sdw(void);
 static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp);
 static void reg_mod(uint td, int off);
@@ -232,7 +232,7 @@ void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
         switch(*np) {
             // case 0: // illegal
             // case 1:  // au
-            case 05: // al
+            case 05: // a
                 if (nbits == 1)
                     *np = reg_A & MASKBITS(24);
                 else if (nbits == 4 || nbits == 6)
@@ -244,8 +244,37 @@ void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
                     *np = reg_A;
                     cancel_run(STOP_BUG);
                 }
-                warn_msg("APU", "MF len: reg modifier 05: A=0%Lo => 0%o\n", reg_A, *np);
-                cancel_run(STOP_IBKPT);
+                if (nbits != 9) {
+                    warn_msg("APU", "MF len: nbits=%d, reg modifier 05: A=0%Lo => 0%o\n", nbits, reg_A, *np);
+                    cancel_run(STOP_IBKPT);
+                }
+                return;
+            case 06: // q
+                if (nbits == 1)
+                    *np = reg_Q & MASKBITS(24);
+                else if (nbits == 4 || nbits == 6)
+                    *np = reg_Q & MASKBITS(21);
+                else if (nbits == 9)
+                    *np = reg_Q & MASKBITS(20);
+                else {
+                    // impossible
+                    *np = reg_Q;
+                    cancel_run(STOP_BUG);
+                }
+                if (nbits != 9) {
+                    warn_msg("APU", "MF len: nbits=%d, reg modifier 06: A=0%Lo => 0%o\n", nbits, reg_A, *np);
+                    cancel_run(STOP_IBKPT);
+                }
+                return;
+            case 010:
+            case 011:
+            case 012:
+            case 013:
+            case 014:
+            case 015:
+            case 016:
+            case 017:
+                *np = reg_X[*np&7];
                 return;
             default:
                 complain_msg("APU", "MF len: reg modifier 0%o not implemented.\n", *np);
@@ -254,7 +283,7 @@ void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
     }
 }
 
-int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp)
+int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop)
 {
     // Return absolute address for EIS operand in Alphanumeric Data Descriptor Format
 
@@ -272,10 +301,12 @@ int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp)
         TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
         offset = AR_PR[pr].wordno + soffset;
         TPR.bitno = AR_PR[pr].PR.bitno;
-        //debug_msg("APU::MF::AN", "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o, bitno=0%o\n",
-        //  pr, TPR.TSR, TPR.TRR, offset, TPR.bitno);
+        debug_msg("APU::MF::AN", "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o, bitno=0%o\n",
+            pr, TPR.TSR, TPR.TRR, offset, TPR.bitno);
+        *bitnop = TPR.bitno;
     } else {
         offset = y;
+        *bitnop = 0;
     }
 
     if (mfp->reg != 0) {
@@ -333,7 +364,53 @@ void fnord()
 
 //=============================================================================
 
-int addr_mod(instr_t *ip)
+int addr_mod_eis_addr_reg(instr_t *ip)
+{
+    // TODO: instr2text() also needs to understand this
+    uint op = ip->opcode;
+    int bit27 = op % 2;
+    op >>= 1;
+
+    uint ar = ip->addr >> 15;
+    int soffset = sign15(ip->addr & MASKBITS(15));
+    uint a = ip->mods.single.pr_bit;
+
+    // BUG: Using reg_mod() to load a value that we'll later divide.  Is that right?
+    enum atag_tm tm = atag_r;
+    uint td = ip->mods.single.tag & MASKBITS(4);
+    TPR.CA = 0;         // BUG: what does reg mod mean for these instr?
+    reg_mod(td, 0);     // BUG: what does reg mod mean for these instr?
+
+
+    switch (op) {
+        case opcode1_a9bd:
+            if (a == 0) {
+                AR_PR[ar].wordno = soffset + TPR.CA / 4;
+                AR_PR[ar].AR.charno = TPR.CA % 4;
+                // handle anomaly (AL39 AR description)
+                AR_PR[ar].PR.bitno = AR_PR[ar].AR.charno * 9;   // 0, 9, 18, 27
+            } else {
+                AR_PR[ar].wordno += soffset + (TPR.CA + AR_PR[ar].AR.charno) / 4;
+                AR_PR[ar].AR.charno = (TPR.CA + AR_PR[ar].AR.charno) % 4;
+                AR_PR[ar].AR.bitno = 0;
+                // handle anomaly (AL39 AR description)
+                AR_PR[ar].PR.bitno = AR_PR[ar].AR.charno * 9;   // 0, 9, 18, 27
+            }
+            debug_msg("APU", "Addr mod: AR[%d]: wordno = 0%o, charno=0%o, bitno=0%o; PR bitno=%d\n",
+                ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
+            return 0;
+        case opcode1_a4bd:
+        case opcode1_a6bd:
+        default:
+            debug_msg("APU", "internal error: opcode 0%0o(%d) not valid for EIS address register arithmetic\n", op, bit27);
+            cancel_run(STOP_BUG);
+    }
+    return 1;
+}
+
+//=============================================================================
+
+int addr_mod(const instr_t *ip)
 {
     // Generate 18bit computed address TPR.CA
     // Returns non-zero on error or group 1-6 fault
@@ -451,7 +528,7 @@ int addr_mod(instr_t *ip)
 }
 
 
-static int compute_addr(instr_t *ip, ca_temp_t *ca_tempp)
+static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
 {
     // Perform a "CA" cycle as per figure 6-2 of AL39.
     // Generate an 18-bit computed address (in TPR.CA) as specified in section 6
@@ -686,7 +763,7 @@ static void reg_mod(uint td, int off)
 
 // static int do_esn_segmentation(instr_t *ip, ca_temp_t *ca_tempp)
 
-static int do_its_itp(instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
+static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
 {
     // Implements the portion of AL39 figure 6-10 that is below the "CA CYCLE" box
 
@@ -842,7 +919,7 @@ int store_appended(uint offset, t_uint64 word)
 
 //=============================================================================
 
-static SDW_t* get_sdw()
+SDW_t* get_sdw()
 {
     // Get SDW for TPR.TSR
 

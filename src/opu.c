@@ -4,9 +4,11 @@
 
 static inline t_uint64 lrotate36(t_uint64 x, unsigned n);
 static inline void lrotate72(t_uint64* ap, t_uint64* bp, unsigned n);
+static inline int32 negate18(t_uint64 x);
 static inline t_int64 negate36(t_uint64 x);
 static inline int negate72(t_uint64* a, t_uint64* b);
 static inline uint min(uint a, uint b);
+static inline uint max3(uint a, uint b, uint c);
 
 static int do_op(instr_t *ip);
 static int op_add(instr_t *ip, t_uint64 *operand);
@@ -19,6 +21,8 @@ static t_int64 sign36(t_uint64 x);
 static int do_epp(int epp);
 static int do_an_op(instr_t *ip);   // todo: hack, fold into do_op
 static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p);
+static int op_mlr(const instr_t* ip);
+static int op_mvt(const instr_t* ip);
 
 // BUG: move externs to hdr file
 extern int scu_cioc(t_uint64 addr);
@@ -26,7 +30,6 @@ extern int scu_set_mask(t_uint64 addr, int port);
 extern int scu_get_mask(t_uint64 addr, int port);
 extern int scu_set_cpu_mask(t_uint64 addr);
 extern int scu_get_calendar(t_uint64 addr);
-extern int addr_mod(instr_t *ip);
 extern int activate_timer();
 
 // ============================================================================
@@ -113,8 +116,7 @@ static int do_an_op(instr_t *ip)
             case opcode1_a4bd:
             case opcode1_a6bd:
             case opcode1_a9bd:
-                debug_msg("OPU", "Skipping addr_mod() for special case instr.\n");
-                cancel_run(STOP_WARN);
+                addr_mod_eis_addr_reg(ip);
                 break;
             default:
                 addr_mod(ip);       // note that ip == &cu.IR
@@ -575,6 +577,8 @@ static int do_an_op(instr_t *ip)
                         ret = add72(reg_A, reg_Q, &word1, &word2, 0);
                 return ret;
             }
+            // sbla
+            // sblaq
             case opcode0_sblq: {    // Subtract logical from Q
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
@@ -588,6 +592,51 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
+            //sblxn
+            case opcode0_sbq: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    word = negate36(word);
+                    ret = add36(reg_Q, word, &reg_Q);
+                }
+                return ret;
+            }
+            case opcode0_sbx0:
+            case opcode0_sbx1:
+            case opcode0_sbx2:
+            case opcode0_sbx3:
+            case opcode0_sbx4:
+            case opcode0_sbx5:
+            case opcode0_sbx6:
+            case opcode0_sbx7: {
+                t_uint64 word;
+                int n = op & 07;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    t_uint64 orig = word;
+                    t_uint64 result;
+                    word = negate18(word >> 18);
+                    if (add18(word, reg_X[n], &result) == 0) {
+#if 0
+                        char buf[40];
+                        sprintf(buf, "OPU::sbx%d", n);
+                        debug_msg(buf, "X[%d] -= 0%Lo(%Ld) ==> 0%o+0%Lo == %d+%d = 0%Lo (%Ld)\n",
+                            n, orig, orig,
+                            reg_X[n], word, reg_X[n], sign18(word),
+                            result, result);
+                        debug_msg(buf, "IR: zero=%d, neg=%d, carry=%d\n", IR.zero, IR.neg, IR.carry);
+#endif
+                        reg_X[n] = result;
+                    }
+                }
+                return ret;
+            }
+            //ssa
+            //ssq
+            //ssxn
+            //swca
+            //swcq
 
             case opcode0_mpy: {
                 t_uint64 word;
@@ -1068,7 +1117,34 @@ static int do_an_op(instr_t *ip)
             case opcode0_epp6:
                 return do_epp(6);
 
-            // lpri
+            case opcode0_lpri: {
+                addr_modes_t addr_mode;
+                if ((addr_mode = get_addr_mode()) == BAR_mode) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                t_uint64 words[16];
+                int ret;
+                if ((ret = fetch_yblock(TPR.CA, 1, 16, words)) == 0) {
+                    SDW_t* sdwp = NULL;
+                    if (addr_mode != ABSOLUTE_mode)
+                        if ((sdwp = get_sdw()) == NULL) // Get SDW for current TPR.TSR
+                            return 1;
+                    for (int i = 0; i < 8; ++i) {
+                        uint y_rnr = getbits36(words[2*i], 18, 3);
+                        if (addr_mode == ABSOLUTE_mode)
+                            AR_PR[i].PR.rnr = y_rnr;
+                        else
+                            AR_PR[i].PR.rnr = max3(y_rnr, sdwp->r1, TPR.TRR);
+                        AR_PR[i].PR.snr = getbits36(words[2*i], 3, 15);
+                        AR_PR[i].wordno = getbits36(words[2*i+1], 0, 18);
+                        AR_PR[i].PR.bitno = getbits36(words[2*i+1], 21, 6); // 36-(72-57)
+                        debug_msg("OPU::lpri", "PR[%d]: rnr=%o, snr=%o, wordno=%0o, bitno=0%o\n",
+                            i, AR_PR[i].PR.rnr, AR_PR[i].PR.snr, AR_PR[i].wordno, AR_PR[i].PR.bitno);
+                    }
+                }
+                return ret;
+            }
             // lprp*
             // spbp*
             case opcode0_spri: {
@@ -1294,13 +1370,13 @@ static int do_an_op(instr_t *ip)
                 debug_msg("OPU::opcode::rscr", "CA is 0%04Lo (0%03Lo=>0%03Lo)\n", TPR.CA, (TPR.CA >> 3), TPR.CA & ~7);
                 if ((TPR.CA & ~7) == ea) {
                     ; // SC mode reg
-                    debug_msg("OPU::opcode::rscr", "mode register selected\n");
-                    debug_msg("OPU::opcode::rscr", "unimplemented\n");
+                    warn_msg("OPU::opcode::rscr", "mode register selected\n");
+                    complain_msg("OPU::opcode::rscr", "unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0010) {
                     ; // SC config reg
-                    debug_msg("OPU::opcode::rscr", "sys config switches unimplemented\n");
+                    warn_msg("OPU::opcode::rscr", "sys config switches unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0020) {
@@ -1322,7 +1398,7 @@ static int do_an_op(instr_t *ip)
                     ret = scu_get_mask(TPR.CA, 7);
                 } else if ((TPR.CA & ~7) == ea + 0030) {
                     // interrupts
-                    debug_msg("OPU::opcode::rscr", "interrupts unimplemented\n");
+                    warn_msg("OPU::opcode::rscr", "interrupts unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0040) {
@@ -1331,11 +1407,11 @@ static int do_an_op(instr_t *ip)
                     ret = scu_get_calendar(TPR.CA);
                 } else if ((TPR.CA & ~7) == ea + 0060) {
                     // store unit mode reg
-                    debug_msg("OPU::opcode::rscr", "store unit mode reg unimplemented\n");
+                    warn_msg("OPU::opcode::rscr", "store unit mode reg unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0070) {
-                    debug_msg("OPU::opcode::rscr", "store unit mode reg unimplemented\n");
+                    warn_msg("OPU::opcode::rscr", "store unit mode reg unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else {
@@ -1389,12 +1465,12 @@ static int do_an_op(instr_t *ip)
                 if ((TPR.CA & ~7) == ea) {
                     ; // SC mode reg
                     debug_msg("OPU::opcode::sscr", "mode register selected\n");
-                    debug_msg("OPU::opcode::sscr", "unimplemented\n");
+                    warn_msg("OPU::opcode::sscr", "unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0010) {
                     ; // SC config reg
-                    debug_msg("OPU::opcode::sscr", "unimplemented\n");
+                    warn_msg("OPU::opcode::sscr", "unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0020) {
@@ -1417,30 +1493,30 @@ static int do_an_op(instr_t *ip)
                     ret = scu_set_mask(TPR.CA, 7);
                 } else if ((TPR.CA & ~7) == ea + 0030) {
                     // interrupts
-                    debug_msg("OPU::opcode::sscr", "unimplemented\n");
+                    warn_msg("OPU::opcode::sscr", "unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0040) {
                     // calendar
-                    debug_msg("OPU::opcode::sscr", "unimplemented\n");
+                    warn_msg("OPU::opcode::sscr", "unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0050) {
                     // calendar
-                    debug_msg("OPU::opcode::sscr", "unimplemented\n");
+                    warn_msg("OPU::opcode::sscr", "unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0060) {
                     // store unit mode reg
-                    debug_msg("OPU::opcode::sscr", "unimplemented\n");
+                    warn_msg("OPU::opcode::sscr", "unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0070) {
-                    debug_msg("OPU::opcode::sscr", "unimplemented\n");
+                    warn_msg("OPU::opcode::sscr", "unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else {
-                    debug_msg("OPU::opcode::sscr", "bad argument, CA 0%Lo\n", TPR.CA);
+                    warn_msg("OPU::opcode::sscr", "bad argument, CA 0%Lo\n", TPR.CA);
                     cancel_run(STOP_BUG);
                     ret = 1;
                     // error
@@ -1467,6 +1543,7 @@ static int do_an_op(instr_t *ip)
                     reg_A = addr << 12; // upper 24 bits
                 return ret;
             }
+            // dis
 
             // limr ??
             // ldo ??
@@ -1532,7 +1609,7 @@ static int do_an_op(instr_t *ip)
                     PTWAM[i].assoc.use = i;
                     if (sel_clear) {
                         ret = 1;
-                        debug_msg("OPU::camp", "Selective Clear mode is Unimplemented\n");
+                        warn_msg("OPU::camp", "Selective Clear mode is Unimplemented\n");
                         cancel_run(STOP_BUG);
                         // for any cache block for which upper 15 bits of the dir [are]
                         // entry equal PTWAM(i).ADDR0..13, 
@@ -1547,95 +1624,46 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
 
+            case opcode1_tct: {
+                int ret = op_unimplemented_mw(ip, op, opname, 3);
+                return ret;
+            }
+            case opcode1_tctr: {
+                int ret = op_unimplemented_mw(ip, op, opname, 3);
+                return ret;
+            }
             case opcode1_mlr: {
-                uint fill = ip->addr >> 9;
-                uint t = (ip->addr >> 8) & 1;
-                uint mf2bits = ip->addr & MASKBITS(7);
-                eis_mf_t mf2;
-                t_uint64 word1, word2;
-                if (fetch_mf_ops(&ip->mods.mf1, &word1, parse_mf(mf2bits, &mf2), &word2, NULL, NULL) != 0)
-                    return 1;
-                PPR.IC += 3;
-                uint y1 = getbits36(word1, 0, 18);  // addr
-                uint y2 = getbits36(word2, 0, 18);
-                uint cn1 = getbits36(word1, 18, 3); // 1st char position
-                uint cn2 = getbits36(word2, 18, 3);
-                uint ta1 = getbits36(word1, 21, 2); // data type
-                uint ta2 = getbits36(word2, 21, 2);
-                uint n1 = getbits36(word1, 24, 12); // string len
-                uint n2 = getbits36(word2, 24, 12);
-                int nbits1 = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
-                fix_mf_len(&n1, &ip->mods.mf1, nbits1);
-                int nbits2 = (ta2 == 0) ? 9 : (ta2 == 1) ? 6 : 4;
-                fix_mf_len(&n2, &mf2, nbits2);
-                int easy = 0;
-                debug_msg("OPU::mlr", "y1=0%o, y2=0%o, cn1=0%o, cn2=0%o, ta1=0%o, ta2=0%o, n1=0%o(%d), n2=0%o(%d)\n", y1, y2, cn1, cn2, ta1, ta2, n1, n1, n2, n2);
-                if (ta1 == ta2 && cn1 == 0 && cn2 == 0) {
-                    int nbits = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
-                    int nparts = 36 / nbits;
-                    debug_msg("OPU::mlr", "nbits = %d; nparts = %d\n", nbits, nparts);
-                    if (n1 % nparts == 0 && n2 % nparts == 0) {
-                        // full words
-                        easy = 1;
-                        int nwords = min(n1,n2) / nparts;
-                        int saved_debug = opt_debug;
-                        for (int i = 0; i < nwords; ++i) {
-                            if (i == 1)
-                                opt_debug = 0;
-                            if (i == nwords - 1)
-                                opt_debug = saved_debug;
-                            uint addr1, addr2;
-                            if (get_mf_an_addr(y1, &ip->mods.mf1, &addr1) != 0)
-                                return 1;
-                            if (get_mf_an_addr(y2, &mf2, &addr2) != 0)
-                                return 1;
-                            t_uint64 word;
-                            debug_msg("OPU::mlr", "i=%d; copying 0%o=>0%o to 0%o=>0%o\n", i, y1, addr1, y2, addr2);
-                            if (fetch_abs_word(addr1, &word) != 0)
-                                return 1;
-                            if (store_abs_word(addr2, word) != 0)
-                                return 1;
-                            //y1 += nparts;
-                            //y2 += nparts;
-                            ++ y1;
-                            ++ y2;
-                        }
-                        opt_debug = saved_debug;
-                        if (n1 > n2)
-                            IR.truncation = 1;
-                            if (t)
-                                fault_gen(overflow_fault);
-                        else if (n1 < n2) {
-                            t_uint64 word = 0;
-                            for (int i = 0; i < nparts; ++i)
-                                word = (word << nbits) | (fill & MASKBITS(nbits));
-                            uint addr2;
-                            for (int i = n1; i < n2; ++i) {
-                                if (i == n1+1)
-                                    opt_debug = 0;
-                                if (i == n2 - 1)
-                                    opt_debug = saved_debug;
-                                if (get_mf_an_addr(y2, &mf2, &addr2) != 0)
-                                    return 1;
-                                debug_msg("OPU::mlr", "i=%d; copying fill(0%o=>0%Lo) to 0%o=>0%o\n", i, fill, word, y2, addr2);
-                                if (store_abs_word(addr2, word) != 0)
-                                    return 1;
-                                //y2 += nparts;
-                                ++ y2;
-                            }
-                        }
-                        opt_debug = saved_debug;
-                        warn_msg("OPU::mlr", "Auto Breakpoint.\n");
-                        cancel_run(STOP_IBKPT);
-                    }
-                }
-                if (! easy) {
-                    complain_msg("OPU::mlr", "Only simple full-word forms implemented.\n");
-                    cancel_run(STOP_BUG);
-                }
-                return 0;
+                int ret = op_mlr(ip);
+                return ret;
+            }
+            // mrl
+            // mve
+            case opcode1_mvt: {
+                int ret = op_mvt(ip);
+                return ret;
             }
 
+            // aarn
+            // larn
+            // lpl
+            // narn
+            // ara
+            // arn
+            // sarn
+            // sareg
+            // spl
+            // a4bd
+            // a6bd
+            case opcode1_a9bd:
+                debug_msg("OPU::a9bd", "APU does our work for us\n");
+                return 0;
+            // abd
+            // awd
+            // s4bd
+            // s6bd
+            // s9bd
+            // sbd
+            // swd
             case opcode1_cmpc: {
                 uint fill = ip->addr >> 9;
                 uint t = (ip->addr >> 8) & 1;
@@ -1660,9 +1688,10 @@ static int do_an_op(instr_t *ip)
                 debug_msg("OPU::cmpc", "y1=0%o, y2=0%o, cn1=0%o, cn2=0%o, ta1=0%o, n1=%d, n2=%d\n", y1, y2, cn1, cn2, ta1, n1, n2);
                 uint addr1, addr2;
                 // t_uint64 word1, word2;
-                if (get_mf_an_addr(y1, &ip->mods.mf1, &addr1) != 0)
+                uint bitno1, bitno2;
+                if (get_mf_an_addr(y1, &ip->mods.mf1, &addr1, &bitno1) != 0)
                     return 1;
-                if (get_mf_an_addr(y2, &mf2, &addr2) != 0)
+                if (get_mf_an_addr(y2, &mf2, &addr2, &bitno2) != 0)
                     return 1;
                 if (fetch_abs_word(addr1, &word1) != 0)
                     return 1;
@@ -1690,7 +1719,7 @@ static int do_an_op(instr_t *ip)
             }
 
             default:
-                debug_msg("OPU", "Unimplemented opcode 0%0o(1)\n", op);
+                complain_msg("OPU", "Unimplemented opcode 0%0o(1)\n", op);
                 cancel_run(STOP_BUG);
                 return 1;
         }
@@ -1753,15 +1782,21 @@ static int add18(t_uint64 a, t_uint64 b, t_uint64 *dest)
     uint sign1 = a >> 17;
     uint sign2 = b >> 17;
     uint32 result = a + b;
-    uint signr = result >> 17;
     if ((result >> 18) != 0) {
         IR.carry = 1;
         result &= MASK18;
     } else {
         IR.carry = 0;
     }
-    IR.zero = result == 0;
+    IR.zero = (result == 0);
+    uint signr = result >> 17;
     IR.neg = signr;
+#if  0
+example: 060 plus negative one
+0777777
+   + 60
+1000057
+#endif
     if (sign1 == sign2 && signr != sign1) {
         IR.overflow = 1;
         if (IR.overflow_mask == 0) {
@@ -1876,6 +1911,15 @@ static inline void lrotate72(t_uint64* ap, t_uint64* bp, unsigned n)
 
 // ============================================================================
 
+static inline int32 negate18(t_uint64 x)
+{
+    // overflow not detected
+    if (bit18_is_neg(x))
+        return ((~x & MASK18) + 1) & MASK18;    // todo: only one mask needed?
+    else
+        return (- x) & MASK18;
+}
+
 static inline t_int64 negate36(t_uint64 x)
 {
     // overflow not detected
@@ -1905,7 +1949,7 @@ static int32 sign18(t_uint64 x)
 {
     if (bit18_is_neg(x)) {
         int32 r = - ((1<<18) - (x&MASK18));
-        debug_msg("OPU::sign18", "0%Lo => 0%o (%+d decimal)\n", x, r, r);
+        // debug_msg("OPU::sign18", "0%Lo => 0%o (%+d decimal)\n", x, r, r);
         return r;
     }
     else
@@ -1928,6 +1972,13 @@ static t_int64 sign36(t_uint64 x)
 static inline uint min(uint a, uint b)
 {
     return (a < b) ? a : b;
+}
+
+static inline uint max3(uint a, uint b, uint c)
+{
+    return (a > b) ?
+        ((a > c) ? a : c) :
+        ((b > c) ? b : c);
 }
 
 // ============================================================================
@@ -1962,4 +2013,357 @@ static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p)
     word1 = setbits36(0, 0, 21, AR_PR[reg].PR.bitno); // 36-(72-57)
     *word0p = word0;
     *word1p = word1;
+}
+
+// ============================================================================
+
+
+static int op_mlr(const instr_t* ip)
+{
+
+    uint fill = ip->addr >> 9;
+    uint t = (ip->addr >> 8) & 1;
+    uint mf2bits = ip->addr & MASKBITS(7);
+    eis_mf_t mf2;
+    t_uint64 word1, word2;
+    (void) parse_mf(mf2bits, &mf2);
+    debug_msg("OPU::mlr", "mf2 = {ar=%d, rl=%d, id=%d, reg=0%o}\n", mf2.ar, mf2.rl, mf2.id, mf2.reg);
+    if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
+        return 1;
+
+    PPR.IC += 3;
+
+    uint y1 = getbits36(word1, 0, 18);  // addr
+    uint y2 = getbits36(word2, 0, 18);
+    uint cn1 = getbits36(word1, 18, 3); // 1st char position
+    uint cn2 = getbits36(word2, 18, 3);
+    uint ta1 = getbits36(word1, 21, 2); // data type
+    uint ta2 = getbits36(word2, 21, 2);
+    uint n1 = getbits36(word1, 24, 12); // string len
+    uint n2 = getbits36(word2, 24, 12);
+    int nbits1 = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
+    fix_mf_len(&n1, &ip->mods.mf1, nbits1);
+    int nbits2 = (ta2 == 0) ? 9 : (ta2 == 1) ? 6 : 4;
+    fix_mf_len(&n2, &mf2, nbits2);
+
+    int easy = 0;
+    debug_msg("OPU::mlr", "y1=0%o, y2=0%o, cn1=0%o, cn2=0%o, ta1=0%o, ta2=0%o, n1=0%o(%d), n2=0%o(%d)\n", y1, y2, cn1, cn2, ta1, ta2, n1, n1, n2, n2);
+
+    if (ta1 == ta2 && cn1 == 0 && cn2 == 0) {
+        int nbits = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
+        int nparts = 36 / nbits;
+        debug_msg("OPU::mlr", "nbits = %d; nparts = %d\n", nbits, nparts);
+        if (n1 % nparts == 0 && n2 % nparts == 0) {
+            // full words
+            easy = 1;
+            int nwords = min(n1,n2) / nparts;
+            int saved_debug = opt_debug;
+            for (int i = 0; i < nwords; ++i) {
+                if (i == 1)
+                    opt_debug = 0;
+                if (i == nwords - 1)
+                    opt_debug = saved_debug;
+                uint addr1, addr2;
+                uint bitno1, bitno2;
+                if (get_mf_an_addr(y1, &ip->mods.mf1, &addr1, &bitno1) != 0)
+                    return 1;
+                if (get_mf_an_addr(y2, &mf2, &addr2, &bitno2) != 0)
+                    return 1;
+                if (bitno1 != 0 || bitno2 != 0) {
+                    easy = 0;
+                    break;
+                }
+                t_uint64 word;
+                debug_msg("OPU::mlr", "i=%d; copying 0%o=>0%o to 0%o=>0%o\n", i, y1, addr1, y2, addr2);
+                if (fetch_abs_word(addr1, &word) != 0)
+                    return 1;
+                if (store_abs_word(addr2, word) != 0)
+                    return 1;
+                //y1 += nparts;
+                //y2 += nparts;
+                ++ y1;
+                ++ y2;
+            }
+            opt_debug = saved_debug;
+            if (easy) {
+                if (n1 > n2)
+                    IR.truncation = 1;
+                    if (t)
+                        fault_gen(overflow_fault);
+                else if (n1 < n2) {
+                    t_uint64 word = 0;
+                    for (int i = 0; i < nparts; ++i)
+                        word = (word << nbits) | (fill & MASKBITS(nbits));
+                    uint addr2;
+                    for (int i = n1; i < n2; ++i) {
+                        if (i == n1+1)
+                            opt_debug = 0;
+                        if (i == n2 - 1)
+                            opt_debug = saved_debug;
+                        uint bitno2;
+                        if (get_mf_an_addr(y2, &mf2, &addr2, &bitno2) != 0)
+                            return 1;
+                        if (bitno2 != 0) {
+                            easy = 0;
+                            break;
+                        }
+                        debug_msg("OPU::mlr", "i=%d; copying fill(0%o=>0%Lo) to 0%o=>0%o\n", i, fill, word, y2, addr2);
+                        if (store_abs_word(addr2, word) != 0)
+                            return 1;
+                        //y2 += nparts;
+                        ++ y2;
+                    }
+                }
+                opt_debug = saved_debug;
+            }
+            //warn_msg("OPU::mlr", "Auto Breakpoint.\n");
+            //cancel_run(STOP_IBKPT);
+        }
+    }
+    if (! easy) {
+        int saved_debug = opt_debug;
+        opt_debug = 1;
+        complain_msg("OPU::mlr", "Complex mode\n");
+        int nbits1 = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : (ta1 == 2) ? 4 : -1;
+        int nbits2 = (ta2 == 0) ? 9 : (ta2 == 1) ? 6 : (ta2 == 2) ? 4 : -1;
+        if (nbits1 == -1 || nbits2 == -1) {
+            fault_gen(illproc_fault);
+            return 1;
+        }
+        if (nbits1 == 9) {
+            if ((cn1 & 1) != 0) {
+                fault_gen(illproc_fault);
+                return 1;
+            }
+            cn1 /= 2;
+        }
+        if (nbits2 == 9) {
+            if ((cn2 & 1) != 0) {
+                fault_gen(illproc_fault);
+                return 1;
+            }
+            cn2 /= 2;
+        }
+        if (nbits1 * cn1 >= 36 || nbits2 * cn2 >= 36) {
+            fault_gen(illproc_fault);
+            return 1;
+        }
+        complain_msg("OPU::mlr", "nbits1=%d, nbits2=%d\n", nbits1, nbits2);
+        int bitpos1 = 36;
+        int bitpos2 = -1;
+        int ret = 0;
+        t_uint64 word1;
+        t_uint64 word2;
+        int first = 1;
+
+        while (n1 > 0 && n2 > 0) {
+            --n1;
+            --n2;
+            if (bitpos1 == 36) {
+                // fetch a new src word
+                if (n1 < 0)
+                    bitpos1 = -1;
+                else {
+                    uint addr1;
+                    uint bitno1;
+                    debug_msg("OPU::mlr", "Finding src word.\n");
+                    if (get_mf_an_addr(y1++, &ip->mods.mf1, &addr1, &bitno1) != 0) {
+                        ret = 1;
+                        break;
+                    }
+                    if (bitno1 != 0) {
+                        debug_msg("OPU::mlr", "Src bitno is %d\n", bitno1);
+                        if (!first) {
+                            warn_msg("OPU::mlr", "Non-zero bitno after first char?\n");
+                            cancel_run(STOP_IBKPT);
+                        }
+                    }
+                    debug_msg("OPU::mlr", "Fetching src word.\n");
+                    if (fetch_abs_word(addr1, &word1) != 0) {
+                        ret = 1;
+                        break;
+                    }
+                    bitpos1 = bitno1;
+                }
+            }
+            if (bitpos2 == -1) {
+                word2 = 0;
+                uint addr2;
+                bitpos2 = 0;
+                if (first) {
+                    first = 0;
+                    if (cn1 != 0)
+                        bitpos1 = cn1 * nbits1;
+                    if (cn2 != 0)
+                        bitpos2 = cn2 * nbits2;
+                    debug_msg("OPU::mlr", "Checking dest word addr\n"); // it might specify a char offset
+                    uint bitno2;
+                    if (get_mf_an_addr(y2, &mf2, &addr2, &bitno2) != 0) {   // no incr of y2
+                        ret = 1;
+                        break;
+                    }
+                    if (bitno2 != 0) {
+                        debug_msg("OPU::mlr", "Dest addr bitno is %d\n", bitno2);
+                        bitpos2 += bitno2;
+                    }
+                    if (bitpos2 != 0) {
+                        debug_msg("OPU::mlr", "Fetching first dest word (bitpos = %d, not all bits will be set).\n", bitpos2);
+                        if (fetch_abs_word(addr2, &word2) != 0) {
+                            ret = 1;
+                            break;
+                        }
+                    } else {
+                        debug_msg("OPU::mlr", "No need to fetch first dest word.\n");
+                    }
+                }
+            }
+            uint nib = (n1>=0) ? getbits36(word1, bitpos1, nbits1) : MASKBITS(nbits2);
+            t_uint64 tmp = word2;
+            word2 = setbits36(word2, bitpos2, nbits2, nib);
+            debug_msg("OPU::mlr", "N1=%d, N2=%d; source=%012Lo; copying bits @ %d to @ %d: dest %012Lo => %012Lo\n",
+                n1, n2, word1, bitpos1, bitpos2, tmp, word2);
+            bitpos1 += nbits1;
+            bitpos2 += nbits2;
+            if (bitpos2 == 36) {
+                uint addr2;
+                debug_msg("OPU::mlr", "Finding dest addr.\n");
+                uint bitno2;
+                if (get_mf_an_addr(y2++, &mf2, &addr2, &bitno2) != 0) {
+                    ret = 1;
+                    break;
+                }
+                if (bitno2 != 27) {
+                    warn_msg("OPU::mlr", "Bitno is %d, not 27 while storing dest.\n", bitno2);
+                    cancel_run(STOP_WARN);
+                }
+                //if (bitno2 != 0) {
+                //  warn_msg("OPU::mlr", "Bitno is %d, not zero while storing dest.\n", bitno2);
+                //  cancel_run(STOP_WARN);
+                //}
+                debug_msg("OPU::mlr", "Storing dest.\n");
+                if (store_abs_word(addr2, word2) != 0) {
+                    ret = 1;
+                    break;
+                }
+                bitpos2 = -1;
+            }
+        }
+        if (bitpos2 != -1) {
+            // write all or part of word2
+            debug_msg("OPU::mlr", "End of loop.  Finding last dest addr.\n");
+            uint addr2;
+            debug_msg("OPU::mlr", "Finding dest addr.\n");
+            uint bitno2;
+            if (get_mf_an_addr(y2++, &mf2, &addr2, &bitno2) != 0) {
+                return 1;
+            }
+            //if (bitno2 != 0) {
+            //  warn_msg("OPU::mlr", "Non-zero bitno while storing dest.\n");
+            //  cancel_run(STOP_BUG);
+            //}
+            if (bitno2 + 9 != bitpos2) {
+                warn_msg("OPU::mlr", "Dest addr bitno of %d does not match current output bitno of %d minus 9\n", bitno2, bitpos2);
+                cancel_run(STOP_BUG);
+            }
+            if (bitpos2 == 36) {
+                // odd
+                warn_msg("OPU::mlr", "Odd, dest is a full word.\n");    // why didn't we write it during loop?
+                cancel_run(STOP_WARN);
+            } else {
+                debug_msg("OPU::mlr", "Dest word isn't full.  Loading dest from memory 0%o and folding.\n", addr2);
+                t_uint64 word;
+                if (fetch_abs_word(addr2, &word) != 0)
+                    return 1;
+                t_uint64 tmp = word2;
+                word2 = setbits36(word2, bitpos2, 36-bitpos2, word);
+                debug_msg("OPU::mlr", "Combined temp dest %012Lo with fetched %012Lo: %012Lo\n", tmp, word, word2);
+            }
+            debug_msg("OPU::mlr", "Storing to 0%o.\n", addr2);
+            if (store_abs_word(addr2, word2) != 0)
+                return 1;
+        }
+        opt_debug = saved_debug;
+        //warn_msg("OPU::mlr", "Need to verify; auto breakpoint\n");
+        //cancel_run(STOP_WARN);
+    }
+    debug_msg("OPU::mlr", "finished.\n");
+    return 0;
+}
+
+static int op_mvt(const instr_t* ip)
+{
+    uint fill = ip->addr >> 9;
+    uint t = (ip->addr >> 8) & 1;
+    uint mf2bits = ip->addr & MASKBITS(7);
+    eis_mf_t mf2;
+    t_uint64 word1, word2;
+    (void) parse_mf(mf2bits, &mf2);
+    debug_msg("OPU::mvt", "mf2 = {ar=%d, rl=%d, id=%d, reg=0%o}\n", mf2.ar, mf2.rl, mf2.id, mf2.reg);
+    if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
+        return 1;
+
+    t_uint64 word3;
+    if (fetch_word(PPR.IC + 3, &word3) != 0)
+        return 1;
+    debug_msg("OPU::mvt", "word3 = %012Lo\n", word3);
+    PPR.IC += 4;
+
+    uint y1 = getbits36(word1, 0, 18);  // addr
+    uint y2 = getbits36(word2, 0, 18);
+    uint cn1 = getbits36(word1, 18, 3); // 1st char position
+    uint cn2 = getbits36(word2, 18, 3);
+    uint ta1 = getbits36(word1, 21, 2); // data type
+    uint ta2 = getbits36(word2, 21, 2);
+    uint n1 = getbits36(word1, 24, 12); // string len
+    uint n2 = getbits36(word2, 24, 12);
+    int nbits1 = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
+    fix_mf_len(&n1, &ip->mods.mf1, nbits1);
+    int nbits2 = (ta2 == 0) ? 9 : (ta2 == 1) ? 6 : 4;
+    fix_mf_len(&n2, &mf2, nbits2);
+    debug_msg("OPU::mvt", "y1=0%o, y2=0%o, cn1=0%o, cn2=0%o, ta1=0%o, ta2=0%o, n1=0%o(%d), n2=0%o(%d)\n", y1, y2, cn1, cn2, ta1, ta2, n1, n1, n2, n2);
+    
+    warn_msg("OPU::mvt", "Unimplemented\n");
+    cancel_run(STOP_BUG);
+    return 1;
+}
+
+static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, int nargs)
+{
+    char buf[20];
+    sprintf(buf, "OPU::%s", opname);
+    uint fill = ip->addr >> 9;
+    uint t = (ip->addr >> 8) & 1;
+    uint mf2bits = ip->addr & MASKBITS(7);
+    eis_mf_t mf2;
+    t_uint64 word1, word2;
+    (void) parse_mf(mf2bits, &mf2);
+    debug_msg(buf, "mf2 = {ar=%d, rl=%d, id=%d, reg=0%o}\n", mf2.ar, mf2.rl, mf2.id, mf2.reg);
+    if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
+        return 1;
+
+    if (nargs == 3) {
+        t_uint64 word3;
+        if (fetch_word(PPR.IC + 3, &word3) != 0)
+            return 1;
+        debug_msg(buf, "word3 = %012Lo\n", word3);
+    }
+    PPR.IC += 3 + 1;
+
+    uint y1 = getbits36(word1, 0, 18);  // addr
+    uint y2 = getbits36(word2, 0, 18);
+    uint cn1 = getbits36(word1, 18, 3); // 1st char position
+    uint cn2 = getbits36(word2, 18, 3);
+    uint ta1 = getbits36(word1, 21, 2); // data type
+    uint ta2 = getbits36(word2, 21, 2);
+    uint n1 = getbits36(word1, 24, 12); // string len
+    uint n2 = getbits36(word2, 24, 12);
+    int nbits1 = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
+    fix_mf_len(&n1, &ip->mods.mf1, nbits1);
+    int nbits2 = (ta2 == 0) ? 9 : (ta2 == 1) ? 6 : 4;
+    fix_mf_len(&n2, &mf2, nbits2);
+    debug_msg(buf, "y1=0%o, y2=0%o, cn1=0%o, cn2=0%o, ta1=0%o, ta2=0%o, n1=0%o(%d), n2=0%o(%d)\n", y1, y2, cn1, cn2, ta1, ta2, n1, n1, n2, n2);
+    
+    warn_msg(buf, "Unimplemented\n");
+    cancel_run(STOP_BUG);
+    return 1;
 }

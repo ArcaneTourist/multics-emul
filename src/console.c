@@ -46,6 +46,12 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             *subp = 0;
             return 0;
         }
+        case 033:               // Write ASCII
+            complain_msg("CON::iom_cmd", "Write ASCII unimplemented\n");
+            cancel_run(STOP_WARN);
+            *majorp = 00;
+            *subp = 0;
+            return 0;
         case 051:               // Write Alert -- Ring Bell
             out_msg("CONSOLE: ALERT\n");
             *majorp = 0;

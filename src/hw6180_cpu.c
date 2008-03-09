@@ -1027,15 +1027,14 @@ int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
 }
 
 
-static int fetch_yblock(uint addr, uint n, t_uint64 *wordsp)
+int fetch_yblock(uint addr, int aligned, uint n, t_uint64 *wordsp)
 {
     // Fetch words from Y-block addr.
     // Returns non-zero if fault in groups 1-6 detected
     // BUG: Is it the offset that must be zero mod n or the final addr that must be zero mod n?  (Or both?)
 
     int ret;
-    uint Y = addr / n;
-    Y *= n;
+    uint Y = (aligned) ? (addr / n) * n : Y;
 
     for (int i = 0; i < n; ++i)
         if ((ret = fetch_word(Y++, wordsp++)) != 0)
@@ -1046,19 +1045,18 @@ static int fetch_yblock(uint addr, uint n, t_uint64 *wordsp)
 
 int fetch_yblock8(uint addr, t_uint64 *wordsp)
 {
-    return fetch_yblock(addr, 8, wordsp);
+    return fetch_yblock(addr, 1, 8, wordsp);
 }
 
 
-static int store_yblock(uint addr, int n, const t_uint64 *wordsp)
+static int store_yblock(uint addr, int aligned, int n, const t_uint64 *wordsp)
 {
     // Store words of to Y-block addr.
     // Returns non-zero if fault in groups 1-6 detected
     // BUG: Is it the offset that must be zero mod n or the final addr that must be zero mod n?  (Or both?)
 
     int ret;
-    uint Y = addr / n;
-    Y *= n;
+    uint Y = (aligned) ? (addr / n) * n : Y;
 
     for (int i = 0; i < n; ++i)
         if ((ret = store_word(Y++, *wordsp++)) != 0)
@@ -1068,12 +1066,12 @@ static int store_yblock(uint addr, int n, const t_uint64 *wordsp)
 
 int store_yblock8(uint addr, const t_uint64 *wordsp)
 {
-    return store_yblock(addr, 8, wordsp);
+    return store_yblock(addr, 1, 8, wordsp);
 }
 
 int store_yblock16(uint addr, const t_uint64 *wordsp)
 {
-    return store_yblock(addr, 16, wordsp);
+    return store_yblock(addr, 1, 16, wordsp);
 }
 
 
@@ -1191,6 +1189,24 @@ static void init_ops()
     // hack -- todo: cleanup
 
     memset(is_eis, 0, sizeof(is_eis));
-    is_eis[(opcode1_mlr<<1)|1] = 1;
+
     is_eis[(opcode1_cmpc<<1)|1] = 1;
+    is_eis[(opcode1_scd<<1)|1] = 1;
+    is_eis[(opcode1_scdr<<1)|1] = 1;
+    is_eis[(opcode1_scm<<1)|1] = 1;
+    is_eis[(opcode1_scmr<<1)|1] = 1;
+    is_eis[(opcode1_tct<<1)|1] = 1;
+    is_eis[(opcode1_tctr<<1)|1] = 1;
+    is_eis[(opcode1_mlr<<1)|1] = 1;
+    is_eis[(opcode1_mrl<<1)|1] = 1;
+    is_eis[(opcode1_mve<<1)|1] = 1;
+    is_eis[(opcode1_mvt<<1)|1] = 1;
+    is_eis[(opcode1_cmpn<<1)|1] = 1;
+    is_eis[(opcode1_mvn<<1)|1] = 1;
+    is_eis[(opcode1_mvne<<1)|1] = 1;
+    is_eis[(opcode1_csl<<1)|1] = 1;
+    is_eis[(opcode1_csr<<1)|1] = 1;
+    is_eis[(opcode1_cmpb<<1)|1] = 1;
+    is_eis[(opcode1_sztl<<1)|1] = 1;
+    is_eis[(opcode1_sztr<<1)|1] = 1;
 }

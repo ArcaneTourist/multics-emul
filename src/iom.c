@@ -549,6 +549,8 @@ static int dev_send_pcw(int chan, pcw_t *p)
         case DEV_CON: {
             int ret = con_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chan_status.major, &chan_status.substatus);
             debug_msg("IOM::dev-send-pcw", "CON returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
+            debug_msg("IOM::dev-send-pcw", "CON: Auto breakpoint\n");
+            cancel_run(STOP_IBKPT);
             return 0;   // ignore ret in favor of chan_status.{major,substatus}
         }
         default:

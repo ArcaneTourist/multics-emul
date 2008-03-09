@@ -70,6 +70,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             return 0;
         }
         case 5: {               // CMD 05 -- Read Binary Record
+            // We read the record into the tape controllers memory; IOM can retrieve via PCW 
             if (tape_statep->bufp == NULL)
                 if ((tape_statep->bufp = malloc(bufsz)) == NULL) {
                     complain_msg("MT::iom_cmd", "Malloc error\n");
@@ -86,7 +87,6 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
                 return ret;
             }
             debug_msg("MT::iom_cmd", "Read %d bytes from simulated tape\n", (int) tbc);
-            complain_msg("MT::iom_cmd", "Don't know where in memory to write block\n");
             tape_statep->bitsp = bitstm_new(tape_statep->bufp, tbc);
             *majorp = 0;
             *subp = 0;

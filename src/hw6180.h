@@ -527,9 +527,13 @@ void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits);
 extern void mpy(t_int64 a, t_int64 b, t_uint64* hip, t_uint64 *lowp);
 extern void save_IR(t_uint64* wordp);
 extern int store_yblock8(uint addr, const t_uint64 *wordsp);
+extern int fetch_yblock(uint addr, int aligned, uint n, t_uint64 *wordsp);
 extern int fetch_yblock8(uint addr, t_uint64 *wordsp);
 extern int store_yblock16(uint addr, const t_uint64 *wordsp);
 extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
+extern int addr_mod(const instr_t *ip);
+extern SDW_t* get_sdw();
+extern int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop);
 
 extern void set_addr_mode(addr_modes_t mode);
 extern addr_modes_t get_addr_mode(void);
