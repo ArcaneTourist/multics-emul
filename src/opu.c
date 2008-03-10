@@ -22,7 +22,10 @@ static int do_epp(int epp);
 static int do_an_op(instr_t *ip);   // todo: hack, fold into do_op
 static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p);
 static int op_mlr(const instr_t* ip);
+static int op_tct(const instr_t* ip);
 static int op_mvt(const instr_t* ip);
+
+static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, int nargs);   // BUG: temp
 
 // BUG: move externs to hdr file
 extern int scu_cioc(t_uint64 addr);
@@ -1625,7 +1628,7 @@ static int do_an_op(instr_t *ip)
             }
 
             case opcode1_tct: {
-                int ret = op_unimplemented_mw(ip, op, opname, 3);
+                int ret = op_tct(ip);
                 return ret;
             }
             case opcode1_tctr: {
@@ -2020,6 +2023,7 @@ static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p)
 
 static int op_old_mlr(const instr_t* ip)
 {
+    // old version
 
     uint fill = ip->addr >> 9;
     uint t = (ip->addr >> 8) & 1;
@@ -2059,8 +2063,8 @@ static int op_old_mlr(const instr_t* ip)
             int nwords = min(n1,n2) / nparts;
             int saved_debug = opt_debug;
             for (int i = 0; i < nwords; ++i) {
-                if (i == 1)
-                    opt_debug = 0;
+                //if (i == 1)
+                //  opt_debug = 0;
                 if (i == nwords - 1)
                     opt_debug = saved_debug;
                 uint addr1, addr2;
@@ -2074,9 +2078,12 @@ static int op_old_mlr(const instr_t* ip)
                     break;
                 }
                 t_uint64 word;
+                int od = opt_debug; opt_debug = 1;
                 debug_msg("OPU::mlr", "i=%d; copying 0%o=>0%o to 0%o=>0%o\n", i, y1, addr1, y2, addr2);
+                opt_debug = od;
                 if (fetch_abs_word(addr1, &word) != 0)
                     return 1;
+                debug_msg("OPU::mlr", "Storing %012Lo to y=0%o(addr=0%o)\n", word, y2, addr2);
                 if (store_abs_word(addr2, word) != 0)
                     return 1;
                 //y1 += nparts;
@@ -2096,8 +2103,8 @@ static int op_old_mlr(const instr_t* ip)
                         word = (word << nbits) | (fill & MASKBITS(nbits));
                     uint addr2;
                     for (int i = n1; i < n2; ++i) {
-                        if (i == n1+1)
-                            opt_debug = 0;
+                        //if (i == n1+1)
+                        //  opt_debug = 0;
                         if (i == n2 - 1)
                             opt_debug = saved_debug;
                         uint bitno2;
@@ -2107,7 +2114,9 @@ static int op_old_mlr(const instr_t* ip)
                             easy = 0;
                             break;
                         }
+                        int od = opt_debug; opt_debug = 1;
                         debug_msg("OPU::mlr", "i=%d; copying fill(0%o=>0%Lo) to 0%o=>0%o\n", i, fill, word, y2, addr2);
+                        opt_debug = od;
                         if (store_abs_word(addr2, word) != 0)
                             return 1;
                         //y2 += nparts;
@@ -2240,7 +2249,7 @@ static int op_old_mlr(const instr_t* ip)
                 //  warn_msg("OPU::mlr", "Bitno is %d, not zero while storing dest.\n", bitno2);
                 //  cancel_run(STOP_WARN);
                 //}
-                debug_msg("OPU::mlr", "Storing dest.\n");
+                debug_msg("OPU::mlr", "Storing %012o to y=0%o=(addr=0%o)\n", word2, y2, addr2);
                 if (store_abs_word(addr2, word2) != 0) {
                     ret = 1;
                     break;
@@ -2370,6 +2379,7 @@ static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, in
 
 static int op_mlr(const instr_t* ip)
 {
+    const char* moi = "OPU::mlr";
 
     // BUG: Detection of GBCD overpunch is not done
 
@@ -2379,7 +2389,7 @@ static int op_mlr(const instr_t* ip)
 
     eis_mf_t mf2;
     (void) parse_mf(mf2bits, &mf2);
-    debug_msg("OPU::mlr", "mf2 = %s\n", mf2text(&mf2));
+    debug_msg(moi, "mf2 = %s\n", mf2text(&mf2));
 
     t_uint64 word1, word2;
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
@@ -2392,7 +2402,66 @@ static int op_mlr(const instr_t* ip)
     eis_alpha_desc_t desc2;
     parse_eis_alpha_desc(word2, &mf2, &desc2);
 
-    debug_msg("OPU::mlr", "desc1: %s;  desc2: %s\n", eis_alpha_desc_to_text(&desc1), eis_alpha_desc_to_text(&desc2));
+    debug_msg(moi, "desc1: %s;  desc2: %s\n", eis_alpha_desc_to_text(&desc1), eis_alpha_desc_to_text(&desc2));
+
+    int ret = 0;
+
+    while (desc2.n > 0) {
+        uint nib;
+        if (desc1.n == 0)
+            nib = fill & MASKBITS(desc2.nbits);
+        else
+            if (get_eis_an(&ip->mods.mf1, &desc1, &nib) != 0) { // must fetch when needed
+                ret = 1;
+                break;
+            }
+        if (put_eis_an(&mf2, &desc2, nib) != 0) {   // must fetch/store when needed
+            ret = 1;
+            break;
+        }
+    }
+    if (ret == 0) {
+        IR.truncation = desc1.n != 0;
+        if (IR.truncation && t) {
+            fault_gen(overflow_fault);  // truncation
+            ret = 1;
+        }
+    }
+    // write unsaved data (if any)
+    if (save_eis_an(&mf2, &desc2) != 0)
+        return 1;
+
+    warn_msg(moi, "Need to verify; auto breakpoint\n");
+    cancel_run(STOP_WARN);
+    debug_msg(moi, "finished.\n");
+    return ret;
+}
+
+static int op_tct(const instr_t* ip)
+{
+
+    const char* moi = "OPU::tct";
+
+    uint fill = ip->addr >> 9;
+    uint t = (ip->addr >> 8) & 1;
+
+    t_uint64 word1, word2, word3;
+    if (fetch_mf_ops(&ip->mods.mf1, &word1, NULL, &word2, NULL, &word3) != 0)
+        return 1;
+
+    PPR.IC += 4;
+warn_msg(moi, "Unimplemented\n");
+cancel_run(STOP_BUG);
+return 0;
+
+    eis_alpha_desc_t desc1;
+    parse_eis_alpha_desc(word1, &ip->mods.mf1, &desc1);
+    // BUG: handle words 2 & 3 as pointers (std eis indir format -- addr, 'A' flag, 4bit reg 'Td'
+    // Could just translate immed to address
+    //      For Y-char92, just add offsets as needed
+    //      For Y3, we just need an addr of a single word to modify
+
+    debug_msg(moi, "desc1: %s;  desc2: %s\n", eis_alpha_desc_to_text(&desc1), eis_alpha_desc_to_text(&desc2));
 
     int ret = 0;
 
@@ -2412,7 +2481,7 @@ static int op_mlr(const instr_t* ip)
         }
     }
     if (ret == 0) {
-        IR.truncation = desc.n1 != 0;
+        IR.truncation = desc1.n != 0;
         if (IR.truncation && t) {
             fault_gen(overflow_fault);  // truncation
             ret = 1;
@@ -2422,8 +2491,8 @@ static int op_mlr(const instr_t* ip)
     if (save_eis_an(&mf2, &desc2) != 0)
         return 1;
 
-    warn_msg("OPU::mlr", "Need to verify; auto breakpoint\n");
+    warn_msg(moi, "Need to verify; auto breakpoint\n");
     cancel_run(STOP_WARN);
-    debug_msg("OPU::mlr", "finished.\n");
+    debug_msg(moi, "finished.\n");
     return ret;
 }

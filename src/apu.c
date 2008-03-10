@@ -205,12 +205,33 @@ static int fetch_mf_op(uint opnum, const eis_mf_t* mfp, t_uint64* wordp)
     uint addr = PPR.IC;
     if (fetch_word(PPR.IC + opnum, wordp) != 0)
         return 1;
-    if (mfp->id) {
+    if (mfp != NULL && mfp->id) {
         // don't implement until we see an example
-        complain_msg("APU", "Fetch EIS multi-word op: MF with indir bit set is unsupported.\n");
+        complain_msg("APU", "Fetch EIS multi-word op: MF with indir bit set is unsupported:\n");
+        uint addr = *wordp >> 18;
+        uint a = getbits36(*wordp, 29, 1);
+        uint td = *wordp & MASKBITS(4);
+        addr_modes_t addr_mode = get_addr_mode();
+        if (a) {
+            // indir via pointer register
+            uint pr = addr >> 15;
+            int32 offset = addr & MASKBITS(15);
+            int32 soffset = sign15(offset);
+            // PR[pr]
+            // generalize: int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop)
+            complain_msg("APU", "Indir word %012Lo: pr=0%o, offset=0%o(%d); REG(Td)=0%o\n", *wordp, pr, offset, soffset, td); 
+        } else {
+            // use 18 bit addr in all words -- fetch_word will handle
+            complain_msg("APU", "Indir word %012Lo: offset=0%o(%d); REG(Td)=0%o\n", *wordp, addr, sign18(addr), td); 
+        }
+        // enum atag_tm tm = atag_r;
+        // TPR.CA = 0;
+        // reg_mod(td, 0);
+        cancel_run(STOP_BUG);
     }
     return 0;
 }
+
 
 int fetch_mf_ops(const eis_mf_t* mf1p, t_uint64* word1p, const eis_mf_t* mf2p, t_uint64* word2p, const eis_mf_t* mf3p, t_uint64* word3p)
 {
@@ -220,11 +241,23 @@ int fetch_mf_ops(const eis_mf_t* mf1p, t_uint64* word1p, const eis_mf_t* mf2p, t
 
     if (fetch_mf_op(1, mf1p, word1p) != 0)
         return 1;
-    if (fetch_mf_op(2, mf2p, word2p) != 0)
-        return 1;
-    if (mf3p != NULL)
+#if 0
+    // old
+    if (mf2p != NULL)
+        if (fetch_mf_op(2, mf2p, word2p) != 0)
+            return 1;
+    if (mf2p != NULL)
         if (fetch_mf_op(3, mf3p, word3p) != 0)
             return 1;
+#else
+    // new
+    if (word2p != NULL)
+        if (fetch_mf_op(2, mf2p, word2p) != 0)
+            return 1;
+    if (word3p != NULL)
+        if (fetch_mf_op(3, mf3p, word3p) != 0)
+            return 1;
+#endif
     return 0;
 }
 
@@ -350,6 +383,7 @@ int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
 
     if (descp->n == 0) {
         warn_msg(moi, "Descriptor exhausted\n");
+        cancel_run(STOP_WARN);
         return 1;
     }
     if (descp->first)
@@ -359,23 +393,31 @@ int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
         // fetch a new src word
         uint addr1;
         uint bitno1;
-        debug_msg(moi, "Finding src word.\n");
+        int saved_debug = opt_debug;
+        opt_debug = 0;
+        // debug_msg(moi, "Finding src word.\n");
         if (get_mf_an_addr(descp->addr, mfp, &addr1, &bitno1) != 0) {
             warn_msg(moi, "Failed\n");
+            opt_debug = saved_debug;
             return 1;
         }
         if (bitno1 != 0) {
+            opt_debug = saved_debug;
             debug_msg(moi, "Src bitno is %d\n", bitno1);
             if (!descp->first) {
                 warn_msg(moi, "Non-zero bitno after first char?\n");
                 cancel_run(STOP_IBKPT);
             }
         }
-        debug_msg(moi, "Fetching src word.\n");
+        opt_debug = 0;
+        // debug_msg(moi, "Fetching src word.\n");
         if (fetch_abs_word(addr1, &descp->word) != 0) {
             warn_msg(moi, "Failed\n");
+            opt_debug = saved_debug;
             return 1;
         }
+        opt_debug = saved_debug;
+        debug_msg(moi, "Fetched word at y=0%o(addr=0%o) %012Lo\n", descp->addr, addr1, descp->word);
         ++ descp->addr;
         descp->bitpos = bitno1;
         if (descp->first) {
@@ -384,13 +426,14 @@ int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
                 descp->bitpos += descp->cn * descp->nbits;
                 debug_msg(moi, "Cn is %d, so initial bitpos is %d\n", descp->cn, descp->bitpos);
             } else
-                debug_msg(moi, "Cn is zero, initial bitpos is %d\n", descp->bitpos);
+                if (descp->bitpos != 0)
+                    debug_msg(moi, "Cn is zero, initial bitpos is %d\n", descp->bitpos);
         }
     }
 
     *nib = getbits36(descp->word, descp->bitpos, descp->nbits);
-    if (opt_debug)
-        debug_msg(moi, "%dbit char at bit %d of word %012Lo, value is 0%o\n", descp->nbits, descp->bitpos, descp->word, *nib);
+    //if (opt_debug)
+    //  debug_msg(moi, "%dbit char at bit %d of word %012Lo, value is 0%o\n", descp->nbits, descp->bitpos, descp->word, *nib);
     -- descp->n;
     descp->bitpos += descp->nbits;
     return 0;
@@ -408,6 +451,7 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
 
     if (descp->n == 0) {
         warn_msg(moi, "Descriptor exhausted\n");
+        cancel_run(STOP_WARN);
         return 1;
     }
     if (descp->first) {
@@ -421,24 +465,30 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
         return 1;
     }
 
+    int saved_debug = opt_debug;
+    opt_debug = 0;
     if (descp->bitpos == -1) {
         if (descp->first) {
             // Load source word if output doesn't start at position zero
             uint addr2;
             uint bitno2;
-            debug_msg(moi, "First put, Checking dest word addr\n"); // it might specify a char offset
+            // debug_msg(moi, "First put, Checking dest word addr\n");  // it might specify a char offset
             if (get_mf_an_addr(descp->addr, mfp, &addr2, &bitno2) != 0) {   // no incr of addr, not storing
                 warn_msg(moi, "Failed\n");
+                opt_debug = saved_debug;
                 return 1;
             }
             if (bitno2 != 0 || descp->cn != 0) {
-                debug_msg(moi, "Fetching first dest word (cn = %d, not all bits will be set).\n", descp->cn);
+                // debug_msg(moi, "Fetching first dest word (cn = %d, not all bits will be set).\n", descp->cn);
                 if (fetch_abs_word(addr2, &descp->word) != 0) {
                     warn_msg(moi, "Failed.\n");
+                    opt_debug = saved_debug;
                     return 1;
                 }
+                opt_debug = saved_debug;
+                debug_msg(moi, "Fetched target word %012o from y=%0o(addr=0%o) because output does not start at bit zero.\n", descp->word, descp->addr, addr2);
             } else {
-                debug_msg(moi, "No need to fetch first dest word.\n");
+                // debug_msg(moi, "No need to fetch first dest word.\n");
             }
             descp->first = 0;
             descp->bitpos = 0;
@@ -448,18 +498,21 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
                 debug_msg(moi, "Dest addr bitno is %d\n", bitno2);
                 descp->bitpos += bitno2;
             }
-            debug_msg(moi, "Inital put, dest cn=%d, dest addr bitno=%d, output bitpos is %d\n", descp->cn, bitno2, descp->bitpos);
+            if (opt_debug > 1)
+                debug_msg(moi, "Inital put, dest cn=%d, dest addr bitno=%d, output bitpos is %d\n", descp->cn, bitno2, descp->bitpos);
             descp->first = 0;
         } else {
             // Set output position to zero (and sanity check char offsets)
             uint addr2;
             uint bitno2;
+            opt_debug = 0;
             if (get_mf_an_addr(descp->addr, mfp, &addr2, &bitno2) != 0) {   // no incr of addr, not storing
                 warn_msg(moi, "Failed\n");
+                opt_debug = saved_debug;
                 return 1;
             }
             if (bitno2 != 0) {
-                warn_msg(moi, "Put has bitno %d for non-first word\n", bitno2);
+                complain_msg(moi, "Put has bitno %d for non-first word\n", bitno2);
                 cancel_run(STOP_BUG);
             }
             descp->bitpos = 0;
@@ -467,9 +520,10 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
         }
     }
 
+    opt_debug = saved_debug;
     t_uint64 tmp = descp->word;
     descp->word = setbits36(descp->word, descp->bitpos, descp->nbits, nib);
-    if (opt_debug)
+    if (opt_debug > 1)
         debug_msg(moi, "Setting %d-bit char at position %2d of %012Lo to 0%o: %012Lo\n",
             descp->nbits, descp->bitpos, tmp, nib, descp->word);
 
@@ -479,23 +533,20 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
     if (descp->bitpos == 36) {
         // output it
         uint addr2;
-        debug_msg(moi, "Word is full, finding dest addr.\n");
+        // debug_msg(moi, "Word is full, finding dest addr.\n");
         uint bitno2;
+        opt_debug = 0;
         if (get_mf_an_addr(descp->addr, mfp, &addr2, &bitno2) != 0) {
             warn_msg(moi, "Failed.\n");
+            opt_debug = saved_debug;
             return 1;
         }
-        //if (bitno2 != 27) {
-        //  warn_msg(moi, "Bitno is %d, not 27 while storing dest.\n", bitno2);
-        //  cancel_run(STOP_WARN);
-        //}
-        //if (bitno2 != 0) {
-        //  warn_msg("OPU::mlr", "Bitno is %d, not zero while storing dest.\n", bitno2);
-        //  cancel_run(STOP_WARN);
-        //}
-        // Bitno should be irrelevent -- we should have folded in the word at first output
-        debug_msg(moi, "Storing %012Lo to addr 0%o\n", descp->word, addr2);
+        opt_debug = saved_debug;
+        // Note: Bitno should be irrelevent -- we should have folded in the word at first output
+        debug_msg(moi, "Storing %012Lo to y=0%o(addr=0%o)\n", descp->word, descp->addr, addr2);
+        opt_debug = 0;
         if (store_abs_word(addr2, descp->word) != 0) {
+            opt_debug = saved_debug;
             warn_msg(moi, "Failed.\n");
             return 1;
         }
@@ -503,6 +554,7 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
         descp->bitpos = -1;
     }
 
+    opt_debug = saved_debug;
     return 0;
 }
 
@@ -520,12 +572,15 @@ int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
 
     // write all or part of buffered word to memory
 
-    debug_msg(moi, "Finding dest addr.\n");
+    // debug_msg(moi, "Finding dest addr.\n");
 
     uint addr2;
     uint bitno2;
+    int saved_debug = opt_debug;
+    opt_debug = 0;
     if (get_mf_an_addr(descp->addr, mfp, &addr2, &bitno2) != 0) {
         warn_msg(moi, "Failed.\n");
+        opt_debug = saved_debug;
         return 1;
     }
     if (bitno2 + descp->nbits != descp->bitpos) {
@@ -538,21 +593,27 @@ int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
         warn_msg(moi, "Odd, dest is a full word.\n");   // why didn't we write it during loop?
         cancel_run(STOP_WARN);
     } else {
-        debug_msg(moi, "Dest word isn't full.  Loading dest from memory 0%o and folding.\n", addr2);
+        //debug_msg(moi, "Dest word isn't full.  Loading dest from memory 0%o and folding.\n", addr2);
         t_uint64 word;
         if (fetch_abs_word(addr2, &word) != 0) {
             warn_msg(moi, "Failed.\n");
+            opt_debug = saved_debug;
             return 1;
         }
         t_uint64 tmp = descp->word;
         descp->word = setbits36(descp->word, descp->bitpos, 36 - descp->bitpos, word);
+        opt_debug = saved_debug;
         debug_msg("OPU::mlr", "Combined buffered dest %012Lo with fetched %012Lo: %012Lo\n", tmp, word, descp->word);
     }
-    debug_msg(moi, "Storing %012Lo to 0%o.\n", descp->word, addr2);
+    opt_debug = saved_debug;
+    debug_msg(moi, "Storing %012Lo to y=0%o(addr=0%o).\n", descp->word, descp->addr, addr2);
+    opt_debug = 0;
     if (store_abs_word(addr2, descp->word) != 0) {
         warn_msg(moi, "Failed.\n");
+        opt_debug = saved_debug;
         return 1;
     }
+    opt_debug = saved_debug;
     ++ descp->addr;
     descp->bitpos = -1;
     return 0;

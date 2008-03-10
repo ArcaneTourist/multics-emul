@@ -558,9 +558,17 @@ extern const char* mf2text(const eis_mf_t* mfp);
 extern int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib);
 extern int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib);
 extern int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp);
+extern int addr_mod_eis_addr_reg(instr_t *ip);
+
 
 extern void set_addr_mode(addr_modes_t mode);
 extern addr_modes_t get_addr_mode(void);
+
+extern int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp);
+extern int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp);
+extern int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
+extern void mt_init(void);
+
 
 // ============================================================================
 
