@@ -29,6 +29,7 @@ static void decode_SDW(t_uint64 word0, t_uint64 word1, SDW_t *sdwp);
 static SDWAM_t* page_in_sdw(void);
 static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp);
 static void reg_mod(uint td, int off);
+static int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop);
 
 //=============================================================================
 
@@ -379,6 +380,8 @@ void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
 int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
 {
     // Return a single char via an EIS descriptor.  Fetches new words as needed.
+    // High order bits of nib are zero filled 
+
     const char* moi = "APU::eis-an-get";
 
     if (descp->n == 0) {
@@ -394,8 +397,8 @@ int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
         uint addr1;
         uint bitno1;
         int saved_debug = opt_debug;
-        opt_debug = 0;
-        // debug_msg(moi, "Finding src word.\n");
+        if (opt_debug > 1) debug_msg(moi, "Finding src word.\n");
+        if (opt_debug) -- opt_debug;
         if (get_mf_an_addr(descp->addr, mfp, &addr1, &bitno1) != 0) {
             warn_msg(moi, "Failed\n");
             opt_debug = saved_debug;
@@ -409,7 +412,8 @@ int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
                 cancel_run(STOP_IBKPT);
             }
         }
-        opt_debug = 0;
+        opt_debug = saved_debug;
+        if (opt_debug) -- opt_debug;
         // debug_msg(moi, "Fetching src word.\n");
         if (fetch_abs_word(addr1, &descp->word) != 0) {
             warn_msg(moi, "Failed\n");
@@ -624,10 +628,24 @@ int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
 int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop)
 {
     // Return absolute address for EIS operand in Alphanumeric Data Descriptor Format
+    // BUG: some callers may keep results.  This isn't valid for multi-page segments.
+
+    return get_address(y, mfp->ar, mfp->reg, addrp, bitnop);
+}
+
+
+static int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop)
+{
+    // Return absolute address given an address, 'ar' flag, and 'reg' modifier
+    // Arg ar should be negative to use current TPR or non-negative to use a pointer/address register.
+    // BUG: some callers may keep results.  This isn't valid for multi-page segments.
+    
+    // BUG: handle BAR mode and abs mode as described in EIS indir doc
+    addr_modes_t addr_mode = get_addr_mode();
 
     uint offset;
     uint saved_PSR, saved_PRR, saved_CA, saved_bitno;
-    if (mfp->ar) {
+    if (ar) {
         saved_PSR = TPR.TSR;
         saved_PRR = TPR.TRR ;
         saved_CA = TPR.CA;
@@ -639,7 +657,7 @@ int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop)
         TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
         offset = AR_PR[pr].wordno + soffset;
         TPR.bitno = AR_PR[pr].PR.bitno;
-        debug_msg("APU::MF::AN", "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o, bitno=0%o\n",
+        debug_msg("APU::get-addr", "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o, bitno=0%o\n",
             pr, TPR.TSR, TPR.TRR, offset, TPR.bitno);
         *bitnop = TPR.bitno;
     } else {
@@ -647,9 +665,9 @@ int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop)
         *bitnop = 0;
     }
 
-    if (mfp->reg != 0) {
+    if (reg != 0) {
         // BUG: ERROR: Apply EIS reg mod
-        complain_msg("APU::MF::AN", "Register mod 0%o unimplemented\n", mfp->reg);
+        complain_msg("APU::get-addr", "Register mod 0%o unimplemented\n", reg);
         cancel_run(STOP_BUG);
         return 1;
     }
@@ -657,7 +675,7 @@ int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop)
     uint perm = 0;  // BUG: need to have caller specify
     page_in(offset, perm, addrp);
 
-    if (mfp->ar) {
+    if (ar) {
         TPR.TSR = saved_PSR;
         TPR.TRR = saved_PRR;
         TPR.CA = saved_CA;
@@ -698,6 +716,42 @@ void fnord()
         }
     }
 #endif
+}
+
+//=============================================================================
+
+int get_eis_indir_addr(t_uint64 word, uint* addrp)
+{
+    const char* moi = "APU::eis-indir";
+
+    uint addr = word >> 18;
+    uint a = getbits36(word, 29, 1);
+    uint td = word & MASKBITS(4);
+
+    // the following is just for debugging
+    if (a) {
+        // indir via pointer register
+        uint pr = addr >> 15;
+        uint ar = addr >> 15;
+        int32 offset = addr & MASKBITS(15);
+        int32 soffset;
+        soffset = sign15(offset);
+        warn_msg(moi, "Indir word %012Lo: pr=0%o, offset=0%o(%d); REG(Td)=0%o\n", word, pr, offset, soffset, td); 
+    } else {
+        // use 18 bit addr in all words -- fetch_word will handle
+        warn_msg(moi, "Indir word %012Lo: offset=0%o(%d); REG(Td)=0%o\n", word, addr, sign18(addr), td); 
+    }
+
+    uint bitno;
+    int ret = get_address(addr, a, td, addrp, &bitno);
+    if (bitno != 0) {
+        warn_msg(moi, "Non zero bitno %d cannot be returned\n", bitno);
+        cancel_run(STOP_BUG);
+    } else
+        warn_msg(moi, "Auto breakpoint\n");
+    warn_msg(moi, "Resulting addr is 0%o\n", *addrp);
+    cancel_run(STOP_IBKPT);
+    return ret;
 }
 
 //=============================================================================

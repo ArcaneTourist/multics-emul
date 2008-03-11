@@ -1749,7 +1749,8 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
     uint sign1 = a >> 35;
     uint sign2 = b >> 35;
     t_uint64 result = a + b;
-    uint signr = result >> 35;
+    //uint wrong_s = result >> 35;
+    //t_uint64 wrong_r = result;
     if ((result >> 36) != 0) {
         // BUG: generates inappropriate? carry when adding a negative to a positive number
         IR.carry = 1;
@@ -1759,6 +1760,11 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
     } else {
         IR.carry = 0;
     }
+    uint signr = result >> 35;
+    //if (signr != wrong_s) {
+    //  warn_msg("OPU::add36", "Prior version had incorrect sign 0%o instead of %o -- 0%012Lo (%Ld) + 0%012Lo (%Ld) ==> 0%12Lo ==> 0%012Lo (%Ld => %Ld)\n",
+    //      wrong_s, signr, a, sign36(a), b, sign36(b), wrong_r, result, sign36(result), sign36(result & MASK36));
+    //}
     IR.zero = result == 0;
     IR.neg = signr;
     if (sign1 == sign2 && signr != sign1) {
@@ -2431,10 +2437,23 @@ static int op_mlr(const instr_t* ip)
     if (save_eis_an(&mf2, &desc2) != 0)
         return 1;
 
-    warn_msg(moi, "Need to verify; auto breakpoint\n");
-    cancel_run(STOP_WARN);
+    //warn_msg(moi, "Need to verify; auto breakpoint\n");
+    //cancel_run(STOP_WARN);
     debug_msg(moi, "finished.\n");
     return ret;
+}
+
+static int get_table_char(uint addr, uint index, uint *charp)
+{
+    // index &= MASKBITS(9);
+    addr += index / 4;      // 9 bit entries
+    t_uint64 word;
+    if (fetch_abs_word(addr, &word) != 0) {         // BUG: assumes entire table fits in same page
+        // warn_msg("OPU::get-table-char", "Error fetching from addr 0%o\n", addr);
+        return 1;
+    }
+    *charp = getbits36(word, (index % 4) * 9, 9);
+    return 0;
 }
 
 static int op_tct(const instr_t* ip)
@@ -2450,49 +2469,53 @@ static int op_tct(const instr_t* ip)
         return 1;
 
     PPR.IC += 4;
-warn_msg(moi, "Unimplemented\n");
-cancel_run(STOP_BUG);
-return 0;
 
     eis_alpha_desc_t desc1;
     parse_eis_alpha_desc(word1, &ip->mods.mf1, &desc1);
-    // BUG: handle words 2 & 3 as pointers (std eis indir format -- addr, 'A' flag, 4bit reg 'Td'
-    // Could just translate immed to address
-    //      For Y-char92, just add offsets as needed
-    //      For Y3, we just need an addr of a single word to modify
+    debug_msg(moi, "desc1: %s\n", eis_alpha_desc_to_text(&desc1));
+    uint addr2, addr3;
+    if (get_eis_indir_addr(word2, &addr2) != 0)
+        return 1;
+    if (get_eis_indir_addr(word3, &addr3) != 0)
+        return 1;
+    debug_msg(moi, "table addr: 0%o\n", addr2);
+    debug_msg(moi, "result addr: 0%o\n", addr3);
 
-    debug_msg(moi, "desc1: %s;  desc2: %s\n", eis_alpha_desc_to_text(&desc1), eis_alpha_desc_to_text(&desc2));
-
-    int ret = 0;
-
-    // while (desc1.n > 0 && desc2.n > 0)
-    while (desc2.n > 0) {
-        uint nib;
-        if (desc1.n == 0)
-            nib = MASKBITS(desc2.nbits);
-        else
-            if (get_eis_an(&ip->mods.mf1, &desc1, &nib) != 0) { // must fetch when needed
-                ret = 1;
-                break;
-            }
-        if (put_eis_an(&mf2, &desc2, nib) != 0) {   // must fetch/store when needed
-            ret = 1;
-            break;
+    uint n = desc1.n;
+++opt_debug;
+    while (desc1.n > 0) {
+        uint m;
+        if (get_eis_an(&ip->mods.mf1, &desc1, &m) != 0) {
+            -- opt_debug;
+            return 1;
+        }
+        uint t;
+        if (get_table_char(addr2, m, &t) != 0) {
+            -- opt_debug;
+            warn_msg(moi, "Unable to read table\n");
+            return 1;
+        }
+        if (t != 0) {
+            int i = n - desc1.n - 1;
+            debug_msg(moi, "Index %d: found non-zero entry 0%o for table entry indexed by 0%o\n", i, t, m);
+            t_uint64 word = (t_uint64) t << 27;
+            word = setbits36(word, 12, 14, i);
+            -- opt_debug;
+            if (store_abs_word(addr3, word) != 0)
+                return 1;
+            warn_msg(moi, "Need to verify; auto breakpoint\n");
+            cancel_run(STOP_IBKPT);
+            return 0;
         }
     }
-    if (ret == 0) {
-        IR.truncation = desc1.n != 0;
-        if (IR.truncation && t) {
-            fault_gen(overflow_fault);  // truncation
-            ret = 1;
-        }
-    }
-    // write unsaved data (if any)
-    if (save_eis_an(&mf2, &desc2) != 0)
+
+    t_uint64 word = setbits36(0, 12, 14, n);
+    -- opt_debug;
+    if (store_abs_word(addr3, word) != 0)
         return 1;
 
     warn_msg(moi, "Need to verify; auto breakpoint\n");
-    cancel_run(STOP_WARN);
-    debug_msg(moi, "finished.\n");
-    return ret;
+    cancel_run(STOP_IBKPT);
+    // debug_msg(moi, "finished.\n");
+    return 0;
 }

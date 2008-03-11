@@ -559,6 +559,7 @@ extern int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib);
 extern int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib);
 extern int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp);
 extern int addr_mod_eis_addr_reg(instr_t *ip);
+extern int get_eis_indir_addr(t_uint64 word, uint* addrp);
 
 
 extern void set_addr_mode(addr_modes_t mode);
