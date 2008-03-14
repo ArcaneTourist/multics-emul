@@ -401,7 +401,9 @@ typedef struct {
     // convenience members, not part of stored word
     int nbits;
     // tracking info for get_eis_an() and put_eis_an()
-    uint bitpos;
+    uint base_addr; // initial addr
+    uint base_bitpos;
+    uint bitpos;    // current
     flag_t first;
     t_uint64 word;
 } eis_alpha_desc_t;

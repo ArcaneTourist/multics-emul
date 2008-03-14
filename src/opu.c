@@ -1642,7 +1642,8 @@ static int do_an_op(instr_t *ip)
             // mrl
             // mve
             case opcode1_mvt: {
-                int ret = op_mvt(ip);
+                //int ret = op_mvt(ip);
+                int ret = op_unimplemented_mw(ip, op, opname, 3);
                 return ret;
             }
 
@@ -1668,43 +1669,7 @@ static int do_an_op(instr_t *ip)
             // sbd
             // swd
             case opcode1_cmpc: {
-                uint fill = ip->addr >> 9;
-                uint t = (ip->addr >> 8) & 1;
-                uint mf2bits = ip->addr & MASKBITS(7);
-                eis_mf_t mf2;
-                t_uint64 word1, word2;
-                if (fetch_mf_ops(&ip->mods.mf1, &word1, parse_mf(mf2bits, &mf2), &word2, NULL, NULL) != 0)
-                    return 1;
-                PPR.IC += 3;
-                uint y1 = getbits36(word1, 0, 18);  // addr
-                uint y2 = getbits36(word2, 0, 18);
-                uint cn1 = getbits36(word1, 18, 3); // 1st char position
-                uint cn2 = getbits36(word2, 18, 3);
-                uint ta1 = getbits36(word1, 21, 2); // data type
-                uint n1 = getbits36(word1, 24, 12); // string len
-                uint n2 = getbits36(word2, 24, 12);
-                int nbits1 = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
-                fix_mf_len(&n1, &ip->mods.mf1, nbits1);
-
-                debug_msg("OPU::cmpc", "mf2 = {ar=%d, rl=%d, id=%d, reg=0%o}\n",
-                    mf2.ar, mf2.rl, mf2.id, mf2.reg);
-                debug_msg("OPU::cmpc", "y1=0%o, y2=0%o, cn1=0%o, cn2=0%o, ta1=0%o, n1=%d, n2=%d\n", y1, y2, cn1, cn2, ta1, n1, n2);
-                uint addr1, addr2;
-                // t_uint64 word1, word2;
-                uint bitno1, bitno2;
-                if (get_mf_an_addr(y1, &ip->mods.mf1, &addr1, &bitno1) != 0)
-                    return 1;
-                if (get_mf_an_addr(y2, &mf2, &addr2, &bitno2) != 0)
-                    return 1;
-                if (fetch_abs_word(addr1, &word1) != 0)
-                    return 1;
-                if (fetch_abs_word(addr2, &word2) != 0)
-                    return 1;
-                debug_msg("OPU::cmpc", "first word at 0%o:  %012Lo\n", addr1, word1);
-                debug_msg("OPU::cmpc", "second word at 0%o: %012Lo\n", addr2, word2);
-                complain_msg("OPU::cmpc", "Unimplemented.\n");
-                cancel_run(STOP_BUG);
-                return 0;
+                return op_unimplemented_mw(ip, op, opname, 2);
             }
 
             case opcode1_spri1:
@@ -1754,8 +1719,8 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
     if ((result >> 36) != 0) {
         // BUG: generates inappropriate? carry when adding a negative to a positive number
         IR.carry = 1;
-        warn_msg("OPU::add36", "0%012Lo (%Ld) + 0%012Lo (%Ld) ==> carry on result 0%012Lo (%Ld => %Ld)\n",
-            a, sign36(a), b, sign36(b), result, sign36(result), sign36(result & MASK36));
+        //warn_msg("OPU::add36", "0%012Lo (%Ld) + 0%012Lo (%Ld) ==> carry on result 0%012Lo (%Ld => %Ld)\n",
+        //  a, sign36(a), b, sign36(b), result, sign36(result), sign36(result & MASK36));
         result &= MASK36;
     } else {
         IR.carry = 0;
@@ -2027,284 +1992,6 @@ static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p)
 // ============================================================================
 
 
-static int op_old_mlr(const instr_t* ip)
-{
-    // old version
-
-    uint fill = ip->addr >> 9;
-    uint t = (ip->addr >> 8) & 1;
-    uint mf2bits = ip->addr & MASKBITS(7);
-    eis_mf_t mf2;
-    t_uint64 word1, word2;
-    (void) parse_mf(mf2bits, &mf2);
-    debug_msg("OPU::mlr", "mf2 = {ar=%d, rl=%d, id=%d, reg=0%o}\n", mf2.ar, mf2.rl, mf2.id, mf2.reg);
-    if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
-        return 1;
-
-    PPR.IC += 3;
-
-    uint y1 = getbits36(word1, 0, 18);  // addr
-    uint y2 = getbits36(word2, 0, 18);
-    uint cn1 = getbits36(word1, 18, 3); // 1st char position
-    uint cn2 = getbits36(word2, 18, 3);
-    uint ta1 = getbits36(word1, 21, 2); // data type
-    uint ta2 = getbits36(word2, 21, 2);
-    uint n1 = getbits36(word1, 24, 12); // string len
-    uint n2 = getbits36(word2, 24, 12);
-    int nbits1 = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
-    fix_mf_len(&n1, &ip->mods.mf1, nbits1);
-    int nbits2 = (ta2 == 0) ? 9 : (ta2 == 1) ? 6 : 4;
-    fix_mf_len(&n2, &mf2, nbits2);
-
-    int easy = 0;
-    debug_msg("OPU::mlr", "y1=0%o, y2=0%o, cn1=0%o, cn2=0%o, ta1=0%o, ta2=0%o, n1=0%o(%d), n2=0%o(%d)\n", y1, y2, cn1, cn2, ta1, ta2, n1, n1, n2, n2);
-
-    if (ta1 == ta2 && cn1 == 0 && cn2 == 0) {
-        int nbits = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
-        int nparts = 36 / nbits;
-        debug_msg("OPU::mlr", "nbits = %d; nparts = %d\n", nbits, nparts);
-        if (n1 % nparts == 0 && n2 % nparts == 0) {
-            // full words
-            easy = 1;
-            int nwords = min(n1,n2) / nparts;
-            int saved_debug = opt_debug;
-            for (int i = 0; i < nwords; ++i) {
-                //if (i == 1)
-                //  opt_debug = 0;
-                if (i == nwords - 1)
-                    opt_debug = saved_debug;
-                uint addr1, addr2;
-                uint bitno1, bitno2;
-                if (get_mf_an_addr(y1, &ip->mods.mf1, &addr1, &bitno1) != 0)
-                    return 1;
-                if (get_mf_an_addr(y2, &mf2, &addr2, &bitno2) != 0)
-                    return 1;
-                if (bitno1 != 0 || bitno2 != 0) {
-                    easy = 0;
-                    break;
-                }
-                t_uint64 word;
-                int od = opt_debug; opt_debug = 1;
-                debug_msg("OPU::mlr", "i=%d; copying 0%o=>0%o to 0%o=>0%o\n", i, y1, addr1, y2, addr2);
-                opt_debug = od;
-                if (fetch_abs_word(addr1, &word) != 0)
-                    return 1;
-                debug_msg("OPU::mlr", "Storing %012Lo to y=0%o(addr=0%o)\n", word, y2, addr2);
-                if (store_abs_word(addr2, word) != 0)
-                    return 1;
-                //y1 += nparts;
-                //y2 += nparts;
-                ++ y1;
-                ++ y2;
-            }
-            opt_debug = saved_debug;
-            if (easy) {
-                if (n1 > n2)
-                    IR.truncation = 1;
-                    if (t)
-                        fault_gen(overflow_fault);
-                else if (n1 < n2) {
-                    t_uint64 word = 0;
-                    for (int i = 0; i < nparts; ++i)
-                        word = (word << nbits) | (fill & MASKBITS(nbits));
-                    uint addr2;
-                    for (int i = n1; i < n2; ++i) {
-                        //if (i == n1+1)
-                        //  opt_debug = 0;
-                        if (i == n2 - 1)
-                            opt_debug = saved_debug;
-                        uint bitno2;
-                        if (get_mf_an_addr(y2, &mf2, &addr2, &bitno2) != 0)
-                            return 1;
-                        if (bitno2 != 0) {
-                            easy = 0;
-                            break;
-                        }
-                        int od = opt_debug; opt_debug = 1;
-                        debug_msg("OPU::mlr", "i=%d; copying fill(0%o=>0%Lo) to 0%o=>0%o\n", i, fill, word, y2, addr2);
-                        opt_debug = od;
-                        if (store_abs_word(addr2, word) != 0)
-                            return 1;
-                        //y2 += nparts;
-                        ++ y2;
-                    }
-                }
-                opt_debug = saved_debug;
-            }
-            //warn_msg("OPU::mlr", "Auto Breakpoint.\n");
-            //cancel_run(STOP_IBKPT);
-        }
-    }
-    if (! easy) {
-        int saved_debug = opt_debug;
-        opt_debug = 1;
-        complain_msg("OPU::mlr", "Complex mode\n");
-        int nbits1 = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : (ta1 == 2) ? 4 : -1;
-        int nbits2 = (ta2 == 0) ? 9 : (ta2 == 1) ? 6 : (ta2 == 2) ? 4 : -1;
-        if (nbits1 == -1 || nbits2 == -1) {
-            fault_gen(illproc_fault);
-            return 1;
-        }
-        if (nbits1 == 9) {
-            if ((cn1 & 1) != 0) {
-                fault_gen(illproc_fault);
-                return 1;
-            }
-            cn1 /= 2;
-        }
-        if (nbits2 == 9) {
-            if ((cn2 & 1) != 0) {
-                fault_gen(illproc_fault);
-                return 1;
-            }
-            cn2 /= 2;
-        }
-        if (nbits1 * cn1 >= 36 || nbits2 * cn2 >= 36) {
-            fault_gen(illproc_fault);
-            return 1;
-        }
-        complain_msg("OPU::mlr", "nbits1=%d, nbits2=%d\n", nbits1, nbits2);
-        int bitpos1 = 36;
-        int bitpos2 = -1;
-        int ret = 0;
-        t_uint64 word1;
-        t_uint64 word2;
-        int first = 1;
-
-        while (n1 > 0 && n2 > 0) {
-            --n1;
-            --n2;
-            if (bitpos1 == 36) {
-                // fetch a new src word
-                if (n1 < 0)
-                    bitpos1 = -1;
-                else {
-                    uint addr1;
-                    uint bitno1;
-                    debug_msg("OPU::mlr", "Finding src word.\n");
-                    if (get_mf_an_addr(y1++, &ip->mods.mf1, &addr1, &bitno1) != 0) {
-                        ret = 1;
-                        break;
-                    }
-                    if (bitno1 != 0) {
-                        debug_msg("OPU::mlr", "Src bitno is %d\n", bitno1);
-                        if (!first) {
-                            warn_msg("OPU::mlr", "Non-zero bitno after first char?\n");
-                            cancel_run(STOP_IBKPT);
-                        }
-                    }
-                    debug_msg("OPU::mlr", "Fetching src word.\n");
-                    if (fetch_abs_word(addr1, &word1) != 0) {
-                        ret = 1;
-                        break;
-                    }
-                    bitpos1 = bitno1;
-                }
-            }
-            if (bitpos2 == -1) {
-                word2 = 0;
-                uint addr2;
-                bitpos2 = 0;
-                if (first) {
-                    first = 0;
-                    if (cn1 != 0)
-                        bitpos1 = cn1 * nbits1; // BUG: ERROR: should be +=
-                    if (cn2 != 0)
-                        bitpos2 = cn2 * nbits2;
-                    debug_msg("OPU::mlr", "Checking dest word addr\n"); // it might specify a char offset
-                    uint bitno2;
-                    if (get_mf_an_addr(y2, &mf2, &addr2, &bitno2) != 0) {   // no incr of y2
-                        ret = 1;
-                        break;
-                    }
-                    if (bitno2 != 0) {
-                        debug_msg("OPU::mlr", "Dest addr bitno is %d\n", bitno2);
-                        bitpos2 += bitno2;
-                    }
-                    if (bitpos2 != 0) {
-                        debug_msg("OPU::mlr", "Fetching first dest word (bitpos = %d, not all bits will be set).\n", bitpos2);
-                        if (fetch_abs_word(addr2, &word2) != 0) {
-                            ret = 1;
-                            break;
-                        }
-                    } else {
-                        debug_msg("OPU::mlr", "No need to fetch first dest word.\n");
-                    }
-                }
-            }
-            uint nib = (n1>=0) ? getbits36(word1, bitpos1, nbits1) : MASKBITS(nbits2);
-            t_uint64 tmp = word2;
-            word2 = setbits36(word2, bitpos2, nbits2, nib);
-            debug_msg("OPU::mlr", "N1=%d, N2=%d; source=%012Lo; copying bits @ %d to @ %d: dest %012Lo => %012Lo\n",
-                n1, n2, word1, bitpos1, bitpos2, tmp, word2);
-            bitpos1 += nbits1;
-            bitpos2 += nbits2;
-            if (bitpos2 == 36) {
-                uint addr2;
-                debug_msg("OPU::mlr", "Finding dest addr.\n");
-                uint bitno2;
-                if (get_mf_an_addr(y2++, &mf2, &addr2, &bitno2) != 0) {
-                    ret = 1;
-                    break;
-                }
-                if (bitno2 != 27) {
-                    warn_msg("OPU::mlr", "Bitno is %d, not 27 while storing dest.\n", bitno2);
-                    cancel_run(STOP_WARN);
-                }
-                //if (bitno2 != 0) {
-                //  warn_msg("OPU::mlr", "Bitno is %d, not zero while storing dest.\n", bitno2);
-                //  cancel_run(STOP_WARN);
-                //}
-                debug_msg("OPU::mlr", "Storing %012o to y=0%o=(addr=0%o)\n", word2, y2, addr2);
-                if (store_abs_word(addr2, word2) != 0) {
-                    ret = 1;
-                    break;
-                }
-                bitpos2 = -1;
-            }
-        }
-        if (bitpos2 != -1) {
-            // write all or part of word2
-            debug_msg("OPU::mlr", "End of loop.  Finding last dest addr.\n");
-            uint addr2;
-            debug_msg("OPU::mlr", "Finding dest addr.\n");
-            uint bitno2;
-            if (get_mf_an_addr(y2++, &mf2, &addr2, &bitno2) != 0) {
-                return 1;
-            }
-            //if (bitno2 != 0) {
-            //  warn_msg("OPU::mlr", "Non-zero bitno while storing dest.\n");
-            //  cancel_run(STOP_BUG);
-            //}
-            if (bitno2 + 9 != bitpos2) {
-                warn_msg("OPU::mlr", "Dest addr bitno of %d does not match current output bitno of %d minus 9\n", bitno2, bitpos2);
-                cancel_run(STOP_BUG);
-            }
-            if (bitpos2 == 36) {
-                // odd
-                warn_msg("OPU::mlr", "Odd, dest is a full word.\n");    // why didn't we write it during loop?
-                cancel_run(STOP_WARN);
-            } else {
-                debug_msg("OPU::mlr", "Dest word isn't full.  Loading dest from memory 0%o and folding.\n", addr2);
-                t_uint64 word;
-                if (fetch_abs_word(addr2, &word) != 0)
-                    return 1;
-                t_uint64 tmp = word2;
-                word2 = setbits36(word2, bitpos2, 36-bitpos2, word);
-                debug_msg("OPU::mlr", "Combined temp dest %012Lo with fetched %012Lo: %012Lo\n", tmp, word, word2);
-            }
-            debug_msg("OPU::mlr", "Storing to 0%o.\n", addr2);
-            if (store_abs_word(addr2, word2) != 0)
-                return 1;
-        }
-        opt_debug = saved_debug;
-        //warn_msg("OPU::mlr", "Need to verify; auto breakpoint\n");
-        //cancel_run(STOP_WARN);
-    }
-    debug_msg("OPU::mlr", "finished.\n");
-    return 0;
-}
-
 static int op_mvt(const instr_t* ip)
 {
     uint fill = ip->addr >> 9;
@@ -2362,7 +2049,7 @@ static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, in
             return 1;
         debug_msg(buf, "word3 = %012Lo\n", word3);
     }
-    PPR.IC += 3 + 1;
+    PPR.IC += nargs + 1;
 
     uint y1 = getbits36(word1, 0, 18);  // addr
     uint y2 = getbits36(word2, 0, 18);
@@ -2482,16 +2169,16 @@ static int op_tct(const instr_t* ip)
     debug_msg(moi, "result addr: 0%o\n", addr3);
 
     uint n = desc1.n;
-++opt_debug;
+    // ++opt_debug;
     while (desc1.n > 0) {
         uint m;
         if (get_eis_an(&ip->mods.mf1, &desc1, &m) != 0) {
-            -- opt_debug;
+            // -- opt_debug;
             return 1;
         }
         uint t;
         if (get_table_char(addr2, m, &t) != 0) {
-            -- opt_debug;
+            // -- opt_debug;
             warn_msg(moi, "Unable to read table\n");
             return 1;
         }
@@ -2500,7 +2187,7 @@ static int op_tct(const instr_t* ip)
             debug_msg(moi, "Index %d: found non-zero entry 0%o for table entry indexed by 0%o\n", i, t, m);
             t_uint64 word = (t_uint64) t << 27;
             word = setbits36(word, 12, 14, i);
-            -- opt_debug;
+            // -- opt_debug;
             if (store_abs_word(addr3, word) != 0)
                 return 1;
             warn_msg(moi, "Need to verify; auto breakpoint\n");
@@ -2510,7 +2197,7 @@ static int op_tct(const instr_t* ip)
     }
 
     t_uint64 word = setbits36(0, 12, 14, n);
-    -- opt_debug;
+    //-- opt_debug;
     if (store_abs_word(addr3, word) != 0)
         return 1;
 
