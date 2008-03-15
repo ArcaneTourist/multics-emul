@@ -14,6 +14,8 @@ scu.o: *.h
 iom.o: *.h
 mt.o: *.h
 math.o: *.h
+misc.o: *.h
+console.o: *.h
 
 wc:
 	wc hw6180_cpu.c hw6180_sys.c opcode_text.c misc.c opu.c bits.c apu.c scu.c iom.c mt.c math.c console.c hw6180.h
@@ -23,6 +25,8 @@ bit-test: bit-test.o bits.o
 scan-tape: scan-tape.o misc.o bits.o opcode_text.o
 mtst: mtst.o math.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -lgmp -o $@ mtst.o math.o 
+tst: tst.o misc.o
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ tst.o misc.o
 
 clean:
 	rm -f *.o

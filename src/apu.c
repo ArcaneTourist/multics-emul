@@ -31,6 +31,7 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp)
 static void reg_mod(uint td, int off);
 static int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop);
 static int get_via_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int index, uint *nib);
+static int get_eis_an_fwd(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib);
 
 //=============================================================================
 
@@ -644,126 +645,6 @@ opt_debug = saved_debug;
 //=============================================================================
 
 
-int old_put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
-{
-    // Save a single char via an EIS descriptor.  Stores words when needed.  Call
-    // save_eis_an() to force a store.
-
-    const char* moi = "APU::eis-an-put";
-
-    if (descp->n == 0) {
-        warn_msg(moi, "Descriptor exhausted\n");
-        cancel_run(STOP_WARN);
-        return 1;
-    }
-    if (descp->first) {
-        descp->bitpos = -1;
-        descp->word = 0;    // makes debug output easier to read
-    }
-
-    if (descp->bitpos == 36) {
-        // BUG: this might be possible if page faulted on earlier write attempt?
-        warn_msg(moi, "Internal error\n");
-        return 1;
-    }
-
-    int saved_debug = opt_debug;
-    opt_debug = 1;
-    if (descp->bitpos == -1) {
-        if (descp->first) {
-            // Load source word if output doesn't start at position zero
-            uint addr2;
-            uint bitno2;
-            // debug_msg(moi, "First put, Checking dest word addr\n");  // it might specify a char offset
-            opt_debug = 0;
-            if (get_mf_an_addr(descp->addr, mfp, &addr2, &bitno2) != 0) {   // no incr of addr, not storing
-                warn_msg(moi, "Failed\n");
-                opt_debug = saved_debug;
-                return 1;
-            }
-            if (bitno2 != 0 || descp->cn != 0) {
-                // debug_msg(moi, "Fetching first dest word (cn = %d, not all bits will be set).\n", descp->cn);
-                if (fetch_abs_word(addr2, &descp->word) != 0) {
-                    warn_msg(moi, "Failed.\n");
-                    opt_debug = saved_debug;
-                    return 1;
-                }
-                //opt_debug = saved_debug;
-                opt_debug = 1;
-                debug_msg(moi, "Fetched target word %012o from y=%0o(addr=0%o) because output does not start at bit zero.\n", descp->word, descp->addr, addr2);
-            } else {
-                // debug_msg(moi, "No need to fetch first dest word.\n");
-            }
-            descp->first = 0;
-            descp->bitpos = 0;
-            if (descp->cn != 0)
-                descp->bitpos = descp->cn * descp->nbits;
-            if (bitno2 != 0) {
-                debug_msg(moi, "Dest addr bitno is %d\n", bitno2);
-                descp->bitpos += bitno2;
-            }
-            if (opt_debug > 1)
-                debug_msg(moi, "Inital put, dest cn=%d, dest addr bitno=%d, output bitpos is %d\n", descp->cn, bitno2, descp->bitpos);
-            descp->first = 0;
-        } else {
-            // Set output position to zero (and sanity check char offsets)
-            uint addr2;
-            uint bitno2;
-            opt_debug = 0;
-            if (get_mf_an_addr(descp->addr, mfp, &addr2, &bitno2) != 0) {   // no incr of addr, not storing
-                warn_msg(moi, "Failed\n");
-                opt_debug = saved_debug;
-                return 1;
-            }
-            if (bitno2 != 0) {
-                complain_msg(moi, "Put has bitno %d for non-first word\n", bitno2);
-                cancel_run(STOP_BUG);
-            }
-            descp->bitpos = 0;
-            descp->word = 0;    // makes debug output easier to read
-        }
-    }
-
-    opt_debug = saved_debug;
-    t_uint64 tmp = descp->word;
-    descp->word = setbits36(descp->word, descp->bitpos, descp->nbits, nib);
-    if (opt_debug > 1)
-        debug_msg(moi, "Setting %d-bit char at position %2d of %012Lo to 0%o: %012Lo\n",
-            descp->nbits, descp->bitpos, tmp, nib, descp->word);
-
-    -- descp->n;
-    descp->bitpos += descp->nbits;
-
-    if (descp->bitpos == 36) {
-        // output it
-        uint addr2;
-        // debug_msg(moi, "Word is full, finding dest addr.\n");
-        uint bitno2;
-        opt_debug = 0;
-        if (get_mf_an_addr(descp->addr, mfp, &addr2, &bitno2) != 0) {
-            warn_msg(moi, "Failed.\n");
-            opt_debug = saved_debug;
-            return 1;
-        }
-        //opt_debug = saved_debug;
-        //opt_debug = 1;
-        // Note: Bitno should be irrelevent -- we should have folded in the word at first output
-        debug_msg(moi, "Storing %012Lo to y=0%o(addr=0%o)\n", descp->word, descp->addr, addr2);
-        opt_debug = 0;
-        if (store_abs_word(addr2, descp->word) != 0) {
-            opt_debug = saved_debug;
-            warn_msg(moi, "Failed.\n");
-            return 1;
-        }
-        ++ descp->addr;
-        descp->bitpos = -1;
-    }
-
-    opt_debug = saved_debug;
-    return 0;
-}
-
-
 int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
 {
     // Save a single char via an EIS descriptor.  Stores words when needed.  Call
@@ -879,66 +760,6 @@ int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
     return 0;
 }
 
-
-int old_save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
-{
-    // Save buffered output to memory via an EIS descriptor.  Call this at the
-    // end of loops in EIS opcodes.
-    // BUG -- not updated when put/get were updated!
-
-    const char* moi = "APU::eis-an-save";
-
-    if (descp->bitpos == -1)
-        return 0;
-
-    // write all or part of buffered word to memory
-
-    // debug_msg(moi, "Finding dest addr.\n");
-
-    uint addr2;
-    uint bitno2;
-    int saved_debug = opt_debug;
-    opt_debug = 0;
-    if (get_mf_an_addr(descp->addr, mfp, &addr2, &bitno2) != 0) {
-        warn_msg(moi, "Failed.\n");
-        opt_debug = saved_debug;
-        return 1;
-    }
-    if (bitno2 + descp->nbits != descp->bitpos) {
-        warn_msg(moi, "Dest addr bitno of %d does not match current output bitno of %d minus %d\n",
-            bitno2, descp->bitpos, descp->nbits);
-        cancel_run(STOP_BUG);
-    }
-
-    if (descp->bitpos == 36) {
-        warn_msg(moi, "Odd, dest is a full word.\n");   // why didn't we write it during loop?
-        cancel_run(STOP_WARN);
-    } else {
-        //debug_msg(moi, "Dest word isn't full.  Loading dest from memory 0%o and folding.\n", addr2);
-        t_uint64 word;
-        if (fetch_abs_word(addr2, &word) != 0) {
-            warn_msg(moi, "Failed.\n");
-            opt_debug = saved_debug;
-            return 1;
-        }
-        t_uint64 tmp = descp->word;
-        descp->word = setbits36(descp->word, descp->bitpos, 36 - descp->bitpos, word);
-        opt_debug = saved_debug;
-        debug_msg("OPU::mlr", "Combined buffered dest %012Lo with fetched %012Lo: %012Lo\n", tmp, word, descp->word);
-    }
-    opt_debug = saved_debug;
-    debug_msg(moi, "Storing %012Lo to y=0%o(addr=0%o).\n", descp->word, descp->addr, addr2);
-    opt_debug = 0;
-    if (store_abs_word(addr2, descp->word) != 0) {
-        warn_msg(moi, "Failed.\n");
-        opt_debug = saved_debug;
-        return 1;
-    }
-    opt_debug = saved_debug;
-    ++ descp->addr;
-    descp->bitpos = -1;
-    return 0;
-}
 
 //=============================================================================
 
@@ -1095,14 +916,21 @@ int addr_mod_eis_addr_reg(instr_t *ip)
 
 
     switch (op) {
-        case opcode1_a9bd:
+        case opcode1_a9bd: {
+            int oops = sign18(TPR.CA) < 0;
+            if (oops) {
+                ++ opt_debug;
+                warn_msg("APU::eis-addr-reg", "CA = 0%o => 0%o =>%d\n", TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
+                warn_msg("APU::eis-addr-reg", "Initial AR[%d]: wordno = 0%o, charno=0%o, bitno=0%o; PR bitno=%d\n",
+                    ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
+            }
             if (a == 0) {
-                AR_PR[ar].wordno = soffset + TPR.CA / 4;
+                AR_PR[ar].wordno = soffset + sign18(TPR.CA) / 4;
                 AR_PR[ar].AR.charno = TPR.CA % 4;
                 // handle anomaly (AL39 AR description)
                 AR_PR[ar].PR.bitno = AR_PR[ar].AR.charno * 9;   // 0, 9, 18, 27
             } else {
-                AR_PR[ar].wordno += soffset + (TPR.CA + AR_PR[ar].AR.charno) / 4;
+                AR_PR[ar].wordno += soffset + (sign18(TPR.CA) + AR_PR[ar].AR.charno) / 4;
                 AR_PR[ar].AR.charno = (TPR.CA + AR_PR[ar].AR.charno) % 4;
                 AR_PR[ar].AR.bitno = 0;
                 // handle anomaly (AL39 AR description)
@@ -1110,7 +938,14 @@ int addr_mod_eis_addr_reg(instr_t *ip)
             }
             debug_msg("APU", "Addr mod: AR[%d]: wordno = 0%o, charno=0%o, bitno=0%o; PR bitno=%d\n",
                 ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
+            if (AR_PR[ar].wordno == 010000005642) {
+                warn_msg("APU", "a=%d; CA is 0%o\n", a, TPR.CA);
+                warn_msg("APU", "soffset is %d\n", soffset);
+                cancel_run(STOP_BUG);
+            }
+            if (oops) -- opt_debug;
             return 0;
+        }
         case opcode1_a4bd:
         case opcode1_a6bd:
         default:
@@ -1170,9 +1005,9 @@ int addr_mod(const instr_t *ip)
         uint pr = ip->addr >> 15;
         TPR.TSR = AR_PR[pr].PR.snr;
         TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
-        TPR.CA = AR_PR[pr].wordno + ca_temp.soffset;
+        TPR.CA = (AR_PR[pr].wordno + ca_temp.soffset) & MASK18;
         TPR.bitno = AR_PR[pr].PR.bitno;
-        debug_msg("APU", "Using PR[%d]: TSR=0%o, TRR=0%o, CA=0%Lo(0%o+0%o<=>%d+%d), bitno=0%o\n",
+        debug_msg("APU", "Using PR[%d]: TSR=0%o, TRR=0%o, CA=0%o(0%o+0%o<=>%d+%d), bitno=0%o\n",
             pr, TPR.TSR, TPR.TRR, TPR.CA, AR_PR[pr].wordno, ca_temp.soffset, AR_PR[pr].wordno, ca_temp.soffset, TPR.bitno);
 
         // BUG: Enter append mode & stay if execute a transfer
@@ -1193,7 +1028,7 @@ int addr_mod(const instr_t *ip)
     int mult = 0;
     while (ca_temp.more) {
         if (compute_addr(ip, &ca_temp) != 0) {
-            debug_msg("APU", "Final (incomplete) CA: 0%0Lo\n", TPR.CA);
+            debug_msg("APU", "Final (incomplete) CA: 0%0o\n", TPR.CA);
             return 1;
         }
         if (ca_temp.more)
@@ -1205,7 +1040,7 @@ int addr_mod(const instr_t *ip)
         if (ca_temp.more)
             debug_msg("APU", "Pre Seg: Continuing indirect fetches\n");
         if (do_esn_segmentation(ip, &ca_temp) != 0) {
-            debug_msg("APU", "Final (incomplete) CA: 0%0Lo\n", TPR.CA);
+            debug_msg("APU", "Final (incomplete) CA: 0%0o\n", TPR.CA);
             return 1;
         }
         if (ca_temp.more)
@@ -1215,7 +1050,7 @@ int addr_mod(const instr_t *ip)
             mult = 1;
     }
     if (mult) {
-            debug_msg("APU", "Final CA: 0%0Lo\n", TPR.CA);
+            debug_msg("APU", "Final CA: 0%0o\n", TPR.CA);
     }
 
     addr_mode = get_addr_mode();    // may have changed
@@ -1273,22 +1108,22 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 return 1;
             }
             int off = ca_tempp->soffset;
-            t_uint64 ca = TPR.CA;
+            uint ca = TPR.CA;
             reg_mod(td, off);
-            debug_msg("APU", "RI: pre-fetch:  TPR.CA=0%Lo <==  TPR.CA=%Lo + 0%Lo\n",
+            debug_msg("APU", "RI: pre-fetch:  TPR.CA=0%o <==  TPR.CA=%o + 0%o\n",
                 TPR.CA, ca, TPR.CA - ca);
             t_uint64 word;
             if (addr_append(&word) != 0)
                 return 1;
-            debug_msg("APU", "RI: fetch:  word at TPR.CA=0%Lo is 0%Lo\n",
+            debug_msg("APU", "RI: fetch:  word at TPR.CA=0%o is 0%Lo\n",
                 TPR.CA, word);
             ca_tempp->tag = word & MASKBITS(6);
             if (TPR.CA % 2 == 0 && (ca_tempp->tag == 041 || ca_tempp->tag == 043)) {
                     do_its_itp(ip, ca_tempp, word);
-                    debug_msg("APU", "RI: post its/itp: TPR.CA=0%Lo, tag=0%o\n", TPR.CA, ca_tempp->tag);
+                    debug_msg("APU", "RI: post its/itp: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
             } else {
                 TPR.CA = word >> 18;
-                debug_msg("APU", "RI: post-fetch: TPR.CA=0%Lo, tag=0%o\n", TPR.CA, ca_tempp->tag);
+                debug_msg("APU", "RI: post-fetch: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
             }
             // break;   // Continue a new CA cycle
             ca_tempp->more = 1;     // Continue a new CA cycle
@@ -1369,11 +1204,11 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 if (tm == atag_ir)
                     cu.CT_HOLD = td;
                 // BUG: Maybe handle special tag (41 itp, 43 its).  Or post handle?
-                debug_msg("APU::IR", "pre-fetch: Td=0%o, TPR.CA=0%Lo\n", td, TPR.CA);
+                debug_msg("APU::IR", "pre-fetch: Td=0%o, TPR.CA=0%o\n", td, TPR.CA);
                 t_uint64 word;
                 if (addr_append(&word) != 0)
                     return 1;
-                debug_msg("APU::IR", "fetched:  word at TPR.CA=0%Lo is 0%Lo:\n",
+                debug_msg("APU::IR", "fetched:  word at TPR.CA=0%o is 0%Lo:\n",
                     TPR.CA, word);
                 ca_tempp->tag = word & MASKBITS(6);
                 // BUG: is ITS and ITP valid for IR
@@ -1381,11 +1216,11 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                         warn_msg("APU::IR", "found ITS/ITP\n");
                         cancel_run(STOP_WARN);
                         do_its_itp(ip, ca_tempp, word);
-                        debug_msg("APU::IR", "post its/itp: TPR.CA=0%Lo, tag=0%o\n", TPR.CA, ca_tempp->tag);
+                        debug_msg("APU::IR", "post its/itp: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
                 } else {
                     TPR.CA = word >> 18;
                     tm = (ca_tempp->tag >> 4) & 03;
-                    debug_msg("APU::IR", "post-fetch: TPR.CA=0%Lo, tag=0%o, new tm=0%o\n", TPR.CA, ca_tempp->tag, tm);
+                    debug_msg("APU::IR", "post-fetch: TPR.CA=0%o, tag=0%o, new tm=0%o\n", TPR.CA, ca_tempp->tag, tm);
                     if (td == 0) {
                         // BUG: Disallow a reg_mod() with td equal to NULL (AL39)
                         // Disallow always or maybe ok for ir?
@@ -1433,28 +1268,37 @@ static void reg_mod(uint td, int off)
             break;  // no mod
         case 1: // ,au
             TPR.CA = off + sign18(getbits36(reg_A, 0, 18));
+            TPR.CA &= MASK18;
             break;
         case 2: // ,qu
             TPR.CA = off + sign18(getbits36(reg_Q, 0, 18));
+            TPR.CA &= MASK18;
             break;
         case 3: // ,du
             TPR.is_value = 1;   // BUG: Use "direct operand flag" instead
-            TPR.value = (t_uint64) TPR.CA << 18;
-            debug_msg("APU", "Mod du: Value from offset 0%Lo is 0%Lo\n", TPR.CA, TPR.value);
+            TPR.value = ((t_uint64) TPR.CA) << 18;
+            debug_msg("APU", "Mod du: Value from offset 0%o is 0%Lo\n", TPR.CA, TPR.value);
             break;
         case 4: // PPR.IC
             TPR.CA = off + PPR.IC;  // BUG: IC assumed to be unsigned
+            TPR.CA &= MASK18;
             break;
         case 5:
             TPR.CA = off + sign18(getbits36(reg_A, 18, 18));
+            TPR.CA &= MASK18;
+            uint a = getbits36(reg_A, 18, 18);
+            if (opt_debug)
+                debug_msg("APU", "Tm=REG,Td=%02o: offset 0%o(%d) + A=0%Lo=>0%o(%+d decimal) ==> 0%o=>0%o(%+d)\n",
+                    td, off, off, reg_A, a, sign18(a), TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
             break;
         case 6:
             TPR.CA = off + sign18(getbits36(reg_Q, 18, 18));
+            TPR.CA &= MASK18;
             break;
         case 7: // ,dl
             TPR.is_value = 1;   // BUG: Use "direct operand flag" instead
             TPR.value = TPR.CA; // BUG: Should we sign?
-            debug_msg("APU", "Mod dl: Value from offset 0%Lo is 0%Lo\n", TPR.CA, TPR.value);
+            debug_msg("APU", "Mod dl: Value from offset 0%o is 0%Lo\n", TPR.CA, TPR.value);
             break;
         case 010:
         case 011:
@@ -1465,8 +1309,9 @@ static void reg_mod(uint td, int off)
         case 016:
         case 017:
             TPR.CA = off + sign18(reg_X[td&07]);
+            TPR.CA &= MASK18;
             if (opt_debug)
-                debug_msg("APU", "Tm=REG,Td=%02o: offset 0%o + X[%d]=0%o(%+d decimal)==>0%o(+%d) yields 0%Lo (%+Ld decimal)\n",
+                debug_msg("APU", "Tm=REG,Td=%02o: offset 0%o + X[%d]=0%o(%+d decimal)==>0%o(+%d) yields 0%o (%+d decimal)\n",
                     td, off, td&7, reg_X[td&7], reg_X[td&7], sign18(reg_X[td&7]), sign18(reg_X[td&7]), TPR.CA, TPR.CA);
             break;
     }
@@ -1510,6 +1355,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         }
         uint i_wordno = getbits36(word2, 0, 18);
         TPR.CA = AR_PR[n].wordno + i_wordno + r;
+        TPR.CA &= MASK18;
         ca_tempp->more = 1;
         complain_msg("APU", "ITP not tested\n");
         cancel_run(STOP_WARN);
@@ -1547,6 +1393,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         }
         uint i_wordno = getbits36(word2, 0, 18);
         TPR.CA = i_wordno + r;
+        TPR.CA &= MASK18;
         debug_msg("APU", "ITS: CA = wordno=0%o + r=0%o => 0%o\n", i_wordno, r, TPR.CA);
         ca_tempp->more = 1;
         return 0;

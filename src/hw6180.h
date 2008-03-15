@@ -189,8 +189,8 @@ typedef struct {
     uint TRR;   // Current effective ring number, 3 bits
     uint TSR;   // Current effective segment number, 15 bits
     uint TBR;   // Current bit offset as calculated from ITS and ITP
-    // BUG: This CA should be 18 bits
-    t_uint64 CA;// Current computed addr relative to the segment in TPR.TSR; Normally 18? bits but sized to hold 36bit non-address operands
+    uint CA;    // Current computed addr relative to the segment in TPR.TSR, 18 bits
+    //t_uint64 CA;  // Current computed addr relative to the segment in TPR.TSR, 18 bits
     int bitno;
     // BUG: CA value should probably be placed in ctl_unit_data_t
     uint is_value;  // is offset a value or an address? (du or dl modifiers)
