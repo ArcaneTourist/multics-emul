@@ -397,13 +397,13 @@ typedef struct {
     uint addr;  // 18 bits at  0..17
     uint cn;    //  3 bits at 18..20; character position
     uint ta;    //  2 bits at 21..22; data type
-    uint n;     // 12 bits at 24..35; length
+    uint n;     // 12 bits at 24..35; length (0..4096 or -2048..2047 ?)
     // convenience members, not part of stored word
     int nbits;
     // tracking info for get_eis_an() and put_eis_an()
     uint base_addr; // initial addr
     uint base_bitpos;
-    uint bitpos;    // current
+    int bitpos; // current
     flag_t first;
     t_uint64 word;
 } eis_alpha_desc_t;
@@ -543,7 +543,7 @@ extern int store_abs_pair(uint addr, t_uint64 word0, t_uint64 word1);
 extern int store_pair(uint addr, t_uint64 word0, t_uint64 word1);
 extern eis_mf_t* parse_mf(uint mf, eis_mf_t* mfp);
 extern int fetch_mf_ops(const eis_mf_t* mf1p, t_uint64* word1p, const eis_mf_t* mf2p, t_uint64* word2p, const eis_mf_t* mf3p, t_uint64* word3p);
-void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits);
+//void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits);
 extern void mpy(t_int64 a, t_int64 b, t_uint64* hip, t_uint64 *lowp);
 extern void save_IR(t_uint64* wordp);
 extern int store_yblock8(uint addr, const t_uint64 *wordsp);
@@ -562,6 +562,7 @@ extern int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib);
 extern int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp);
 extern int addr_mod_eis_addr_reg(instr_t *ip);
 extern int get_eis_indir_addr(t_uint64 word, uint* addrp);
+int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib);
 
 
 extern void set_addr_mode(addr_modes_t mode);

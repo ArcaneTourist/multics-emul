@@ -22,7 +22,7 @@ static int do_epp(int epp);
 static int do_an_op(instr_t *ip);   // todo: hack, fold into do_op
 static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p);
 static int op_mlr(const instr_t* ip);
-static int op_tct(const instr_t* ip);
+static int op_tct(const instr_t* ip, int fwd);
 static int op_mvt(const instr_t* ip);
 
 static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, int nargs);   // BUG: temp
@@ -321,14 +321,17 @@ static int do_an_op(instr_t *ip)
                 return store_word(TPR.CA, word);
             }
             case opcode0_stca: {
+                // no modifiers
                 t_uint64 word;
-                int ret = fetch_op(ip, &word);
+                int ret = fetch_word(TPR.CA, &word);
                 if (ret == 0) {
                     for (int i = 0; i < 6; ++i) {
                         if ((ip->mods.single.tag & (1<<(5-i))) != 0)
                             word = setbits36(word, i * 6, 6, getbits36(reg_A, i * 6, 6));
                     }
                 }
+                ret = store_word(TPR.CA, word);
+                return ret;
             }
             case opcode0_stq:   // Store Q register
                 return store_word(TPR.CA, reg_Q);
@@ -1142,6 +1145,8 @@ static int do_an_op(instr_t *ip)
                         AR_PR[i].PR.snr = getbits36(words[2*i], 3, 15);
                         AR_PR[i].wordno = getbits36(words[2*i+1], 0, 18);
                         AR_PR[i].PR.bitno = getbits36(words[2*i+1], 21, 6); // 36-(72-57)
+                        AR_PR[i].AR.charno = AR_PR[i].PR.bitno / 9;
+                        AR_PR[i].AR.bitno = AR_PR[i].PR.bitno % 9;
                         debug_msg("OPU::lpri", "PR[%d]: rnr=%o, snr=%o, wordno=%0o, bitno=0%o\n",
                             i, AR_PR[i].PR.rnr, AR_PR[i].PR.snr, AR_PR[i].wordno, AR_PR[i].PR.bitno);
                     }
@@ -1626,11 +1631,12 @@ static int do_an_op(instr_t *ip)
             }
 
             case opcode1_tct: {
-                int ret = op_tct(ip);
+                int ret = op_tct(ip, 1);
                 return ret;
             }
             case opcode1_tctr: {
-                int ret = op_unimplemented_mw(ip, op, opname, 3);
+                //int ret = op_unimplemented_mw(ip, op, opname, 3);
+                int ret = op_tct(ip, 0);
                 return ret;
             }
             case opcode1_mlr: {
@@ -1965,6 +1971,8 @@ static int do_epp(int epp)
     AR_PR[epp].PR.snr = TPR.TSR;
     AR_PR[epp].wordno = TPR.CA & MASK18;
     AR_PR[epp].PR.bitno = TPR.TBR;
+    AR_PR[epp].AR.charno = AR_PR[epp].PR.bitno / 9;
+    AR_PR[epp].AR.bitno = AR_PR[epp].PR.bitno % 9;
     char buf[20];
     sprintf(buf, "OPU::epp%d", epp);;
     debug_msg(buf, "PR[%o]=TPR -- rnr=0%o, snr=0%o, wordno=%o, bitno=%o\n", epp, AR_PR[epp].PR.rnr, AR_PR[epp].PR.snr, AR_PR[epp].wordno, AR_PR[epp].PR.bitno);
@@ -1991,43 +1999,36 @@ static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p)
 
 static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, int nargs)
 {
-    char buf[20];
-    sprintf(buf, "OPU::%s", opname);
+    char moi[20];
+    sprintf(moi, "OPU::%s", opname);
+
     uint fill = ip->addr >> 9;
     uint t = (ip->addr >> 8) & 1;
     uint mf2bits = ip->addr & MASKBITS(7);
+
     eis_mf_t mf2;
-    t_uint64 word1, word2;
     (void) parse_mf(mf2bits, &mf2);
-    debug_msg(buf, "mf2 = {ar=%d, rl=%d, id=%d, reg=0%o}\n", mf2.ar, mf2.rl, mf2.id, mf2.reg);
+    debug_msg(moi, "mf2 = %s\n", mf2text(&mf2));
+
+    t_uint64 word1, word2;
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
         return 1;
 
+    eis_alpha_desc_t desc1;
+    parse_eis_alpha_desc(word1, &ip->mods.mf1, &desc1);
+    eis_alpha_desc_t desc2;
+    parse_eis_alpha_desc(word2, &mf2, &desc2);
+
+    debug_msg(moi, "desc1: %s\n", eis_alpha_desc_to_text(&desc1));
+    debug_msg(moi, "desc2: %s\n", eis_alpha_desc_to_text(&desc2));
     if (nargs == 3) {
         t_uint64 word3;
         if (fetch_word(PPR.IC + 3, &word3) != 0)
             return 1;
-        debug_msg(buf, "word3 = %012Lo\n", word3);
+        debug_msg(moi, "word3 = %012Lo\n", word3);
     }
-    PPR.IC += nargs + 1;
 
-    uint y1 = getbits36(word1, 0, 18);  // addr
-    uint y2 = getbits36(word2, 0, 18);
-    uint cn1 = getbits36(word1, 18, 3); // 1st char position
-    uint cn2 = getbits36(word2, 18, 3);
-    uint ta1 = getbits36(word1, 21, 2); // data type
-    uint ta2 = getbits36(word2, 21, 2);
-    uint n1 = getbits36(word1, 24, 12); // string len
-    uint n2 = getbits36(word2, 24, 12);
-    int nbits1 = (ta1 == 0) ? 9 : (ta1 == 1) ? 6 : 4;
-    fix_mf_len(&n1, &ip->mods.mf1, nbits1);
-    int nbits2 = (ta2 == 0) ? 9 : (ta2 == 1) ? 6 : 4;
-    fix_mf_len(&n2, &mf2, nbits2);
-    debug_msg(buf, "y1=0%o, y2=0%o, cn1=0%o, cn2=0%o, ta1=0%o, ta2=0%o, n1=0%o(%d), n2=0%o(%d)\n", y1, y2, cn1, cn2, ta1, ta2, n1, n1, n2, n2);
-    
-    warn_msg(buf, "Unimplemented\n");
-    cancel_run(STOP_BUG);
-    return 1;
+    PPR.IC += nargs + 1;
 }
 
 // ============================================================================
@@ -2107,10 +2108,10 @@ static int get_table_char(uint addr, uint index, uint *charp)
     return 0;
 }
 
-static int op_tct(const instr_t* ip)
+static int op_tct(const instr_t* ip, int fwd)
 {
 
-    const char* moi = "OPU::tct";
+    const char* moi = (fwd) ? "OPU::tct" : "OPU::tctr";
 
     uint fill = ip->addr >> 9;
     uint t = (ip->addr >> 8) & 1;
@@ -2133,13 +2134,18 @@ static int op_tct(const instr_t* ip)
     debug_msg(moi, "result addr: 0%o\n", addr3);
 
     uint n = desc1.n;
-    // ++opt_debug;
+    extern DEVICE cpu_dev;
+    if (!fwd) { ++opt_debug; ++ cpu_dev.dctrl;}
     while (desc1.n > 0) {
+        debug_msg(moi, "Remaining length %d\n", desc1.n);
         uint m;
-        if (get_eis_an(&ip->mods.mf1, &desc1, &m) != 0) {
-            // -- opt_debug;
-            return 1;
-        }
+        if (fwd) {
+            if (get_eis_an(&ip->mods.mf1, &desc1, &m) != 0)
+                // -- opt_debug;
+                return 1;
+        } else
+            if (get_eis_an_rev(&ip->mods.mf1, &desc1, &m) != 0)
+                return 1;
         uint t;
         if (get_table_char(addr2, m, &t) != 0) {
             // -- opt_debug;
@@ -2147,26 +2153,27 @@ static int op_tct(const instr_t* ip)
             return 1;
         }
         if (t != 0) {
+            int idx = (fwd) ? n - desc1.n - 1 : desc1.n;    // reverse scan also stores i-1 not N1-i !
             int i = n - desc1.n - 1;
-            debug_msg(moi, "Index %d: found non-zero entry 0%o for table entry indexed by 0%o\n", i, t, m);
+            debug_msg(moi, "Index %d: found non-zero table entry 0%o for table index 0%o, from offset %d in the str.\n", i, t, m, idx);
             t_uint64 word = (t_uint64) t << 27;
-            word = setbits36(word, 12, 14, i);
+            word = setbits36(word, 12, 24, i);
             // -- opt_debug;
             if (store_abs_word(addr3, word) != 0)
                 return 1;
-            warn_msg(moi, "Need to verify; auto breakpoint\n");
-            cancel_run(STOP_IBKPT);
+            //warn_msg(moi, "Need to verify; auto breakpoint\n");
+            //cancel_run(STOP_IBKPT);
             return 0;
         }
     }
 
-    t_uint64 word = setbits36(0, 12, 14, n);
+    t_uint64 word = setbits36(0, 12, 24, n);
     //-- opt_debug;
     if (store_abs_word(addr3, word) != 0)
         return 1;
 
-    warn_msg(moi, "Need to verify; auto breakpoint\n");
-    cancel_run(STOP_IBKPT);
+    //warn_msg(moi, "Need to verify; auto breakpoint\n");
+    //cancel_run(STOP_IBKPT);
     // debug_msg(moi, "finished.\n");
     return 0;
 }
@@ -2199,7 +2206,8 @@ static int op_mvt(const instr_t* ip)
     if (get_eis_indir_addr(word3, &addr3) != 0)
         return 1;
 
-    debug_msg(moi, "desc1: %s;  desc2: %s\n", eis_alpha_desc_to_text(&desc1), eis_alpha_desc_to_text(&desc2));
+    debug_msg(moi, "desc1: %s\n", eis_alpha_desc_to_text(&desc1));
+    debug_msg(moi, "desc2: %s\n", eis_alpha_desc_to_text(&desc2));
     debug_msg(moi, "translation table at 0%Lo => 0%o\n", word3, addr3);
 
     int ret = 0;
@@ -2237,8 +2245,8 @@ static int op_mvt(const instr_t* ip)
     if (save_eis_an(&mf2, &desc2) != 0)
         return 1;
 
-    warn_msg(moi, "Need to verify; auto breakpoint\n");
-    cancel_run(STOP_WARN);
+    //warn_msg(moi, "Need to verify; auto breakpoint\n");
+    //cancel_run(STOP_WARN);
     debug_msg(moi, "finished.\n");
     return ret;
 }
