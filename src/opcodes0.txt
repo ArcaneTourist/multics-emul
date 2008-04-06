@@ -9,7 +9,7 @@ asx0	asx1	asx2	asx3	asx4	asx5	asx6	asx7	adwp0	adwp1	adwp2	adwp3	aos	asa	asq	sscr
 adx0	adx1	adx2	adx3	adx4	adx5	adx6	adx7	-	awca	awcq	lreg	-	ada	adq	adaq
 
 cmpx0	cmpx1	cmpx2	cmpx3	cmpx4	cmpx5	cmpx6	cmpx7	-	cwl	-	-	-	cmpa	cmpq	cmpaq
-sblx0	sblx1	sblx2	sblx3	sblx4	xblx5	slbx6	sblx7	-	-	-	-	-	sbla	sblq	sblaq
+sblx0	sblx1	sblx2	sblx3	sblx4	sblx5	sblx6	sblx7	-	-	-	-	-	sbla	sblq	sblaq
 ssx0	ssx1	ssx2	ssx3	ssx4	ssx5	ssx6	ssx7	adwp4	adwp5	adwp6	adwp7	sdbr	ssa	ssq	-
 sbx0	sbx1	sbx2	sbx3	sbx4	sbx5	sbx6	sbx7	-	swca	swcq	lpri	-	sba	sbq	sbaq
 

@@ -31,3 +31,8 @@ tst: tst.o misc.o
 clean:
 	rm -f *.o
 	rm -f bits bit-test tst test-op scan-tape
+
+opcodes.h: opcodes0.txt opcodes1.txt
+	./opcodes2c.pl | sed -ne '/^#ifndef/q' -e p > .tmpf && mv .tmpf $@
+opcode_text.c: opcodes0.txt opcodes1.txt
+	./opcodes2c.pl | sed -ne '/^#ifndef/,$$p' > .tmpf && mv .tmpf $@

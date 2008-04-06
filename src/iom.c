@@ -183,12 +183,12 @@ void iom_interrupt()
     // dump_iom();
 
     extern DEVICE cpu_dev;
-    ++ opt_debug; ++ cpu_dev.dctrl;
-    dump_cioc();
+    //++ opt_debug; ++ cpu_dev.dctrl;
+    //dump_cioc();
     debug_msg("IOM::CIOC::intr", "Starting\n");
     do_conn_chan();
     debug_msg("IOM::CIOC::intr", "Finished\n");
-    -- opt_debug; -- cpu_dev.dctrl;
+    //-- opt_debug; -- cpu_dev.dctrl;
 }
 
 static int do_conn_chan()
@@ -261,6 +261,7 @@ static int do_channel(int chan, pcw_t *p)
     // Second, check if PCW tells use to request a list service, send an interrupt, etc
     // BUG: A loop for calling list service and doing returned DCWs should probably be here
 
+#if 0
     int control = p->control;
     int first_list = 1;
     if (ret == 0)
@@ -268,6 +269,26 @@ static int do_channel(int chan, pcw_t *p)
             debug_msg(moi, "PCW control flag for chan %d is zero -- no list-service\n", chan);
         else
             debug_msg(moi, "PCW control flag for chan %d is non zero (%d)\n", chan, control);
+#else
+    int first = 1;
+    int control = p->control;
+    int first_list = 0;
+#endif
+for (int foo = 0; foo < 2; ++ foo) {
+    if (foo == 0) {
+        // pwc from conn chan
+        first_list = 0;
+    } else {
+        if (first) {
+                if (chan_status.major != 0)
+                    break;
+                debug_msg(moi, "Will ask for first list service\n");
+                first_list = 1;
+                control = 2;
+                first = 0;
+                ret = 0;
+        }
+    }
     while (ret == 0 && control != 0) {
         switch (control) {
             case 0:
@@ -308,6 +329,7 @@ static int do_channel(int chan, pcw_t *p)
                 ret = 1;
         }
     }
+}
 
     if (first_list)
         list_service_whatif(chan, first_list, NULL, NULL);
@@ -633,8 +655,10 @@ static int dev_send_pcw(int chan, pcw_t *p)
 static int dev_io(int chan, t_uint64 *wordp)
 {
     DEVICE* devp = iom.devices[chan];
-    if (devp == NULL || devp->units == NULL) {
+    // if (devp == NULL || devp->units == NULL)
+    if (devp == NULL) {
         // BUG: no device connected, what's the fault code(s) ?
+        warn_msg("IOM::dev-io", "No device connected to chan 0%o\n", chan);
         chan_status.power_off = 1;
         iom_fault(chan, __LINE__, 0, 0);
         cancel_run(STOP_WARN);
@@ -653,6 +677,12 @@ static int dev_io(int chan, t_uint64 *wordp)
             int ret = mt_iom_io(chan, wordp, &chan_status.major, &chan_status.substatus);
             if (ret != 0 || chan_status.major != 0)
                 debug_msg("IOM::dev-io", "MT returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
+            return 0;   // ignore ret in favor of chan_status.{major,substatus}
+        }
+        case DEV_CON: {
+            int ret = con_iom_io(chan, wordp, &chan_status.major, &chan_status.substatus);
+            if (ret != 0 || chan_status.major != 0)
+                debug_msg("IOM::dev-io", "CON returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
             return 0;   // ignore ret in favor of chan_status.{major,substatus}
         }
         default:
@@ -683,14 +713,17 @@ static int do_ddcw(int chan, int addr, int *control)
 
     t_uint64 word = 0;
     t_uint64 *wordp = (type == 3) ? &word : M + daddr;  // 2 impossible; see do_dcw
+    if (type == 3 && tally != 1)
+        complain_msg("IOM::DDCW", "Type is 3, but tally is %d\n", tally);
     int ret;
-    debug_msg("IOM::DDCW", "I/O Request(s) starting at addr 0%o\n", daddr);
+    debug_msg("IOM::DDCW", "I/O Request(s) starting at addr 0%o; tally = %d\n", daddr, tally);
     for (;;) {
         ret = dev_io(chan, wordp);
         if (ret != 0 || chan_status.major != 0)
             break;
         ++daddr;    // todo: remove from loop
-        ++wordp;
+        if (type != 3)
+            ++wordp;
         if (--tally <= 0)
             break;
     }
@@ -731,8 +764,8 @@ static int do_dcw(int chan, int addr, int *controlp, int *hack)
         pcw.chan = chan;    // Real HW would not populate
         debug_msg("IOM::dcw", "I-DCW: %s\n", pcw2text(&pcw));
         *controlp = pcw.control;
-        debug_msg("IOM::dcw", "Setting hack flag for another list service\n");
-        *hack = 1;  // do_pcw with either return non zero or will set chan_status.major
+        //debug_msg("IOM::dcw", "Setting hack flag for another list service\n");
+        //*hack = 1;    // do_pcw with either return non zero or will set chan_status.major
         return do_pcw(chan, &pcw);
     } else {
         int type = getbits36(M[addr], 22, 2);

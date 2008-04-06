@@ -187,6 +187,7 @@ ctl_unit_data_t cu;
 
 scu_t scu;  // only one for now
 iom_t iom;  // only one for now
+t_bool fault_gen_no_fault;
 
 //-----------------------------------------------------------------------------
 //***  Other Externs
@@ -406,7 +407,7 @@ if (opt_debug) {
 
     uint32 delta = sim_os_msec() - start;
     //if (delta > 2000)
-    if (delta > 1000)
+    if (delta > 200)
         warn_msg("CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
             (float) delta / 1000, ncycles, ncycles*1000/delta, ninstr, ninstr*1000/delta);
 
@@ -415,6 +416,25 @@ if (opt_debug) {
     save_IR(&saved_IR);
         
     return reason;
+}
+
+void load_IR(t_uint64 word)
+{
+    IR.zero = getbits36(word, 18, 1);
+    IR.neg = getbits36(word, 19, 1);
+    IR.carry = getbits36(word, 20, 1);
+    IR.overflow = getbits36(word, 21, 1);
+    // IR.exp_overflow = getbits36(word, 22, 1);
+    // IR.exp_underflow = getbits36(word, 23, 1);
+    IR.overflow_mask = getbits36(word, 24, 1);
+    IR.tally_runout = getbits36(word, 25, 1);
+    // IR.parity_error = getbits36(word, 25, 1);
+    // IR.parity_mask = getbits36(word, 27, 1);
+    IR.not_bar_mode = getbits36(word, 28, 1);
+    IR.truncation = getbits36(word, 29, 1);
+    IR.mid_instr_intr_fault = getbits36(word, 30, 1);
+    IR.abs_mode = getbits36(word, 31, 1);
+    IR.hex_mode = getbits36(word, 32, 1);
 }
 
 void save_IR(t_uint64* wordp)
@@ -432,9 +452,12 @@ void save_IR(t_uint64* wordp)
         (IR.neg << (35-19)) |
         (IR.carry << (35-20)) |
         (IR.overflow << (35-21)) |
+        // (IR.exp_overflow << (35-22)) |
+        // (IR.exp_underflow << (35-23)) |
         (IR.overflow_mask << (35-24)) |
         (IR.tally_runout << (35-25)) |
         (IR.not_bar_mode << (35-28)) |
+        (IR.truncation << (35-29)) |
         (IR.mid_instr_intr_fault << (35-30)) |
         (IR.abs_mode << (35-31)) |
         (IR.hex_mode << (35-32));
@@ -760,7 +783,8 @@ void execute_ir(void)
 void fault_gen(enum faults f)
 {
     int group;
-    events.any = 1;
+    if (!fault_gen_no_fault)
+        events.any = 1;
 
     if (f == oob_fault) {
         complain_msg("CU::fault", "Faulting for internal bug\n");
@@ -773,6 +797,10 @@ void fault_gen(enum faults f)
         abort();
     }
     group = fault2group[f];
+    if (fault_gen_no_fault) {
+        debug_msg("CU::fault", "Ignoring fault # %d in group %d\n", f, group);
+        return;
+    }
     debug_msg("CU::fault", "Recording fault # %d in group %d\n", f, group);
     if (group < 1 || group > 7)
         abort();
@@ -889,7 +917,7 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
 
     if (sim_brk_summ)
         if (sim_brk_test (addr, SWMASK ('M'))) {
-            warn_msg("CU::fetch", "Memory Breakpoint\n");
+            warn_msg("CU::fetch", "Memory Breakpoint, address 0%o\n", addr);
             (void) cancel_run(STOP_IBKPT);
         }
 
@@ -949,7 +977,7 @@ int store_abs_word(uint addr, t_uint64 word)
     }
     if (sim_brk_summ)
         if (sim_brk_test (addr, SWMASK ('M'))) {
-            warn_msg("CU::store", "Memory Breakpoint\n");
+            warn_msg("CU::store", "Memory Breakpoint, address 0%o\n", addr);
             (void) cancel_run(STOP_IBKPT);
         }
 

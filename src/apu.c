@@ -129,6 +129,19 @@ addr_modes_t get_addr_mode()
 
 //=============================================================================
 
+int is_priv_mode()
+{
+    if (IR.abs_mode)
+        return 1;
+    SDW_t *SDWp = get_sdw();    // Get SDW for TPR.TSR
+    if (SDWp->priv)
+        return 1;
+    debug_msg("APU", "Priv check fails\n");
+    return 0;
+}
+
+//=============================================================================
+
 char* instr2text(const instr_t* ip)
 {
     static char buf[100];
@@ -318,7 +331,9 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
     if (mfp->rl) {
         switch(*np) {
             // case 0: // illegal
-            // case 1:  // au
+             case 1:    // au
+                *np = reg_A >> 18;  // AL39 shows extended range for "a", but not "au"
+                return;
             case 05: // a
                 if (nbits == 1)
                     *np = reg_A & MASKBITS(24);
@@ -500,21 +515,22 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib)
     }
 
     int saved_debug = opt_debug;
-    if (descp->cn != 0) ++ opt_debug;
+//  if (descp->cn != 0) ++ opt_debug;
 
     uint need_fetch = 0;
     if (descp->first) {
         if (get_eis_an_base(mfp, descp) != 0) {
             cancel_run(STOP_WARN);
+            opt_debug = saved_debug;
             return 1;
         }
         // reverse sequential
         int nparts = 36 / descp->nbits; // "chars" per word
-        int ndx = descp->n + descp->base_bitpos / nparts;
+        int ndx = descp->n + descp->base_bitpos / descp->nbits;
         -- ndx; // index, not length
-        ndx -= descp->cn * descp->nbits; // BUG: We assume CN doesn't mean string is shorter than N
+        ndx -= descp->cn; // BUG: We assume CN doesn't mean string is shorter than N
         debug_msg(moi, "Base at 0%o.  Using offset of %d (len=%d - 1 + b=%dc - cn=%d) %dbit chars\n",
-            descp->base_addr, ndx, descp->n, descp->base_bitpos * nparts, descp->cn, descp->nbits);
+            descp->base_addr, ndx, descp->n, descp->base_bitpos / descp->nbits, descp->cn, descp->nbits);
         descp->n -= descp->cn;  // will hit zero at cn instead of base
         descp->addr = descp->base_addr + ndx / nparts;
         descp->bitpos = (ndx % nparts) * descp->nbits;
@@ -538,6 +554,7 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib)
         if (fetch_abs_word(descp->addr, &descp->word) != 0) {
             warn_msg(moi, "Failed: fetch word 0%o\n", descp->addr);
             cancel_run(STOP_WARN);
+            opt_debug = saved_debug;
             return 1;
         }
         debug_msg(moi, "Fetched word at 0%o %012Lo\n", descp->addr, descp->word);
@@ -732,16 +749,18 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
 
     int saved_debug = opt_debug;
     if (descp->first) {
-        ++ opt_debug;
-        if (get_eis_an_base(mfp, descp) != 0)
+        //++ opt_debug;
+        if (get_eis_an_base(mfp, descp) != 0) {
+            opt_debug = saved_debug;
             return 1;
+        }
         opt_debug = saved_debug;
         // forward sequential
         descp->addr = descp->base_addr;
         descp->bitpos = descp->base_bitpos;
         if (descp->bitpos == 0) {
             descp->word = 0;    // makes debug output easier to read
-            debug_msg(moi, "Initial output at addr %0 is at offset zero, so not loading initial word\n", descp->addr);
+            debug_msg(moi, "Initial output at addr 0%o is at offset zero, so not loading initial word\n", descp->addr);
         } else {
             // Read in contents of target word because we won't be overwriting all of it
             //debug_msg(moi, "First put, bit pos is %d -- loading in partial word\n", descp->bitpos);
@@ -749,7 +768,7 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
                 warn_msg(moi, "Failed.\n");
                 return 1;
             }
-            opt_debug = 1;
+            //opt_debug = 1;
             debug_msg(moi, "Fetched target word %012Lo from addr 0%o because output starts at bit %d.\n", descp->word, descp->addr, descp->bitpos);
             opt_debug = saved_debug;
         }
@@ -760,8 +779,10 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
         // BUG: this might be possible if page faulted on earlier write attempt?
         warn_msg(moi, "Internal error, prior call did not flush buffer\n");
         cancel_run(STOP_WARN);
-        if (save_eis_an(mfp, descp) != 0)
+        if (save_eis_an(mfp, descp) != 0) {
+            opt_debug = saved_debug;
             return 1;
+        }
     }
 
     t_uint64 tmp = descp->word;
@@ -779,12 +800,14 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
         debug_msg(moi, "Storing %012Lo to addr=0%o\n", descp->word, descp->addr);
         if (store_abs_word(descp->addr, descp->word) != 0) {
             warn_msg(moi, "Failed.\n");
+            opt_debug = saved_debug;
             return 1;
         }
         ++ descp->addr;
         descp->bitpos = 0;
     }
 
+    opt_debug = saved_debug;
     return 0;
 }
 
@@ -812,6 +835,7 @@ int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
         t_uint64 word;
         if (fetch_abs_word(descp->addr, &word) != 0) {
             warn_msg(moi, "Failed.\n");
+            opt_debug = saved_debug;
             return 1;
         }
         t_uint64 tmp = descp->word;
@@ -819,7 +843,7 @@ int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
         debug_msg(moi, "Combined buffered dest %012Lo with fetched %012Lo: %012Lo\n", tmp, word, descp->word);
     }
 
-    opt_debug = 1;
+    //opt_debug = 1;
     debug_msg(moi, "Storing %012Lo to addr=0%o.\n", descp->word, descp->addr);
     opt_debug = 0;
     if (store_abs_word(descp->addr, descp->word) != 0) {
@@ -873,18 +897,25 @@ static int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop)
         *bitnop = TPR.bitno;
     } else {
         offset = y;
+        // sofset = sign18(y);
         *bitnop = 0;
     }
 
     if (reg != 0) {
+        saved_CA = TPR.CA;
+        TPR.CA = 0;
+        uint o = offset;
+        reg_mod(reg, offset);
+        offset = TPR.CA;
+        TPR.CA = saved_CA;
         // BUG: ERROR: Apply EIS reg mod
-        complain_msg("APU::get-addr", "Register mod 0%o unimplemented\n", reg);
-        cancel_run(STOP_BUG);
-        return 1;
+        warn_msg("APU::get-addr", "Register mod 0%o: offset was 0%o, now 0%o\n", reg, o, offset);
+        warn_msg("APU::get-addr", "Auto-breakpoint\n");
+        cancel_run(STOP_IBKPT);
     }
 
     uint perm = 0;  // BUG: need to have caller specify
-    page_in(offset, perm, addrp);
+    int ret = page_in(offset, perm, addrp);
 
     if (ar) {
         TPR.TSR = saved_PSR;
@@ -893,7 +924,7 @@ static int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop)
         TPR.bitno = saved_bitno;
     }
 
-    return 0;
+    return ret;
 }
 
 
@@ -1862,7 +1893,7 @@ static void decode_SDW(t_uint64 word0, t_uint64 word1, SDW_t *sdwp)
     sdwp->r = getbits36(word1, 15, 1);
     sdwp->e = getbits36(word1, 16, 1);
     sdwp->w = getbits36(word1, 17, 1);
-    sdwp->p = getbits36(word1, 18, 1);
+    sdwp->priv = getbits36(word1, 18, 1);
     sdwp->u = getbits36(word1, 19, 1);
     sdwp->g = getbits36(word1, 20, 1);
     sdwp->c = getbits36(word1, 21, 1);
@@ -1876,7 +1907,7 @@ char* print_sdw(t_uint64 word0, t_uint64 word1)
     decode_SDW(word0, word1, &sdw);
     sprintf(buf, "[addr=0%o, r(123)=(0%o,0%o,0%o), f=%d, fc=%o; bound=0%o(%d), r=%d,e=%d,w=%d,p=%d,u=%d,g=%d,c=%d, cl=0%o]",
         sdw.addr, sdw.r1, sdw.r2, sdw.r3, sdw.f, sdw.fc,
-        sdw.bound, sdw.bound, sdw.r, sdw.e, sdw.w, sdw.p, sdw.u, sdw.g, sdw.c, sdw.cl);
+        sdw.bound, sdw.bound, sdw.r, sdw.e, sdw.w, sdw.priv, sdw.u, sdw.g, sdw.c, sdw.cl);
     return buf;
 }
 

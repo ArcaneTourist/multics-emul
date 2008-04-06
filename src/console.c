@@ -4,6 +4,7 @@
 */
 
 #include "hw6180.h"
+#include <ctype.h>
 
 extern iom_t iom;
 
@@ -46,8 +47,14 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             *subp = 0;
             return 0;
         }
+        case 023:               // Read ASCII
+            complain_msg("CON::iom_cmd", "Read ASCII unimplemented\n");
+            cancel_run(STOP_WARN);
+            *majorp = 00;
+            *subp = 0;
+            return 0;
         case 033:               // Write ASCII
-            complain_msg("CON::iom_cmd", "Write ASCII unimplemented\n");
+            complain_msg("CON::iom_cmd", "Write ASCII semi-implemented\n");
             cancel_run(STOP_WARN);
             *majorp = 00;
             *subp = 0;
@@ -69,4 +76,49 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
         }
     }
     return 1;   // not reached
+}
+
+int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
+{
+    debug_msg("CON::iom_io", "Chan 0%o\n", chan);
+    debug_msg("CON::iom_io", "Word = %012Lo\n", *wordp);
+
+    if (chan < 0 || chan >= ARRAY_SIZE(iom.devices)) {
+        *majorp = 05;   // Real HW could not be on bad channel
+        *subp = 2;
+        complain_msg("CON::iom_io", "Bad channel %d\n", chan);
+        return 1;
+    }
+
+    // BUG: Need to know whether to read or write
+
+    char buf[80];
+    *buf = 0;
+    t_uint64 word = *wordp;
+    if ((word >> 36) != 0) {
+        complain_msg("CON::iom_io", "Word %012Lo has more than 36 bits.\n", word);
+        cancel_run(STOP_BUG);
+        word &= MASK36;
+    }
+    int err = 0;
+    for (int i = 0; i < 4; ++i) {
+        uint c = word >> 27;
+        word = (word << 9) & MASKBITS(36);
+        if (c <= 0177 && isprint(c)) {
+            sprintf(buf+strlen(buf), "%c", c);
+            err |= sim_putchar(c);
+        } else {
+            sprintf(buf+strlen(buf), "\\%03o", c);
+            if (c != 0)
+                err |= sim_putchar(c);
+        }
+    }
+    if (err)
+        warn_msg("CON::iom_io", "Error writing to CONSOLE\n");
+    out_msg("CONSOLE: %s\n", buf);
+
+    *majorp = 0;
+    *subp = 0;
+
+    return 0;
 }

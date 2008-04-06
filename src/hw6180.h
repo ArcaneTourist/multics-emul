@@ -108,7 +108,7 @@ typedef struct {
     uint overflow_mask;     // bit 24
     uint tally_runout;      // bit 25
     // parity_error;        // bit 26
-    // parity_mask;         // bit 27
+    uint parity_mask;       // bit 27
     uint not_bar_mode;      // bit 28
     uint truncation;        // bit 29
     uint mid_instr_intr_fault;  // bit 30
@@ -317,7 +317,7 @@ typedef struct {
     uint r;         // flag; read perm
     uint e;         // flag; exec perm
     uint w;         // flag; write perm
-    uint p;         // flag; priv
+    uint priv;      // flag; priv
     uint u;             // flag; unpaged; bit 19 odd word of SDW
     uint g;         // flag; gate control
     uint c;         // flag; cache control
@@ -509,6 +509,7 @@ extern uint8 reg_RALR;      // Ring Alarm Reg, 3 bits
 
 extern ctl_unit_data_t cu;
 extern cpu_state_t cpu;
+extern t_bool fault_gen_no_fault;
 
 // ============================================================================
 // === Functions
@@ -562,7 +563,8 @@ extern int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib);
 extern int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp);
 extern int addr_mod_eis_addr_reg(instr_t *ip);
 extern int get_eis_indir_addr(t_uint64 word, uint* addrp);
-int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib);
+extern int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib);
+extern void load_IR(t_uint64 word);
 
 
 extern void set_addr_mode(addr_modes_t mode);

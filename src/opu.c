@@ -182,6 +182,24 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
+            case opcode0_ldi: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    uint par = IR.parity_mask;
+                    uint nbar = IR.not_bar_mode;
+                    uint abs = IR.abs_mode;
+                    load_IR(word);
+                    IR.not_bar_mode = nbar;
+                    IR.abs_mode = abs;
+                    addr_modes_t addr_mode = get_addr_mode();
+                    if (addr_mode != ABSOLUTE_mode) {   // BUG: check priv mode
+                        IR.parity_mask = par;
+                        IR.mid_instr_intr_fault = 0;
+                    }
+                }
+                return ret;
+            }
             case opcode0_ldq: { // load Q reg
                 int ret = fetch_op(ip, &reg_Q);
                 if (ret == 0) {
@@ -598,7 +616,28 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
-            //sblxn
+            case opcode0_sblx0:
+            case opcode0_sblx1:
+            case opcode0_sblx2:
+            case opcode0_sblx3:
+            case opcode0_sblx4:
+            case opcode0_sblx5:
+            case opcode0_sblx6:
+            case opcode0_sblx7: {
+                int n = op & 07;
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    word >>= 18;
+                    uint sign = reg_X[n] >> 17;
+                    reg_X[n] = (reg_X[n] - word) & MASK18;
+                    uint rsign = reg_X[n] >> 17;
+                    IR.zero = reg_Q == 0;
+                    IR.neg = rsign;
+                    IR.carry = sign != rsign;
+                }
+                return ret;
+            }
             case opcode0_sbq: {
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
@@ -1306,7 +1345,8 @@ static int do_an_op(instr_t *ip)
                 return 0;
             }
             case opcode0_ldt: { // load timer reg (priv)
-                if (get_addr_mode() != ABSOLUTE_mode) {
+                if (get_addr_mode() != ABSOLUTE_mode && ! is_priv_mode()) {
+                    warn_msg("OPU::ldt", "Privileged\n");
                     fault_gen(illproc_fault);
                     return 1;
                 }
@@ -1458,7 +1498,8 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_sscr: { // priv
                 // set system controller register (to value in AQ)
-                if (get_addr_mode() != ABSOLUTE_mode) {
+                if (get_addr_mode() != ABSOLUTE_mode && ! is_priv_mode()) {
+                    complain_msg("OPU::sscr", "Not in absolute mode\n");
                     fault_gen(illproc_fault);
                     return 1;
                 }
@@ -2058,7 +2099,8 @@ static int op_mlr(const instr_t* ip)
     eis_alpha_desc_t desc2;
     parse_eis_alpha_desc(word2, &mf2, &desc2);
 
-    debug_msg(moi, "desc1: %s;  desc2: %s\n", eis_alpha_desc_to_text(&desc1), eis_alpha_desc_to_text(&desc2));
+    debug_msg(moi, "desc1: %s\n", eis_alpha_desc_to_text(&desc1));
+    debug_msg(moi, "desc2: %s\n", eis_alpha_desc_to_text(&desc2));
 
     int ret = 0;
 
@@ -2135,21 +2177,22 @@ static int op_tct(const instr_t* ip, int fwd)
 
     uint n = desc1.n;
     extern DEVICE cpu_dev;
-    if (!fwd) { ++opt_debug; ++ cpu_dev.dctrl;}
+    //if (!fwd) { ++opt_debug; ++ cpu_dev.dctrl;}
     while (desc1.n > 0) {
         debug_msg(moi, "Remaining length %d\n", desc1.n);
         uint m;
         if (fwd) {
             if (get_eis_an(&ip->mods.mf1, &desc1, &m) != 0)
-                // -- opt_debug;
                 return 1;
         } else
-            if (get_eis_an_rev(&ip->mods.mf1, &desc1, &m) != 0)
+            if (get_eis_an_rev(&ip->mods.mf1, &desc1, &m) != 0) {
+                //if (!fwd) { --opt_debug; -- cpu_dev.dctrl; }
                 return 1;
+            }
         uint t;
         if (get_table_char(addr2, m, &t) != 0) {
-            // -- opt_debug;
             warn_msg(moi, "Unable to read table\n");
+            //if (!fwd) { --opt_debug; -- cpu_dev.dctrl; }
             return 1;
         }
         if (t != 0) {
@@ -2158,17 +2201,18 @@ static int op_tct(const instr_t* ip, int fwd)
             debug_msg(moi, "Index %d: found non-zero table entry 0%o for table index 0%o, from offset %d in the str.\n", i, t, m, idx);
             t_uint64 word = (t_uint64) t << 27;
             word = setbits36(word, 12, 24, i);
-            // -- opt_debug;
-            if (store_abs_word(addr3, word) != 0)
+            if (store_abs_word(addr3, word) != 0) {
+                //if (!fwd) { --opt_debug; -- cpu_dev.dctrl; }
                 return 1;
+            }
             //warn_msg(moi, "Need to verify; auto breakpoint\n");
             //cancel_run(STOP_IBKPT);
             return 0;
         }
     }
 
+    //if (!fwd) { --opt_debug; -- cpu_dev.dctrl; }
     t_uint64 word = setbits36(0, 12, 24, n);
-    //-- opt_debug;
     if (store_abs_word(addr3, word) != 0)
         return 1;
 

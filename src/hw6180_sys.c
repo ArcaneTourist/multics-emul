@@ -41,6 +41,7 @@ int32 sim_emax = 4;
 DEVICE *sim_devices[] = {
     &cpu_dev,
     &tape_dev,
+    &opcon_dev,
     NULL
 };
 
@@ -97,6 +98,7 @@ static void hw6180_init(void)
 {
     debug_msg("SYS::init", "Once-only initialization running.\n");
 
+    fault_gen_no_fault = 0;
     sim_vm_parse_addr = parse_addr;
     sim_vm_fprint_addr = fprint_addr;
 
@@ -415,11 +417,14 @@ static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
     if (seg != -1) {
         TPR.TSR = seg;
     }
+    fault_gen_no_fault = 1;
     if (get_seg_addr(offset, 0, &addr) != 0) {
         if (saved_seg != -1)
             TPR.TSR = saved_seg;
+        fault_gen_no_fault = 0;
         return 0;
     }
+    fault_gen_no_fault = 0;
     if (saved_seg != -1)
         TPR.TSR = saved_seg;
     *optr = cptr;
