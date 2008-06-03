@@ -14,6 +14,8 @@ static inline void set36u(mpz_t rop, t_uint64 val)
 #endif
 }
 
+
+#if 0
 static inline void set36(mpz_t rop, t_int64 val)
 {
 #if LONG_MAX > 2147483647L
@@ -50,12 +52,14 @@ static inline void set36(mpz_t rop, t_int64 val)
 #endif
 #endif
 }
+#endif
 
 
 void mpy(t_int64 a, t_int64 b, t_uint64* hip, t_uint64 *lowp)
 {
-    // Signed multiply of two 36bit integers
-    // hip and/or lowp may point to a and/or b
+    // Signed multiply of two 36bit integers, a and b, with results
+    // into *hip and *lowp.  If desired, it's safe for hip and/or lowp
+    // to point to a and/or b.
 
     flag_t neg = 0;
     flag_t maxneg = 0;
@@ -90,8 +94,8 @@ void mpy(t_int64 a, t_int64 b, t_uint64* hip, t_uint64 *lowp)
 
     mpz_mul(aa, aa, bb);
     
-    // export with least significant first in case result is exactly one word
-    // also initialize results to zero for the same reason
+    // Export with least significant first in case result is exactly one word.
+    // Also initialize results to zero for the same reason.
     t_uint64 bits[2] = { 0, 0 };
     size_t count = 2;
     mpz_export(bits, &count, -1, sizeof(bits[0]), 0, 64-36, aa);

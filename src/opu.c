@@ -1412,10 +1412,11 @@ static int do_an_op(instr_t *ip)
             case opcode0_rscr: { // priv
                 // read system controller register (to AQ)
                 int ret = 0;
-                uint y = (TPR.CA >> 16) & 3;    // 18bit CA
-                uint ea = y << 15;
+                uint y = (TPR.CA >> 16) & 3;    // get bits one and two of 18bit CA
+                uint ea = y << 15;              // and set just those bits in ea
+                debug_msg("OPU::opcode::rscr", "CA is 0%0o (y0%03ox)\n", TPR.CA, (TPR.CA >> 3) & 077);
                 debug_msg("OPU::opcode::rscr", "EA is 0%04o\n", ea);
-                debug_msg("OPU::opcode::rscr", "CA is 0%0Lo (0%03o=>0%03o)\n", TPR.CA, (TPR.CA >> 3), TPR.CA & ~7);
+                t_bool show_q = 1;
                 if ((TPR.CA & ~7) == ea) {
                     ; // SC mode reg
                     warn_msg("OPU::opcode::rscr", "mode register selected\n");
@@ -1451,6 +1452,7 @@ static int do_an_op(instr_t *ip)
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0040) {
                     ret = scu_get_calendar(TPR.CA);
+                    show_q = 0;
                 } else if ((TPR.CA & ~7) == ea + 0050) {
                     ret = scu_get_calendar(TPR.CA);
                 } else if ((TPR.CA & ~7) == ea + 0060) {
@@ -1469,7 +1471,8 @@ static int do_an_op(instr_t *ip)
                     // error
                 }
                 debug_msg("OPU::opcode::rscr", "A = %Lo\n", reg_A);
-                debug_msg("OPU::opcode::rscr", "Q = %Lo\n", reg_Q);
+                if (show_q)
+                    debug_msg("OPU::opcode::rscr", "Q = %Lo\n", reg_Q);
                 return ret;
             }
 

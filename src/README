@@ -13,3 +13,13 @@ SIM additions
 		<seg>$<offset> -- appending mode for the given segment and offset
 	Breakpoints
 		br -M	-- Break on memory fetch or store (absolute location)
+
+Testing
+	Start a log via typescript
+	Run via make && ef BIN/multics
+		set console telnet=1234
+		# In another window, telnet to port 1234 (or whatevever) for console
+		# ini file does: boot cpu, sets breakpoints
+		issue go command
+	exit log & compare to prior run
+

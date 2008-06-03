@@ -198,6 +198,9 @@ static void init_memory_iom()
     M[3] = (cmd << 30) | (dev << 24) | 0700000;     // Bootload IDCW
     M[4] = 030 << 18;               // Second IDCW: IOTD to loc 30 (startup fault vector)
 
+    // bootload_info$cold_tape_mpc is at location 7.   bootload_tape_fw$boot examines this value
+    // M[7] = 1;
+
     t_uint64 dis0 = 0616200;
     M[010 + 2 * iom] = (imu << 34) | dis0;          // system fault vector; DIS 0 instruction
     M[030 + 2 * iom] = dis0;                        // terminate interrupt vector (overwritten by bootload)
