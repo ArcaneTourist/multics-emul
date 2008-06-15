@@ -1,3 +1,15 @@
+/*
+    opu.c -- implements instruction execution.
+
+    Called by routines in hw6180_cpu.c.
+
+    Some of the simpler mathematical and logical functions are implemented
+    here, but more complicated math functions are provided in math.h.
+    Makes heavy use of the addressing functions in apu_basic.c and
+    opu_eis_mw.c
+
+*/
+
 #include "hw6180.h"
 
 // ============================================================================
@@ -632,7 +644,7 @@ static int do_an_op(instr_t *ip)
                     uint sign = reg_X[n] >> 17;
                     reg_X[n] = (reg_X[n] - word) & MASK18;
                     uint rsign = reg_X[n] >> 17;
-                    IR.zero = reg_Q == 0;
+                    IR.zero = reg_X[n] == 0;
                     IR.neg = rsign;
                     IR.carry = sign != rsign;
                 }
@@ -1022,6 +1034,27 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
+            case opcode0_eraq: {    // XOR to AQ
+                t_uint64 word1, word2;
+                int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
+                if (ret == 0) {
+                    reg_A ^= word1;
+                    reg_Q ^= word2;
+                    IR.zero = word1 == 0 && word2 == 0;
+                    IR.neg = bit36_is_neg(reg_A);
+                }
+                return ret;
+            }
+            case opcode0_erq: { // XOR to Q
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    reg_Q ^= word;
+                    IR.zero = reg_Q == 0;
+                    IR.neg = bit36_is_neg(reg_Q);
+                }
+                return ret;
+            }
             case opcode0_ersa: {
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
@@ -1030,6 +1063,29 @@ static int do_an_op(instr_t *ip)
                     ret = store_word(TPR.CA, word);
                     IR.zero = word == 0;
                     IR.neg = bit36_is_neg(word);
+                }
+                return ret;
+            }
+            // _ersq
+            case opcode0_ersx0:     // XOR to Index Register N
+            case opcode0_ersx1:
+            case opcode0_ersx2:
+            case opcode0_ersx3:
+            case opcode0_ersx4:
+            case opcode0_ersx5:
+            case opcode0_ersx6:
+            case opcode0_ersx7: {
+                int n = op & 07;
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    uint32 upper = getbits36(word, 0, 18) ^ reg_X[n];
+                    word = ((t_uint64) upper << 18) | (word & MASK18);
+                    ret = store_word(TPR.CA, word);
+                    IR.zero = upper == 0;
+                    IR.neg = bit36_is_neg(word);
+                    complain_msg("OPU::opcode::ersx*", "AL39 requires us to set IR.neg oddly.\n", word);
+                    cancel_run(STOP_WARN);
                 }
                 return ret;
             }

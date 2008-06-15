@@ -1,3 +1,7 @@
+/*
+    hw6180_sys.c -- Most of the interfaces to SIMH.
+*/
+
 #include "hw6180.h"
 #include <ctype.h>
 
@@ -56,6 +60,11 @@ const char *sim_stop_messages[] = {
     0
 };
 
+extern CTAB *sim_vm_cmd;
+static struct sim_ctab sim_cmds[] =  {
+    { "SYMTAB", symtab_parse, 0, "symtab                   define symtab entries\n" },
+    { 0, 0, 0, 0}
+};
 
 // One-time-only initialization for emulator
 static void hw6180_init(void);
@@ -96,13 +105,15 @@ static void init_memory_iom(void);
 
 static void hw6180_init(void)
 {
-    debug_msg("SYS::init", "Once-only initialization running.\n");
+    out_msg("DEBUG:    SYS::init", "Once-only initialization running.\n");
 
     fault_gen_no_fault = 0;
     sim_vm_parse_addr = parse_addr;
     sim_vm_fprint_addr = fprint_addr;
+    sim_vm_cmd = sim_cmds;
 
     mt_init();
+    console_init();
 
     // todo: set debug flags for all devices
     cpu_dev.dctrl = 1;  // todo: don't default debug to on
@@ -158,6 +169,11 @@ static void hw6180_init(void)
 
 static void init_memory_iom()
 {
+    // On the physical hardware, settings of various switchs are reflected into memory.  We provide
+    // no support for simulation of the physical switches because there is only one
+    // useful value for almost all of the switches.  So, we hard code the memory values
+    // that represent usable switch settings.
+    //
     // All values from bootload_tape_label.alm
     // See also doc #43A239854.
     // BUG: This is for an IOM.  Do we want an IOM or an IOX?

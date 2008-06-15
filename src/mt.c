@@ -81,18 +81,31 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             t_mtrlnt tbc;
             int ret;
             if ((ret = sim_tape_rdrecf(unitp, tape_statep->bufp, &tbc, bufsz)) != 0) {
-                complain_msg("MT::iom_cmd", "Cannot read tape: %d - %s\n", ret, simh_tape_msg(ret));
-                *majorp = 010;  // BUG: arbitrary error code; confgi switch
-                *subp = 1;
-                return ret;
+                if (ret == MTSE_TMK || ret == MTSE_EOM) {
+                    warn_msg("MT::iom_cmd", "EOF: %s\n", simh_tape_msg(ret));
+                    *majorp = 044;  // EOF category
+                    *subp = 023;    // EOF file mark
+                    cancel_run(STOP_WARN);
+                    return 0;
+                } else {
+                    complain_msg("MT::iom_cmd", "Cannot read tape: %d - %s\n", ret, simh_tape_msg(ret));
+                    complain_msg("MT::iom_cmd", "Returning arbitrary error code\n");
+                    *majorp = 010;  // BUG: arbitrary error code; confgi switch
+                    *subp = 1;
+                    return 1;
+                }
             }
-            debug_msg("MT::iom_cmd", "Read %d bytes from simulated tape\n", (int) tbc);
+            warn_msg("MT::iom_cmd", "Read %d bytes from simulated tape\n", (int) tbc);
             tape_statep->bitsp = bitstm_new(tape_statep->bufp, tbc);
             *majorp = 0;
             *subp = 0;
             tape_statep->io_mode = read_mode;
             return 0;
         }
+        case 040:               // CMD 040 -- Reset Status
+            *majorp = 0;
+            *subp = 0;
+            return 0;
         case 051:               // CMD 051 -- Reset Device Status
             *majorp = 0;
             *subp = 0;
@@ -151,6 +164,9 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
     } else {
         // write
         complain_msg("MT::iom_io", "Write I/O Unimplemented\n");
+        *majorp = 043;  // DATA ALERT   
+        *subp = 040;        // Reflective end of tape mark found while trying to write
+        return 1;
     }
 
     //*majorp = 05; // Real HW could not be on bad channel

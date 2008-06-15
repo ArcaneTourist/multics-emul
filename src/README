@@ -1,25 +1,21 @@
-This emulator runs under SIMH.
+This is a hardware emulator for the hardware that ran the Multics
+operating system.
 
-SIM additions
-	Flags for the examine command:
-		-m -- display memory as machine instruction
-		-l -- display memory as LPW
-		-p -- display memory as PTW
-		-s -- display memory as SDW
-	Address forms
-		#<number> -- absolute address
-		<number> -- either absolute or relative to TPR.TSR depending upon processor mode
-		<seg>|<offset> -- appending mode for the given segment and offset
-		<seg>$<offset> -- appending mode for the given segment and offset
-	Breakpoints
-		br -M	-- Break on memory fetch or store (absolute location)
+This is pre-alpha.   The emulator does not yet boot Multics.  There is no
+support for disk drives yet.  It can read an on-disk version of a real boot
+tape and partially processes it.  Console output is implemented but not console input.  At this time the emulator seems to correctly process about 200,000
+instructions before hitting a bug.  The following console output is produced
+when the appropriate boot tape is used:
+	bootload_0: Booting system MR12.5 generated 01/11/93 0832.3 mst Mon.
+	bootload_0: Unexpected control word on tape.
+	bootload_0: Enter tape drive number for memory dump: 
 
-Testing
-	Start a log via typescript
-	Run via make && ef BIN/multics
-		set console telnet=1234
-		# In another window, telnet to port 1234 (or whatevever) for console
-		# ini file does: boot cpu, sets breakpoints
-		issue go command
-	exit log & compare to prior run
+The only reason for publishing at this time is to allow other people to
+critique and collaborate on the code.
+
+This emulator is designed for use with SIMH simulator system.
+See http://simh.trailing-edge.com/.
+
+See README.source for details of the source code.
+
 

@@ -1,3 +1,10 @@
+/*
+    misc.c -- small routines that didn't have any other home.
+
+    Currently, only some debug messaging functions.
+        
+*/
+
 #include "hw6180.h"
 #include <stdio.h>
 #include <stdarg.h>

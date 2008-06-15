@@ -554,7 +554,6 @@ extern int store_yblock16(uint addr, const t_uint64 *wordsp);
 extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
 extern int addr_mod(const instr_t *ip);
 extern SDW_t* get_sdw();
-extern int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop);
 extern const char* eis_alpha_desc_to_text(const eis_alpha_desc_t* descp);
 extern void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* descp);
 extern const char* mf2text(const eis_mf_t* mfp);
@@ -579,3 +578,4 @@ extern void mt_init(void);
 // ============================================================================
 
 #include "opcodes.h"
+#include "symtab.h"

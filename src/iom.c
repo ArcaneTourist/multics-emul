@@ -1,6 +1,7 @@
 /*
-    iom.c
-        See: Document 43A239854 -- 6000B I/O Multiplexer --  43A239854_600B_IOM_Spec_Jul75.pdf
+    iom.c -- emulation of an I/O Multiplexer
+
+    See: Document 43A239854 -- 6000B I/O Multiplexer --  43A239854_600B_IOM_Spec_Jul75.pdf
         See also: http://www.multicians.org/fjcc5.html -- Communications and Input/Output Switching in a Multiplex Computing System
         See also: Patents: 4092715, 4173783, 1593312
 

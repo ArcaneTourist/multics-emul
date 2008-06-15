@@ -1,28 +1,26 @@
 include Makefile.defs
 
 
-# multics_objs: hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o bits.o apu_basic.o apu_eis_mw.o scu.o iom.o mt.o math.o console.o
-multics.a: hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o bits.o apu_basic.o apu_eis_mw.o scu.o iom.o mt.o math.o console.o
+multics.a: hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o bits.o apu.o eis_mw_desc.o scu.o iom.o mt.o math.o console.o symtab.o
 	ar cr $@ $?
 
 hw6180_cpu.o: *.h
 hw6180_sys.o: *.h
 opcode_text.o: *.h
-misc.c: *.h
+misc.o: *.h
 opu.o: *.h
 bits.o: *.h
 apu.o: *.h
-apu_basic.o: *.h
-apu_eis_mw.o: *.h
+eis_mw_desc.o: *.h
 scu.o: *.h
 iom.o: *.h
 mt.o: *.h
 math.o: *.h
-misc.o: *.h
 console.o: *.h
+symtab.o: *.h
 
 wc:
-	wc hw6180_cpu.c hw6180_sys.c opcode_text.c misc.c opu.c bits.c apu_basic.c apu_eis_mw.c scu.c iom.c mt.c math.c console.c hw6180.h
+	wc hw6180_cpu.c hw6180_sys.c opcode_text.c misc.c opu.c bits.c apu.c eis_mw_desc.c scu.c iom.c mt.c math.c console.c symtab.c hw6180.h symtab.h bits.h
 
 bit-test.o: *.h
 bit-test: bit-test.o bits.o
@@ -33,7 +31,7 @@ tst: tst.o misc.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ tst.o misc.o
 
 clean:
-	rm -f *.o
+	rm -f *.o multics.a
 	rm -f bits bit-test tst test-op scan-tape
 
 opcodes.h: opcodes0.txt opcodes1.txt

@@ -1,3 +1,19 @@
+/*
+    hw6180_cpu.c
+
+    Provides the topmost level of instruction processing, the sim_instr()
+    function which fetches instructions and updates the program counter.
+    Provides fault and interrupt handling.
+    See opu.c for implemention of individual instructions.
+    See apu.c for implemention of addressing.
+    Provides routines for fetching from memory and storing to memory.
+    Also provides the cpu_boot() routine which simulates the way an IOM or
+    other hardware would load the first record from a boot tape into memory.
+    Provides definitions of most of the data structures related to
+    a CPU.
+*/
+
+
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -279,7 +295,7 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
         complain_msg("CPU::boot", "Cannot read tape\n");
         return ret;
     }
-    debug_msg("CPU::boot", "Read %d bytes from simulated tape %s\n", (int) tbc, fname);
+    warn_msg("CPU::boot", "Read %d bytes from simulated tape %s\n", (int) tbc, fname);
     tape_block(buf, tbc, 030);
     bootimage_loaded = 1;
 
@@ -375,6 +391,7 @@ t_stat sim_instr(void)
 uint32 ncycles = 0;
 ninstr = 0;
     uint32 start = sim_os_msec();
+    static t_symtab_ent *source = 0;        // WARNING: re-init this is (re)init() is ever implemented for symtab pkg
 
     while (reason == 0) {   /* loop until halted */
         if (sim_interval <= 0) { /* check clock queue */
@@ -394,7 +411,24 @@ if (opt_debug) {
     // fflush(stdout); printf("\n\r"); fflush(stdout);
     // fflush(stdout); printf("\n"); fflush(stdout);
     printf("\n");
-    debug_msg("MAIN", "IC: %o\n", PPR.IC);
+    // debug_msg("MAIN", "IC: %o\n", PPR.IC);
+    if (source) {
+        if (source->addr_lo <= PPR.IC && PPR.IC <= source->addr_hi)
+            debug_msg("MAIN", "IC: %o\n", PPR.IC);  // source unchanged
+        else {
+            char *old = source->name;
+            source = symtab_find(PPR.IC);
+            if (source)
+                debug_msg("MAIN", "IC: %o\tSource: %s\n", PPR.IC, source->name);
+            else
+                debug_msg("MAIN", "IC: %o\tSource: Unknown (leaving %s)\n", PPR.IC, old);
+        } 
+    } else {
+        if ((source = symtab_find(PPR.IC)) != NULL)
+            debug_msg("MAIN", "IC: %o\tSource: %s\n", PPR.IC, source->name);
+        else
+            debug_msg("MAIN", "IC: %o\n", PPR.IC);  // still unknown
+    }
 }
         reason = control_unit();
         ++ ncycles;

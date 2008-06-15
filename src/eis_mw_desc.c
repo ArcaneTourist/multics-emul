@@ -1,8 +1,10 @@
 /*
-    apu_eis_ms.c -- part of the appending unit (APU) -- "address appending"
-    See apu_basic.c for most of the addressing support.
-    The code here provides support for addressing modes used by EIS multi-word
-    instructions.
+    eis_mw_desc.c
+    Routines related to descriptors for EIS multi-word instructions.
+    Descriptors describe operand locations and looping controls used
+    by many EIS multi-word instructions.
+    This code was originally in apu.c because the descriptors are used
+    for addressing.
 */
 
 // Supposedly, appending unit HW controls fault recognition?
@@ -12,11 +14,12 @@
 enum atag_tm { atag_r = 0, atag_ri = 1, atag_it = 2, atag_ir = 3 }; // BUG: move to hdr
 
 extern void reg_mod(uint td, int off);  // BUG
-extern int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop);
+extern int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop, int nbits);
 
 static int get_via_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int index, uint *nib);
 static int get_eis_an_fwd(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib);
 static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits);
+static int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop, int nbits);
 
 //=============================================================================
 
@@ -263,7 +266,7 @@ static int get_eis_an_base(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
 
     uint addr1;
 
-    if (get_mf_an_addr(descp->base_addr, mfp, &addr1, &descp->base_bitpos) != 0) {
+    if (get_mf_an_addr(descp->base_addr, mfp, &addr1, &descp->base_bitpos, descp->nbits) != 0) {
         warn_msg(moi, "Failed: get_mf_an_addr\n");
         return 1;
     }
@@ -419,162 +422,6 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib)
     return 0;
 }
 
-
-#if 0
-static int get_via_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int index, uint *nib)
-{
-    // Return a single char via an EIS descriptor.  Fetches new words as needed.
-    // High order bits of nib are zero filled 
-
-    const char* moi = "APU::eis-an-get-i";
-
-    int saved_debug = opt_debug;
-    uint need_fetch = 0;
-    if (descp->first) {
-        // Get base addr
-        uint addr1;
-        // BUG: need to get rel addr
-        if (get_mf_an_addr(descp->base_addr, mfp, &addr1, &descp->base_bitpos) != 0) {
-            warn_msg(moi, "Failed: get_mf_an_addr\n");
-            opt_debug = saved_debug;
-            return 1;
-        }
-        if (descp->base_bitpos == 0) {
-            debug_msg(moi, "Base address is 0%o (with no bit offset)\n", addr1);
-        } else {
-            debug_msg(moi, "Base address is 0%o with bit offset %d\n", addr1, descp->base_bitpos);
-        }
-        descp->base_addr = addr1;
-        if (descp->cn != 0) {
-            descp->base_bitpos += descp->cn * descp->nbits;
-            if (descp->base_bitpos >= 36) {
-                warn_msg(moi, "Too many offset bits for a single word.  Base address is 0%o with bit offset %d; CN offset is %d (%d bits).\n", descp->base_addr, descp->base_bitpos, descp->cn, descp->cn * descp->nbits);
-                cancel_run(STOP_WARN);
-                descp->base_addr += descp->base_bitpos % 36;
-                descp->base_bitpos /= 36;
-            }
-            debug_msg(moi, "Cn is %d, so base bitpos becomes %d\n", descp->cn, descp->base_bitpos);
-        }
-        if (index == -1) {
-            // forward sequential
-            descp->addr = descp->base_addr;
-            descp->bitpos = descp->base_bitpos;
-            debug_msg(moi, "First char is at addr 0%o, bit offset %d\n", descp->addr, descp->bitpos);
-        } else if (index < 0) {
-            // reverse sequential
-            int nparts = 36 / descp->nbits; // "chars" per word
-            descp->addr = descp->base_addr;
-            int ndx = descp->n + descp->base_bitpos * nparts;
-            descp->addr = descp->base_addr + ndx / nparts;
-            descp->bitpos = (ndx % nparts) * descp->nbits;
-            debug_msg(moi, "Last char is at addr 0%o, bit offset %d\n", descp->addr, descp->bitpos);
-        } else {
-            // Random access -- handle below
-        }
-        need_fetch = 1;
-    } else {
-        if (index == -1) {
-            // forward sequential
-            need_fetch = descp->bitpos == 36;
-        } else if (index < 0) {
-            // reverse sequential
-            need_fetch = descp->bitpos < 0;
-        }
-    }
-
-    if (index >= 0) {
-        // Random access
-        // See if current word has the bits we need
-        int orig_index = index;
-        index += descp->base_bitpos / descp->nbits;
-        int nparts = 36 / descp->nbits; // "chars" per word
-        uint a = descp->base_addr + index / nparts;
-        if (descp->addr != a) {
-            descp->addr = a;
-            need_fetch = 1;
-        }
-        descp->bitpos = (index % nparts) * descp->nbits;
-        debug_msg(moi, "Random access char %d is at addr 0%o, bit offset %d\n", orig_index, descp->addr, descp->bitpos);
-    }
-
-    // TODO:
-    // Would be efficient for VM system to expose the bounds of the page we're
-    // addressing.  That would avoid using the VM for every single word.
-    // Could have page-in always set a global.   The fetch/store y-block
-    // routines could also benefit.
-    
-    if (index < 0) {
-        // Sequential access (forward or reverse)
-        if (descp->n == 0) {
-            warn_msg(moi, "Descriptor exhausted\n");
-            opt_debug = saved_debug;
-            cancel_run(STOP_WARN);
-            return 1;
-        }
-    }
-
-    // BUG: We get a base addr and assume everything we want is paged in
-
-    // BUG: FIXED: This stepping logic probably isn't right for strings that are offset
-    // from the initial addr via a PR.  PR defines starting location of the
-    // string, so it's always a factor.   However, CN is an offset into the
-    // string.  It's always a factor too.  Using CN may affect effective 
-    // string length?  Probably not...
-    // Example
-    //   if PR points to last char, then char #2 is at the beginning of second word
-    //   if PR points to first char, but CN says first char is at 3rd positon,
-    //   the 2nd char must still be at the beginning of the second word
-
-
-    if (need_fetch) {
-        // fetch a new src word
-
-        // debug_msg(moi, "Fetching src word.\n");
-        if (fetch_abs_word(descp->addr, &descp->word) != 0) {
-            warn_msg(moi, "Failed: fetch word 0%o\n", descp->addr);
-            opt_debug = saved_debug;
-            return 1;
-        }
-        opt_debug = saved_debug;
-        debug_msg(moi, "Fetched word at 0%o %012Lo\n", descp->addr, descp->word);
-
-        // figure out bitpos
-
-        if (descp->first) {
-            // Bitpos set above
-            descp->first = 0;
-        } else {
-            if (index == -1) {
-                // forward sequential
-                descp->bitpos = 0;
-            } else if (index < 0) {
-                // reverse sequential
-                //int nparts = 36 / descp->nbits;   // "chars" per word
-                descp->bitpos =  36 - descp->nbits;
-            } else  {
-                // Random access -- bitpos set above
-            }
-        }
-        if (index == -1) {
-            // forward sequential
-            ++ descp->addr;
-        } else if (index < 0) {
-            // reverse sequential
-            -- descp->addr;
-        }
-        opt_debug = saved_debug;
-    }
-opt_debug = saved_debug;
-
-    *nib = getbits36(descp->word, descp->bitpos, descp->nbits);
-    //if (opt_debug)
-    //  debug_msg(moi, "%dbit char at bit %d of word %012Lo, value is 0%o\n", descp->nbits, descp->bitpos, descp->word, *nib);
-    -- descp->n;
-    descp->bitpos += descp->nbits;
-    return 0;
-}
-#endif
-
 //=============================================================================
 
 int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
@@ -706,12 +553,13 @@ int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
 
 //=============================================================================
 
-int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop)
+static int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop, int nbits)
 {
     // Return absolute address for EIS operand in Alphanumeric Data Descriptor Format
     // BUG: some callers may keep results.  This isn't valid for multi-page segments.
 
-    return get_address(y, mfp->ar, mfp->reg, addrp, bitnop);
+    return get_address(y, mfp->ar, mfp->reg, addrp, bitnop, nbits);
+
 }
 
 
@@ -772,7 +620,7 @@ int get_eis_indir_addr(t_uint64 word, uint* addrp)
     }
 
     uint bitno;
-    int ret = get_address(addr, a, td, addrp, &bitno);
+    int ret = get_address(addr, a, td, addrp, &bitno, 36);
     if (bitno != 0) {
         warn_msg(moi, "Non zero bitno %d cannot be returned\n", bitno);
         cancel_run(STOP_BUG);

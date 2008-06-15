@@ -1,3 +1,7 @@
+/*
+    math.c -- math routines.   Implemented via GNU MP library.
+*/
+
 #include "hw6180.h"
 #include <limits.h>
 #include <gmp.h>

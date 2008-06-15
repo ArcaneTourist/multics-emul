@@ -6,7 +6,7 @@
     The term SCU is used throughout this code to match AL39, but the
     device emulated is closer to a Level 68 System Controller (SC) than
     to a Series 60 Level 66 Controller (SC).  The emulated device may
-    be closer to a Level 68 4MW SCU than to an LEvel 68 6000 SCU.
+    be closer to a Level 68 4MW SCU than to an Level 68 6000 SCU.
 */
 
 /*
