@@ -1656,6 +1656,19 @@ static int do_an_op(instr_t *ip)
             // limr ??
             // ldo ??
             // camp2 ??
+            //
+            case opcode0_easp0:
+            case opcode0_easp2:
+            case opcode0_easp4:
+            case opcode0_easp6: {
+                if (get_addr_mode() == BAR_mode) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                int n = op & 07;
+                AR_PR[n].PR.snr = TPR.CA;
+                return 0;
+            }
 
             default:
                 complain_msg("OPU", "Unimplemented opcode 0%0o(0)\n", op);
@@ -1787,6 +1800,19 @@ static int do_an_op(instr_t *ip)
                 t_uint64 word0, word1;
                 spri_to_words(n, &word0, &word1);
                 return store_pair(TPR.CA, word0, word1);
+            }
+
+            case opcode1_easp1:
+            case opcode1_easp3:
+            case opcode1_easp5:
+            case opcode1_easp7: {
+                if (get_addr_mode() == BAR_mode) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                int n = op & 07;
+                AR_PR[n].PR.snr = TPR.CA;
+                return 0;
             }
 
             default:

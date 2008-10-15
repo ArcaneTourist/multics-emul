@@ -3,7 +3,8 @@ operating system.
 
 This is pre-alpha.   The emulator does not yet boot Multics.  There is no
 support for disk drives yet.  It can read an on-disk version of a real boot
-tape and partially processes it.  Console output is implemented but not console input.  At this time the emulator seems to correctly process about 200,000
+tape and partially process it.  Console output is implemented but not console
+input.  At this time the emulator seems to correctly process about 200,000
 instructions before hitting a bug.  The following console output is produced
 when the appropriate boot tape is used:
 	bootload_0: Booting system MR12.5 generated 01/11/93 0832.3 mst Mon.

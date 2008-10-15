@@ -57,8 +57,8 @@ void out_msg(const char* format, ...)
 
 static void msg(const char* tag, const char *who, const char* format, va_list ap)
 {
-    fflush(stdout);
     printf("%s: %*s %s: %*s", tag, 7-strlen(tag), "", who, 18-strlen(who), "");
+    fflush(stdout);
 
     // SIMH does something odd with the terminal, so output CRNL
     int len =strlen(format);
@@ -69,6 +69,7 @@ static void msg(const char* tag, const char *who, const char* format, va_list ap
             strcpy(f, format);
             *(f + len - 1) = '\r';
             *(f + len) = '\n';
+            *(f + len + 1) = 0;
             vprintf(f, ap);
             free(f);
         } else {

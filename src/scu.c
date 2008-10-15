@@ -329,6 +329,10 @@ int scu_cioc(t_uint64 addr)
     //  CPU target: connect fault
     
     // todo: check if enabled & not masked
+    {
+        static int n_cioc = 0;
+        warn_msg("SCU::cioc", "CIOC # %d\n", ++ n_cioc);
+    }
     warn_msg("SCU::cioc", "Partially implemented: Connect sent to port %d => %d\n", port, scu.ports[port]);
 
     // we only have one IOM, so signal it

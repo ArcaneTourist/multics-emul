@@ -1,0 +1,409 @@
+History of pre-release versions
+    Constructed via diffs of saved copies
+
+=== Pre-Version 01 01/04/2008
+    No code other than pseudo code used in notes
+
+=== Pre-Version 02 01/07/2008
+    Expanded notes
+    hw6180.h: define instr_t, IR_t, fault_reg_t, ctl_unit_data_t, bitval36()
+    hw6180.c:
+        initial sketch of sim_instr() with call to control_unit()
+        initial control_unit() in pseudo code
+
+=== Pre-Version 03 01/07/2008
+    hw6180.h: enums addr_modes_t, instr_modes_t
+    hw6180.c:
+        some expansion of control_unit(), but much is still pseudo code
+        and not compilable
+
+=== Pre-Version 04 01/08/2008
+    hw6180.h: fix bitval36(), add bitset36(), bitclear36()
+
+=== Pre-Version 05 01/11/2008
+    First compilable version
+    Add Makefile
+    Updates to notes
+    hw6180.h
+        Add uint type as an efficent int that is at least 32 bits in size
+        Add cycles_t, enum faults, enum sim_stops, cpu_state_t, events_t,
+            PPR_t, TPR_t, switches_t
+        Add getbits36()
+        Add TPR_TRR, TPR_TSR, IC, CA, CT_HOLD to ctl_unit_data_t
+    hw6180_cpu.c
+        Add structures for SIMH
+        Add cpu_boot() to load tape
+        Function control_unit() fleshed out
+        Function fault_gen() translated from pseudo code to real code
+        Added set_addr_mode(), get_addr_mode(), fetch_instr(), fetch_word(),
+            fetch_pair(), decode_instr(), decode_ypair_addr(), 
+            decode_addr(), 
+    misc.c: initial version with debug_msg()
+    opcode_text.c: initial version
+    opcodes.h: initial version
+    opcodes0.txt: initial version
+    opcodes1.txt: initial version
+    opcodes2c.pl: initial version
+    opu.c: initial version
+        Provided execute_instr() and do_op(); only instruction is "xed"
+
+=== Pre-Version 06 01/14/2008
+    Loads first block of tape image into memory
+    bits.h: initial version
+    bits.c: initial version
+    hw6180_cpu.c: load first block of tape image into memory
+    opcodes.h: switch from opcode_XXX to opcode0_XXX and opcode1_xxx
+    opcodes2c.pl: switch from opcode_XXX to opcode0_XXX and opcode1_xxx
+    opu.c: Add a second instruction, ADX1.
+
+=== Pre-Version 07 01/14/2008
+    apu.c
+        Initial version
+        Moved set_addr_mode(), get_addr_mode(), decode_ypair_addr() from hw6180_cpu.c
+        Initial version of addr_mod() -- pseudo code for non absolute mode
+    hw6180.h:
+        Added overflow_fault
+        Modifications to IR_t
+        Fix to getbits36()
+        Added setbits36()
+    hw6180_cpu.c
+        Moved some routines to new file, apu.c
+        Expansion of fault handling
+    opcodes0.txt: corrected spelling of "rpt"
+    opu.c
+        Added call to addr_mod()
+        Expanded opcodes implemented from two to forty-three.
+    scan-tape.c
+        Initial version.  Utility to dump tape.
+
+=== Pre-Version 08 01/17/2008
+    General
+        Added an SCU, and support for defining how components are wired to SCU
+        Added a timer and related LDT instruction
+        Added PTWAM, SDWAM
+        added store_fault
+    scu.c
+        Initial version
+    apu.c
+        Implemented register mode (r) modification
+    hw6180_cpu.c
+        Added cancel_run()
+        Improved fault handling re prioritization etc
+    hw6180_sys.c
+        Use cpu_port, and scu_ports to define how components are wired together
+        Support for a timer
+    opu.c
+        More instructions
+
+=== Pre-Version 09 01/18/2008
+    General
+        Added div_fault
+        Added IR flag tally_runout
+    hw6180_cpu.c
+        Cleanup handling of instructions at odd locations
+    opu.c
+        More instructions including 72bit addition
+
+=== Pre-Version 10 01/20/2008
+    General
+        Added an IOM and related CIOC, SMCM instructions
+        Still working on executing bootload_tape_label.alm  
+        Added f1_fault
+        Added memory breakpoints
+    hw6180_sys.c
+        Made A, Q, E, X, IR, TR registers visible to SIMH
+        Modifications to structures for SCU interconnectivity
+        Seperate routines for iom and iox memory initialization
+    iom.c
+        Initial version -- just debug dump of mailboxes
+    opu.c
+        More instructions
+        Created add18()
+    scu.c
+        Changes to scu_set_mask()
+        Added clock
+    
+=== Pre-Version 11 01/23/2008
+    General
+        Support SIMH memory examination and deposit
+    iom.c
+        Initial version of list service, PCW and DCW handling 
+
+=== Pre-Version 12 01/26/2008
+    General
+        A tape drive
+        IOM work
+    hw6180_cpu.c
+        Use SIMH tape routines instead of our own code
+    iom.c
+        Updates to PCW and DWC handling
+    mt.c
+        Initial version
+
+=== Pre-Version 13 01/27/2008
+    General
+        IOM work -- not compilable
+    iom.c
+        Chages to fault handling
+        Initial CIOC in iom_interrupt() now loops until tally run out
+        Reworked list_service()
+
+=== Pre-Version 14 01/27/2008
+    General
+        IOM work
+    hw6180_sys.c
+        Corrections to initial memory contents
+    iom.c
+        Much changes
+    mt.c
+        Implementation of actual reads
+    opu.c
+        Correction of many instructions that use the lower 3 bits of
+        the CA as an index into X[] or as a value
+
+=== Pre-Version 15 02/07/2008
+    apu.c
+        Add "IT" addressing mode
+    hw6180_cpu.c
+        Fix examine routine for SIMH to match SIMH code (SIMH docs wrong)
+    iom.c
+        After first list service, do a PCW if appropriate
+        Changes to channel handling, PCW loop control
+        Changes to looping in list_service()
+        Inital version of status service
+    mt.c
+        Corrections to status codes
+
+=== Pre-Version 16 02/08/2008
+    iom.c
+        Add looping to do_channel()
+
+=== Pre-Version 17 02/17/2008
+    hw6180.h
+        Changes to address representation
+        New type AR_PR_t to replace seperate AR[] and PR[] register arrays
+        New type DSBR_t
+    apu.c
+        Code moved from addr_mod() to compute_addr()
+        addr_mod() now loops
+        Handling of PR bit (ptr reg flag)
+    bits.c
+        Corrections to detect stream exhaustion
+    iom.c
+        Changes to when extra list service is requested in do_channel()
+        Send I/O requests to devices
+    mt.c
+        Initial version of mt_iom_io() to read and return records
+        Remember state; Use bitstm
+    opu.c
+        Instructions related to VM such as LDBR and EPP*
+
+=== Pre-Version 18 02/19/2008
+    hw6180.h
+        Change handling of values produced by CA
+    apu.c
+        Various tweaks to CA cycle
+        Implemented RI addr mod
+
+=== Pre-Version 19 02/22/2008
+    General
+        Not compilable
+    apu.c
+        Enter appending mode if PR flag set
+        Implementation of ESN segmentation (the portion of AL39 figure 6-10 that is below the "CA CYCLE" box)
+        Changes to looping in CA cycle
+    opu.c
+        Only change addressing mode for transfer instructions
+
+=== Pre-Version 20 02/25/2008
+    General
+        Appending mode and Hardware virtual memory
+    apu.c
+        ITS/ITP
+        Hardware virtual memory (See AL39, figure 5-4)
+        Remove do_esn_segmentation()
+
+=== Pre-Version 21 02/26/2008
+    General
+        Examine execution of bootload_abs_mode.alm
+    apu.c
+        More work on VM
+    hw6180_sys.c
+        Examine formatting for PTWs and SDWS
+
+=== Pre-Version 22 02/29/2008
+    General
+        Start to handle EIS multi-word instructions
+        Examination of bootload_0.alm and bootload_io.alm
+    hw6180.h
+        Added eis_mf_t for handling MF fields of EIS multi-word instructions
+    apu.c
+        Initial versions of parse_mf(), fetch_mf_ops(), fix_mf_len(),
+        get_mf_an_addr(), etc
+    opu.c
+        Initial implemention of mlr, a multi-word instruction.  Not all options supported.
+
+=== Pre-Version 23 02/29/2008
+    General
+        Examination of bootload_flagbox.alm
+    hw6180_sys.c
+        Corrected memory init
+        Added address parsing for SIMH for segmented addresses
+    opu.c
+        Added instructions and re-arranged
+
+=== Pre-Version 24 03/06/2008
+    General
+        Examination of bootload_console.alm and bootload_slt_manager.alm
+    math.c
+        Initial version
+    hw6180_cpu.c
+        IR expanded from 14 bits to 18 bits (only 14 or 15 valid)
+        Added routines for handling Y-block stores and loads
+    opu.c
+        Added instructions
+        Enhanced mlr; added cmpc
+    apu.c
+        Handle modifiers for MF fields of EIS multi-word instructions
+        fix_mf_len() now takes a nbits arg
+        Don't stomp TPR in get_mf_an_addr() while determing the absolute
+        address for an  EIS operand in Alphanumeric Data Descriptor Format
+        Improved handling of RI addr mod and ITS/ITP
+
+=== Pre-Version 25 03/06/2008
+    General
+        Added console support
+        Examination of bootload_error.alm
+    console.c
+        Initial version
+    opu.c
+        Added instructions
+
+=== Pre-Version 26 03/08/2008
+    General
+        Examination of bootload_formline.alm
+    opu.c
+        Call addr_mod_eis_addr_reg() for instr a9bd
+        Instructions sbx* use low bits of operand
+        Move mlr code to op_mlr()
+        Pass bitno arg to get_mf_an_addr()
+        Handle mlr instructions where n1!=n2 or lengths are partial words
+        Added instructions
+        Correct add18() to properly handle setting zero flag and negative flag on overflow
+    apu.c
+        Handle more MF modifications
+        Initial version of addr_mod_eis_addr_reg() for setting AR[] and PR[]
+        registers for selected instructions (initially just a9bd).
+    hw6180_cpu.c
+        Update fetch_yblock() and store_yblock() to support both aligned and unaligned blocks
+
+
+=== Pre-Version 27 03/09/2008
+    General
+        Added generalized routines for handling EIS descriptors to be used
+        in the implementation of multiple EIS instructions
+    hw6180.h
+        Added eis_alpha_desc_t
+    apu.c
+        Initial version of get_eis_an() to return a single char via an EIS descriptor.
+        Initial version of parse_eis_alpha_desc() to return the absolute
+        address for EIS operands in Alphanumeric Data Descriptor Format
+        Initial version of mf2text(), eis_alpha_desc_to_text()
+    opu.c
+        Re-implemented mlr to use new EIS descriptor handling routines
+
+=== Pre-Version 28 03/10/2008
+    apu.c
+        Updates re fetching EIS operands via MF fields
+    opu.c
+        Fix to MLR re fill value
+
+=== Pre-Version 29 03/11/2008
+    apu.c
+        Seperate out get_address() from get_mf_an_addr() for use in
+        new get_eis_indir_addr()
+    opu.c
+        Fix add36() re IR settings after overflow
+        Implemented TCT
+
+=== Pre-Version 30 03/14/2008
+    apu.c
+        Rework get_eis_an() and put_eis_an().
+
+=== Pre-Version 31 03/15/2008
+    hw6180.h
+        Change CA in TPR from 64bit type to 32bit type (holding 18bit values)
+    apu.c
+        Tweak to handling of a9bd and other EIS functions to sign extend
+        the 18bit CA
+    opu.c
+        Implement MVT
+
+=== Pre-Version 32 03/17/2008
+    apu.c
+        Initial get_eis_an_rev() for EIS instructions that need to process
+        blocks of data in reverse.
+        Special handling for STCA
+    opu.c
+        Update to STCA.
+        Set AR/PR bitno/charno for lpri
+        Update op_tct() to do both TCT and TCTR.
+
+=== Pre-Version 33 04/06/2008
+    apu.c
+        Handle AU in EIS MF fields
+        Fixes to get_eis_an_rev()
+        Update get_address() to do register modification
+    iom.c
+        The "for foo" hack
+        Support console I/O
+        Update to DDCW looping
+    opu.c
+        Add LDI, SBLX*
+        Updates re checking for priviledged mode
+
+=== Pre-Version 34 04/06/2008
+    General
+        Investigation of problem in tape read loop
+
+=== Pre-Version 35 06/02/2008
+    General
+        Move EIS code out of apu.c
+        Determine tape problem is related to using word counts instead
+        of char counts.
+
+=== Pre-Version 36 06/14/2008
+    General
+        Examine bootload_early_dump
+        Added symbol table; initial version tracks addresses vs source files
+        Re-work apu.c split to create eis_mw_desc.c
+    console.c
+        Cleanup state tracking
+    mt.c
+        Handling of tape marks and EOM
+    opu.c
+        Correctly set zero flag for sblx*
+        Add instructions
+
+=== Pre-Version 37 06/14/2008
+    General
+        No code changes
+
+=== Pre-Version 38 10/05/2008
+    General
+        Very minor code changes
+        Analysis of code flow of call from bootload_tape_fw$boot to
+        skip_collection and why tape data isn't transferred.
+
+=== Pre-Version 39 10/13/2008
+    iom.c
+        Modifications to the IOM for debugging and to parse DCWs into a
+        structure.
+
+=== Pre-Version 40 10/13/2008
+    iom.c
+        Re-work looping mechanisms.  Remove "for foo" hack.  Instead, the
+        payload channels will request an indirect data service after any
+        I-DCW involving a data transfer.  The indirect data service is
+        implemented as just an additional list service call, but that
+        seems sufficient.

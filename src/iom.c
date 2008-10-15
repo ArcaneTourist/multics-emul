@@ -56,7 +56,7 @@ typedef struct {
     uint32 idcw;    // ptr to most recent dcw, idcw, ...
 } lpw_t;
 
-// Much of this is from, AN87 as 43A23985 lacked details of 0..18 and 22..36
+// Much of this is from AN87 as 43A23985 lacked details of 0..18 and 22..36
 typedef struct pcw_s {
     int dev_cmd;    // 6 bits; 0..5
     int dev_code;   // 6 bits; 6..11
@@ -121,6 +121,7 @@ static int parse_pcw(pcw_t *p, int addr, int ext);
 static int dev_send_pcw(int chan, pcw_t *p);
 static int status_service(int chan);
 static int send_chan_flags();
+static int list_service_whatif(int chan, int first_list, int *ptro, int *addrp);
 
 static void dump_cioc()
 {

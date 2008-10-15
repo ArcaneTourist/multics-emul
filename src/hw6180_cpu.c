@@ -583,11 +583,11 @@ static t_stat control_unit(void)
             if (fetch_word(PPR.IC - PPR.IC % 2 + 1, &cu.IRODD) != 0)
                 cycle = FAULT_cycle;
             if (opt_debug && get_addr_mode() != ABSOLUTE_mode)
-                debug_msg("CU", "Fetched odd half of instructio pair\n");
+                debug_msg("CU", "Fetched odd half of instruction pair\n");
             break;
 
 #if 0
-    we don't use an ABORT cycle
+    // we don't use an ABORT cycle
         case ABORT_cycle:
             debug_msg("CU", "Cycle = ABORT\n");
             // Invoked when control unit decides to handle fault
@@ -728,6 +728,7 @@ static t_stat control_unit(void)
             // todo: check for IC matching curr instr or at least even/odd sanity
             TPR.TSR = PPR.PSR;
             TPR.TRR = PPR.PRR;
+            
             if (! cpu.ic_odd) {
                 if (opt_debug) debug_msg("CU", "Cycle = EXEC, even instr\n");
                 if (sim_brk_summ) {

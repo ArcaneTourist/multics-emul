@@ -261,6 +261,9 @@ typedef struct {
     // cu bits for repeats, execute double, restarts, etc
 #endif
 
+    /* word 5, continued */
+    flag_t repeat_first;        // "RF" flag -- first cycle of a repeat instruction
+    flag_t rpt;     // execute an rpt instruction
     uint CT_HOLD;   // 6 bits at 5[30..35]; contents of the "remember modifier" register
 
     /* word 6 */
@@ -568,11 +571,15 @@ extern void load_IR(t_uint64 word);
 
 extern void set_addr_mode(addr_modes_t mode);
 extern addr_modes_t get_addr_mode(void);
+extern int is_priv_mode(void);
 
-extern int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp);
 extern int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp);
 extern int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 extern void mt_init(void);
+
+extern void console_init(void);
+extern int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp);
+extern int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 
 
 // ============================================================================

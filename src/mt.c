@@ -158,6 +158,7 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
             complain_msg("MT::iom_io", "Read buffer exhausted on channel %d\n", chan);
             return 1;
         }
+        // debug_msg("MT::iom_io", "Data moved from tape controller buffer to IOM\n");
         *majorp = 0;
         *subp = 0;      // BUG: do we need to detect end-of-record?
         return 0;
