@@ -729,8 +729,25 @@ static t_stat control_unit(void)
             TPR.TSR = PPR.PSR;
             TPR.TRR = PPR.PRR;
             
+            // handle rpt and other repeat instructions
+            // -----
+            // don't switch to fetch cycle or update ic_odd except as noted here
+            // pre-exec: nothing special needed?  Check ic_odd and exec appropriate instr?
+            // post-exec, first: set fetch if needed
+                // rpt@odd: fetch pair (if first -- note this matches non-rpt behavior)
+                // rpt-dbl: always fetch pair (if first -- note this matches non-rpt behavior)
+                // rpt@even: expect to execute odd ( note this matches non-rpt behavior )
+            // post-exec, not first: rpt, IC unchanged; rpt-dbl: IC swaps even/odd
+            // post-exec: check termination
+            // faults and interrupts ???
+
+            if (opt_debug) { 
+                if (! cpu.ic_odd)
+                    debug_msg("CU", "Cycle = EXEC, odd instr\n");
+                else
+                    debug_msg("CU", "Cycle = EXEC, odd instr\n");
+            }
             if (! cpu.ic_odd) {
-                if (opt_debug) debug_msg("CU", "Cycle = EXEC, even instr\n");
                 if (sim_brk_summ) {
                     if (sim_brk_test (PPR.IC, SWMASK ('E'))) {
                         warn_msg("CU", "Execution Breakpoint\n");
@@ -740,15 +757,7 @@ static t_stat control_unit(void)
                 }
                 uint IC_temp = PPR.IC;
                 (void) execute_ir();
-#if 0
-                // delay any fault handling for faults by even instr
-                if (cycle == EXEC_cycle && !cpu.xfr && PPR.IC == IC_temp) {
-                    cpu.ic_odd = 1; // execute odd instr of current pair
-                    ++ PPR.IC;
-                } else {
-                    cycle = FETCH_cycle;
-                }
-#else
+
                 // Check for fault from even instr
                 // todo: simplify --- cycle won't be EXEC anymore
                 if (events.any && events.low_group && events.low_group < 7) {
@@ -760,15 +769,13 @@ static t_stat control_unit(void)
                                 cpu.ic_odd = 1; // execute odd instr of current pair
                                 ++ PPR.IC;
                             } else {
-                                cycle = FETCH_cycle;
+                                cycle = FETCH_cycle;    // IC changed; previously fetched instr for odd location isn't any good now
                             }
                     } else {
                         warn_msg("CU", "Changed from EXEC cycle to %d, not updating IC\n", cycle);
                     }
                 }
-#endif
             } else {
-                if (opt_debug) debug_msg("CU", "Cycle = EXEC, odd instr\n");
                 // We assume IC was advanced after even instr
                 decode_instr(&cu.IR, cu.IRODD);
                 if (sim_brk_summ) {
@@ -879,15 +886,23 @@ int fetch_instr(uint IC, instr_t *ip)
             complain_msg("CU::fetch-instr", "Addr 0%o (%d decimal) is too large\n", IC, IC);
             (void) cancel_run(STOP_BUG);
         }
-        decode_instr(ip, M[IC]);    // WARNING: skips fetch_word (but we're in absolute mode)
+        if (ip)
+            decode_instr(ip, M[IC]);    // WARNING: skips fetch_word (but we're in absolute mode)
         return 0;
     }
 
     t_uint64 word;
     int ret = fetch_word(IC, &word);
-    decode_instr(ip, word);
-    if (opt_debug)
+    if (ip)
+        decode_instr(ip, word);
+    if (opt_debug) {
+        instr_t i;
+        if (ip == NULL) {
+            ip = &i;
+            decode_instr(ip, word);
+        }
         debug_msg("CU::fetch-instr", "Fetched word %012Lo => %s\n", word, instr2text(ip));
+    }
     return ret;
 }
 

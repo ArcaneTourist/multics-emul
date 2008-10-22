@@ -395,12 +395,12 @@ History of pre-release versions
         Analysis of code flow of call from bootload_tape_fw$boot to
         skip_collection and why tape data isn't transferred.
 
-=== Pre-Version 39 10/13/2008
+=== Pre-Version 39 10/13/2008 -- lost
     iom.c
         Modifications to the IOM for debugging and to parse DCWs into a
         structure.
 
-=== Pre-Version 40 10/13/2008
+=== Pre-Version 40 10/13/2008 --- lost
     iom.c
         Re-work looping mechanisms.  Remove "for foo" hack.  Instead, the
         payload channels will request an indirect data service after any

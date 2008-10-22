@@ -1670,6 +1670,33 @@ static int do_an_op(instr_t *ip)
                 return 0;
             }
 
+            case opcode0_rpt: {
+                // AL39, page 209
+                uint tally = (ip->addr >> 10);
+                uint c = (ip->addr >> 7) & 1;
+                uint term = ip->addr & 0177;
+                uint delta = ip->mods.single.tag;
+                if (c) {
+                    t_uint64 instr;
+                    if (fetch_word(PPR.IC + 1, &instr) != 0) {
+                        complain_msg("OPU", "Error fetching next word for repeat\n");
+                        return 1;
+                    }
+                    reg_X[0] = getbits36(instr, 0, 18);
+                }
+                if (tally == 0)
+                    tally = 256;
+                cu.rpt = 1;
+                cu.repeat_first = 1;
+                // Setting cu.rpt will cause the instruction to be executed
+                // until the termination is met.
+                // See cpu.c for the rest of the handling.
+                // IR.tally_runout = getbits36(reg_X[9], 0, 8) == 0;
+                complain_msg("OPU", "RPT instruction unimplemented\n");
+                cancel_run(STOP_BUG);
+                return 1;
+            }
+
             default:
                 complain_msg("OPU", "Unimplemented opcode 0%0o(0)\n", op);
                 cancel_run(STOP_BUG);
