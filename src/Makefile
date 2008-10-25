@@ -20,7 +20,7 @@ console.o: *.h
 symtab.o: *.h
 
 wc:
-	wc hw6180_cpu.c hw6180_sys.c opcode_text.c misc.c opu.c bits.c apu.c eis_mw_desc.c scu.c iom.c mt.c math.c console.c symtab.c hw6180.h symtab.h bits.h
+	wc hw6180.h symtab.h bits.h hw6180_cpu.c hw6180_sys.c opcode_text.c misc.c opu.c bits.c apu.c eis_mw_desc.c scu.c iom.c mt.c math.c console.c symtab.c
 
 bit-test.o: *.h
 bit-test: bit-test.o bits.o

@@ -407,3 +407,13 @@ History of pre-release versions
         I-DCW involving a data transfer.  The indirect data service is
         implemented as just an additional list service call, but that
         seems sufficient.
+
+=== Pre-Version 41 10/22/2008
+    General
+        Restore from pre-version 38
+        Notes and pseudo-code for the rpt instruction.
+
+=== Pre-Version 42 10/22/2008
+    iom.c
+        Modifications to the IOM to parse DCWs into a structure.
+

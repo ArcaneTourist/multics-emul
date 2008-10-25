@@ -62,13 +62,28 @@ typedef struct pcw_s {
     int dev_code;   // 6 bits; 6..11
     int ext;        // 6 bits; 12..17
     int cp;         // 3 bits; 18..20, must be all ones
-    flag_t mask;    // 1 bit; bit 21
+    flag_t mask;    // extension control or mask; 1 bit; bit 21
     int control;    // 2 bits; bit 22..23
-    int chan_cmd;   // 6 bits; bit 24..29
+    int chan_cmd;   // 6 bits; bit 24..29; AN87 says: 00 single record xfer, 02 non data xfer, 06 multi-record xfer, 10 single char record xfer
     int chan_data;  // 6 bits; bit 30..35
     //
     int chan;       // 6 bits; bits 3..8 of word 2
 } pcw_t;
+
+typedef struct dcw_s {
+    enum { ddcw, tdcw, idcw } type;
+    union {
+        pcw_t instr;
+        struct {
+            uint daddr; // data address; 18 bits at 0..17);
+            uint cp;    // char position; 3 bits 18..20
+            uint tctl;  // tally control; 1 bit at 21
+            uint type;  // 2 bits at 22..23
+            uint tally; // 12 bits at 24..35
+        } ddcw;
+    } fields;
+} dcw_t;
+
 
 #if 0
 // from AN87, 3-8
@@ -111,13 +126,15 @@ static void iom_fault(int chan, int src_line, int is_sys, int signal);
 static int list_service(int chan, int first_list, int *ptro, int *addr);
 static int handle_pcw(int chan, int addr);
 static int do_channel(int chan, pcw_t *p);
-static int do_dcw(int chan, int addr, int *control, int *hack);
+static int do_dcw(int chan, int addr, int *control, int *need_indir_svc);
 static int lpw_write(int chan, int chanloc, const lpw_t* lpw);
 static int do_conn_chan(void);
 static char* lpw2text(const lpw_t *p, int conn);
 static char* pcw2text(const pcw_t *p);
+static char* dcw2text(const dcw_t *p);
 static int parse_lpw(lpw_t *p, int addr, int is_conn);
-static int parse_pcw(pcw_t *p, int addr, int ext);
+static void parse_pcw(pcw_t *p, int addr, int ext);
+static void parse_dcw(dcw_t *p, int addr);
 static int dev_send_pcw(int chan, pcw_t *p);
 static int status_service(int chan);
 static int send_chan_flags();
@@ -136,27 +153,33 @@ static void dump_cioc()
     for (int i = 0; i <= lpw.tally; ++i) {
         pcw_t pcw;
         parse_pcw(&pcw, addr, 1);
-        if (i == 0) {
-            chan = pcw.chan;
-        }
-        debug_msg(moi, "PCW at 0%o: %s\n", addr, pcw2text(&pcw));
-        if (i == 0) {
-            parse_pcw(&pcw, addr+1, 0);
-            debug_msg(moi, "PCW at 0%o: %s\n", addr + 1, pcw2text(&pcw));
-            addr += 2;
-        } else
-            ++ addr;
+        chan = pcw.chan;
+        debug_msg(moi, "Connect channel's PCW at 0%o: %s\n", addr, pcw2text(&pcw));
+        addr += 2;
     }
-    chanloc = IOM_A_MBX + chan * 4;
-    parse_lpw(&lpw, chanloc, chan == IOM_CONNECT_CHAN);
-    debug_msg(moi, "LPW for chan %d: %s\n", chan, lpw2text(&lpw, chan == IOM_CONNECT_CHAN));
+
     addr = lpw.dcw;
     for (int i = 0; i <= lpw.tally; ++i) {
         pcw_t pcw;
         parse_pcw(&pcw, addr, 1);
-        debug_msg(moi, "DCW at 0%o: %s\n", addr, pcw2text(&pcw));
-        ++ addr;
+        chan = pcw.chan;
+        debug_msg(moi, "Connect channel LPW %d is for channel 0%o (%d decimal)\n", i, chan, chan);
+        debug_msg(moi, "Connect channel LPW %d has PCW at 0%o: %s\n", i, addr, pcw2text(&pcw));
+        addr += 2;
+        // simulate a list service for current channel
+        chanloc = IOM_A_MBX + chan * 4;
+        lpw_t data_lpw;
+        parse_lpw(&data_lpw, chanloc, chan == IOM_CONNECT_CHAN);
+        debug_msg(moi, "LPW for chan %d: %s\n", chan, lpw2text(&data_lpw, chan == IOM_CONNECT_CHAN));
+        int dcw_addr = data_lpw.dcw;
+        for (int j = 0; j <= data_lpw.tally; ++j) {
+            dcw_t dcw;
+            parse_dcw(&dcw, dcw_addr);
+            debug_msg(moi, "DCW at 0%o: %s\n", dcw_addr, dcw2text(&dcw));
+            ++ dcw_addr;
+        }
     }
+
 }
 
 void iom_interrupt()
@@ -185,12 +208,12 @@ void iom_interrupt()
     // dump_iom();
 
     extern DEVICE cpu_dev;
-    //++ opt_debug; ++ cpu_dev.dctrl;
+    ++ opt_debug; ++ cpu_dev.dctrl;
     //dump_cioc();
     debug_msg("IOM::CIOC::intr", "Starting\n");
     do_conn_chan();
     debug_msg("IOM::CIOC::intr", "Finished\n");
-    //-- opt_debug; -- cpu_dev.dctrl;
+    -- opt_debug; -- cpu_dev.dctrl;
 }
 
 static int do_conn_chan()
@@ -274,47 +297,56 @@ static int do_channel(int chan, pcw_t *p)
 #else
     int first = 1;
     int control = p->control;
-    int first_list = 0;
-#endif
-for (int foo = 0; foo < 2; ++ foo) {
-    if (foo == 0) {
-        // pwc from conn chan
-        first_list = 0;
-    } else {
-        if (first) {
-                if (chan_status.major != 0)
-                    break;
-                debug_msg(moi, "Will ask for first list service\n");
-                first_list = 1;
-                control = 2;
-                first = 0;
-                ret = 0;
-        }
+    int first_list = 1;
+    if (control == 0 && chan_status.major == 0) {
+            warn_msg(moi, "Forcing at least one list service\n");
+            control = 2;
     }
+#endif
+
+if (ret != 0 || control == 0)
+    warn_msg(moi, "Not doing a single DCW loop.\n");
+
+while (ret == 0 && control != 0) {
+    debug_msg(moi, "In DCW loop.\n");
+    if (chan_status.major != 0) {
+        debug_msg(moi, "Channel has non-zero major status; terminating DCW loop.\n");
+        break;
+    }
+
+    int nlist = 0;
     while (ret == 0 && control != 0) {
         switch (control) {
             case 0:
                 // do nothing, terminate
+                debug_msg(moi, "DCW has control of zero; terminating DCW loop.\n");
                 break;
             case 2: {
                 int addr;
-                debug_msg(moi, "Asking for list service\n");
+                ++ nlist;
+                debug_msg(moi, "Asking for %s list service (svc # %d).\n", first_list ? "first" : "another", nlist);
                 if (list_service(chan, first_list, NULL, &addr) != 0) {
                     ret = 1;
                     warn_msg(moi, "List service indicates failure\n");
                 } else {
                     debug_msg(moi, "List service yields DCW at addr 0%o\n", addr);
                     control = -1;
-                    int hack = 0;
-                    ret = do_dcw(chan, addr, &control, &hack);
+                    int need_indir_svc = 0;
+                    ret = do_dcw(chan, addr, &control, &need_indir_svc);
                     debug_msg(moi, "Back from latest do_dcw (at %0o); control = %d\n", addr, control);
-                    if (chan_status.major != 0)
-                        control = 0;
-                    else
-                        if (hack && first_list) {
-                            debug_msg(moi, "HACK: Asking for another list service (contrary to 43A239854)\n");
-                            control = 2;
+                    if (chan_status.major == 0) {
+                        if (need_indir_svc) {
+                            if (control == 2)
+                                debug_msg(moi, "Need indirect data service after I-DCW with i/o transfer.  Leaving control at 2 since list service seems to have the same effect.\n");
+                            else {
+                                debug_msg(moi, "Need indirect data service after I-DCW with i/o transfer.   Changing control from %d to 2 to force list service (which seems to have the same effect).\n",  control);
+                                control = 2;
+                            }
                         }
+                    } else {
+                        debug_msg(moi, "do_dcw returns with non-zero channel status; terminating DCW loop\n");
+                        control = 0;
+                    }
                 }
                 first_list = 0;
                 break;
@@ -324,17 +356,19 @@ for (int foo = 0; foo < 2; ++ foo) {
                 complain_msg(moi, "Set marker not implemented\n");
                 cancel_run(STOP_BUG);
                 ret = 1;
+                //debug_msg(moi, "Asking for a list service due to set-marker-interrupt-and-proceed.\n");
+                //control = 2;
                 break;
             default:
-                complain_msg(moi, "Bad PCW control == %d\n", control);
+                complain_msg(moi, "Bad PCW/DCW control, %d\n", control);
                 cancel_run(STOP_BUG);
                 ret = 1;
         }
     }
 }
 
-    if (first_list)
-        list_service_whatif(chan, first_list, NULL, NULL);
+    //if (first_list)
+    //  list_service_whatif(chan, first_list, NULL, NULL);
 
     // Next: probably loop performing DCWs and asking for list service
 
@@ -569,7 +603,7 @@ int did_tdcw = 0;   // BUG
 }
 
 
-static int parse_pcw(pcw_t *p, int addr, int ext)
+static void parse_pcw(pcw_t *p, int addr, int ext)
 {
     p->dev_cmd = getbits36(M[addr], 0, 6);
     p->dev_code = getbits36(M[addr], 6, 6);
@@ -697,15 +731,11 @@ static int dev_io(int chan, t_uint64 *wordp)
 }
 
 
-static int do_ddcw(int chan, int addr, int *control)
+static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
 {
     // IOTD, IOTP, IONTP
 
-    uint daddr = getbits36(M[addr], 0, 18);
-    uint cp = getbits36(M[addr], 18, 3);
-    uint type = getbits36(M[addr], 22, 3);
-    uint tally = getbits36(M[addr], 24, 12);
-    debug_msg("IOW::DDCW", "Data DCW: %012Lo: addr=0%o, cp=0%o, tally=%d\n", M[addr], daddr, cp, tally);
+    debug_msg("IOW::DO-DDCW", "%012Lo: %s\n", M[addr], dcw2text(dcwp));
 
     // impossible for (cp == 7); see do_dcw
 
@@ -713,6 +743,9 @@ static int do_ddcw(int chan, int addr, int *control)
     // if rel == 0; abs; else absolutize & boundry check
     // BUG: Need to munge daddr
 
+    uint type = dcwp->fields.ddcw.type;
+    uint daddr = dcwp->fields.ddcw.daddr;
+    uint tally = dcwp->fields.ddcw.tally;
     t_uint64 word = 0;
     t_uint64 *wordp = (type == 3) ? &word : M + daddr;  // 2 impossible; see do_dcw
     if (type == 3 && tally != 1)
@@ -746,40 +779,91 @@ static int do_ddcw(int chan, int addr, int *control)
 }
 
 
-static int do_dcw(int chan, int addr, int *controlp, int *hack)
+static void parse_dcw(dcw_t *p, int addr)
 {
-    debug_msg("IOM::dcw", "chan %d, addr 0%o\n", chan, addr);
     int cp = getbits36(M[addr], 18, 3);
+
     if (cp == 7) {
-        // instr dcw
-        int ec = getbits36(M[addr], 21, 1);
-        if (ec) {
+        p->type = idcw;
+        parse_pcw(&p->fields.instr, addr, 0);
+        // p->fields.instr.chan = chan; // Real HW would not populate
+        p->fields.instr.chan = -1;
+        if (p->fields.instr.mask) {
+            // Bit 21 is extension control (EC), not a mask
             // BUG: Check LPW bit 23
             // M[addr] = setbits36(M[addr], 12, 6, present_addr_extension);
             complain_msg("IOW::DCW", "I-DCW bit EC not implemented\n");
             cancel_run(STOP_BUG);
+            // return 1;
         }
-        debug_msg("IOW::DCW", "I-DCW found\n");
-        pcw_t pcw;
-        parse_pcw(&pcw, addr, 0);
-        pcw.mask = 0;   // EC not mask
-        pcw.chan = chan;    // Real HW would not populate
-        debug_msg("IOM::dcw", "I-DCW: %s\n", pcw2text(&pcw));
-        *controlp = pcw.control;
-        //debug_msg("IOM::dcw", "Setting hack flag for another list service\n");
-        //*hack = 1;    // do_pcw with either return non zero or will set chan_status.major
-        return do_pcw(chan, &pcw);
     } else {
         int type = getbits36(M[addr], 22, 2);
         if (type == 2) {
+            p->type = tdcw;
             // transfer
             complain_msg("IOW::DCW", "Transfer-DCW not implemented\n");
-            return 1;
         } else {
-            // IOTD, IOTP, or IONTP -- i/o (non) transfer
-            int ret = do_ddcw(chan, addr, controlp);
-            return ret;
+            p->type = ddcw;
+            p->fields.ddcw.daddr = getbits36(M[addr], 0, 18);
+            p->fields.ddcw.cp = cp;
+            p->fields.ddcw.tctl = getbits36(M[addr], 21, 1);
+            p->type = type;
+            p->fields.ddcw.tally = getbits36(M[addr], 24, 12);
         }
+    }
+    // return 0;
+}
+
+static char* dcw2text(const dcw_t *p)
+{
+    // WARNING: returns single static buffer
+    static char buf[80];
+    if (p->type == ddcw)
+        sprintf(buf, "D-DCW: addr=0%o, cp=0%o, tally=0%o(%d)",
+            p->fields.ddcw.daddr, p->fields.ddcw.cp, p->fields.ddcw.tally, p->fields.ddcw.tally);
+    else if (p->type == tdcw)
+        sprintf(buf, "T-DCW: ...");
+    else if (p->type == idcw)
+        sprintf(buf, "I-DCW: %s", pcw2text(&p->fields.instr));
+    else
+        strcpy(buf, "<not a dcw>");
+    return buf;
+}
+
+
+static int do_dcw(int chan, int addr, int *controlp, int *need_indir_svc)
+{
+    dcw_t dcw;
+    debug_msg("IOM::dcw", "chan %d, addr 0%o\n", chan, addr);
+    parse_dcw(&dcw, addr);
+    if (dcw.type == idcw) {
+        // instr dcw
+        dcw.fields.instr.chan = chan;   // Real HW would not populate
+        debug_msg("IOM::DCW", "%s\n", dcw2text(&dcw));
+        *controlp = dcw.fields.instr.control;
+        int ret = do_pcw(chan, &dcw.fields.instr);
+        if (ret != 0)
+            debug_msg("IOM::dcw", "do_pcw returns %d.\n", ret);
+        if (dcw.fields.instr.chan_cmd != 02) {
+#if 1
+            *need_indir_svc = 1;
+#else
+            if (dcw.fields.instr.control != 2) {
+                debug_msg("IOM::dcw", "Changing control from %d to 2 to force list service after I-DCW with i/o transfer\n", dcw.fields.instr.control);
+                *controlp = 2;
+            }
+#endif
+        }
+        return ret;
+    } else if (dcw.type == tdcw) {
+        complain_msg("IOW::DCW", "Transfer-DCW not implemented\n");
+        return 1;
+    } else  if (dcw.type == ddcw) {
+        // IOTD, IOTP, or IONTP -- i/o (non) transfer
+        return do_ddcw(chan, addr, &dcw, controlp);
+    } else {
+        complain_msg("IOW::DCW", "Unknown DCW type\n");
+        return 1;
     }
 }
 
@@ -807,7 +891,6 @@ static char* lpw2text(const lpw_t *p, int conn)
 
 static int parse_lpw(lpw_t *p, int addr, int is_conn)
 {
-    // NOTE: We always look at 2nd word even if connect channel shouldn't
     p->dcw = M[addr] >> 18;
     p->ires = getbits36(M[addr], 18, 1);
     p->hrel = getbits36(M[addr], 19, 1);

@@ -743,7 +743,7 @@ static t_stat control_unit(void)
 
             if (opt_debug) { 
                 if (! cpu.ic_odd)
-                    debug_msg("CU", "Cycle = EXEC, odd instr\n");
+                    debug_msg("CU", "Cycle = EXEC, even instr\n");
                 else
                     debug_msg("CU", "Cycle = EXEC, odd instr\n");
             }
