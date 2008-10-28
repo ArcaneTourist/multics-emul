@@ -60,9 +60,11 @@ const char *sim_stop_messages[] = {
     0
 };
 
+static int vmdump(int32 arg, char *buf);
 extern CTAB *sim_vm_cmd;
 static struct sim_ctab sim_cmds[] =  {
     { "SYMTAB", symtab_parse, 0, "symtab                   define symtab entries\n" },
+    { "VMDUMP", vmdump, 0, "vmdump                   dump virtual memory caches\n" },
     { 0, 0, 0, 0}
 };
 
@@ -130,6 +132,7 @@ static void hw6180_init(void)
     // multics uses same vector for interrupts & faults?
     // OTOH, AN87, 1-41 claims faults are at 100o ((flt_base=1)<<5)
     switches.FLT_BASE = 0;  // multics uses same vector for interrupts & faults?
+    // switches.FLT_BASE = 0100;
 
     // Only one SCU
     memset(&scu, 0, sizeof(scu));
@@ -453,4 +456,10 @@ static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
 static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr addr)
 {
     fprintf(stream, "%06o", addr);
+}
+
+static int vmdump(int32 arg, char *buf)
+{
+    dump_vm();
+    return 0;
 }

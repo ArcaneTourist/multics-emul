@@ -246,7 +246,6 @@ typedef struct {
     uint TPR_TSR;   // 15 bits @ 2[3..17]; temporary segment register
     // unused: 10 bits at 2[18..27]
     // uint cpu_no; // 2 bits at 2[28..29]; from maint panel switches
-    uint DELTA      // 6 bits at 2[30..35]; addr increment for repeats
     
     /* word 3 */
 
@@ -261,7 +260,11 @@ typedef struct {
     // cu bits for repeats, execute double, restarts, etc
 #endif
 
+    /* word 2, continued */
+    uint delta;     // 6 bits at 2[30..35]; addr increment for repeats
+
     /* word 5, continued */
+    flag_t rpts;        // just executed a repeat instr;  bit 12 in word one of the CU history register
     flag_t repeat_first;        // "RF" flag -- first cycle of a repeat instruction
     flag_t rpt;     // execute an rpt instruction
     uint CT_HOLD;   // 6 bits at 5[30..35]; contents of the "remember modifier" register
@@ -446,7 +449,7 @@ static const t_uint64 MASK18 = ~(~((t_uint64)0)<<18);   // lower 18 bits all one
 #define bitclear36(word,i) ( (word) & ~ ( (uint64_t) 1 << (35 - i)) )
 extern void complain_msg(const char* who, const char* format, ...);
 static inline t_uint64 getbits36(t_uint64 x, int i, int n) {
-    // bit 35 is right end, bit zero is 36th from the left
+    // bit 35 is right end, bit zero is 36th from the right
     int shift = 35-i-n+1;
     if (shift < 0 || shift > 35) {
         complain_msg("getbits36", "bad args (%Lo,i=%d,n=%d)\n", x, i, n);

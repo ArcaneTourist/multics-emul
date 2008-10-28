@@ -31,6 +31,7 @@ static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2, int i
 static int32 sign18(t_uint64 x);
 static t_int64 sign36(t_uint64 x);
 static int do_epp(int epp);
+static int do_easp(int n);
 static int do_an_op(instr_t *ip);   // todo: hack, fold into do_op
 static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p);
 static int op_mlr(const instr_t* ip);
@@ -97,6 +98,7 @@ static int do_an_op(instr_t *ip)
 
     uint op = ip->opcode;
     char *opname = opcodes2text[op];
+    cu.rpts = 0;    // current instruction isn't a repeat type instruction (as far as we know so far)
 
     int bit27 = op % 2;
     op >>= 1;
@@ -115,6 +117,9 @@ static int do_an_op(instr_t *ip)
     if (ip->is_eis_multiword) {
         debug_msg("OPU", "Skipping addr_mod() for EIS instr.\n");
     } else if (bit27 == 0) {
+#if 1
+        addr_mod(ip);       // note that ip == &cu.IR
+#else
         switch (op) {
             case opcode0_rpd:
             case opcode0_rpl:
@@ -126,6 +131,7 @@ static int do_an_op(instr_t *ip)
             default:
                 addr_mod(ip);       // note that ip == &cu.IR
         }
+#endif
     } else {
         switch (op) {
             case opcode1_a4bd:
@@ -164,6 +170,12 @@ static int do_an_op(instr_t *ip)
                 IR.neg = bit18_is_neg(reg_X[n]);
                 return 0;
             }
+
+            // opcode0_lca unimplemented
+            // opcode0_lcaq unimplemented
+            // opcode0_lcq unimplemented
+            // opcode0_lcx0 .. lcx7 unimplemented
+
             case opcode0_lda: {
                 int ret = fetch_op(ip, &reg_A);
                 if (ret == 0) {
@@ -288,8 +300,6 @@ static int do_an_op(instr_t *ip)
                 IR.neg = bit18_is_neg(reg_X[n]);
                 return ret;
             }
-            case opcode0_sta:
-                return store_word(TPR.CA, reg_A);
             case opcode0_sreg: {
                 t_uint64 words[8];
                 words[0] = (reg_X[0] << 18) | reg_X[1];
@@ -303,6 +313,8 @@ static int do_an_op(instr_t *ip)
                 words[7] = setbits36(words[7], 33, 3, reg_RALR);
                 return store_yblock8(TPR.CA, words);
             }
+            case opcode0_sta:
+                return store_word(TPR.CA, reg_A);
             case opcode0_stac: {
                 // BUG: check for illegal modifiers
                 t_uint64 word;
@@ -332,8 +344,8 @@ static int do_an_op(instr_t *ip)
                     ret = store_word(y+1, reg_Q);
                 return ret;
             }
-            // stba
-            // stbq
+            // stba unimplemented
+            // stbq unimplemented
             case opcode0_stc1: {
                 t_uint64 word;
                 save_IR(&word);
@@ -363,8 +375,12 @@ static int do_an_op(instr_t *ip)
                 ret = store_word(TPR.CA, word);
                 return ret;
             }
+            // opcode0_stcq unimplemented
+            // opcode0_stcd unimplemented
+            // opcode0_sti unimplemented
             case opcode0_stq:   // Store Q register
                 return store_word(TPR.CA, reg_Q);
+            // opcode0_stt unimplemented
             case opcode0_stx0:
             case opcode0_stx1:
             case opcode0_stx2:
@@ -517,9 +533,8 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_ada:
                 return op_add(ip, &reg_A);
-            // adaq
-            // adl
-            // adla
+            // adaq unimplemented
+            // adl unimplemented
             case opcode0_adla: {
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
@@ -595,6 +610,10 @@ static int do_an_op(instr_t *ip)
                     ret = store_word(TPR.CA, word);
                 return ret;
             }
+            // case opcode0_asq unimplemented
+            // case opcode0_asx0 .. asx7 unimplemented
+            // case opcode0_awca unimplemented
+            // case opcode0_awcq unimplemented
 
             case opcode0_sba: { // Subtract from A
                 t_uint64 word;
@@ -613,8 +632,8 @@ static int do_an_op(instr_t *ip)
                         ret = add72(reg_A, reg_Q, &word1, &word2, 0);
                 return ret;
             }
-            // sbla
-            // sblaq
+            // sbla unimplemented
+            // sblaq unimplemented
             case opcode0_sblq: {    // Subtract logical from Q
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
@@ -689,11 +708,13 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
-            //ssa
-            //ssq
-            //ssxn
-            //swca
-            //swcq
+            //ssa unimplemented
+            //ssq unimplemented
+            //ssx0 ..ssx7 unimplemented
+            //swca unimplemented
+            //swcq unimplemented
+
+            // opcode_mpf unimplemented -- multiple fraction
 
             case opcode0_mpy: {
                 t_uint64 word;
@@ -731,6 +752,8 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
 
+            // opcode0_divf unimplemented -- divide fraction
+
             case opcode0_neg:
                 if (reg_A == 0) {
                     IR.zero = 1;
@@ -742,6 +765,9 @@ static int do_an_op(instr_t *ip)
                     // BUG: Should we fault?  Maximum negative number can't be negated, but AL39 doesn't say to fault
                 }
                 return 0;
+            // opcode0_negl unimplemented
+            // opcode0_cmg unimplemented
+            // opcode0_cmk unimplemented
 
             case opcode0_cmpa: {
                 t_uint64 word;
@@ -891,6 +917,8 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
 
+            // opcode0_cwl unimplemented
+
             case opcode0_szn: {
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
@@ -926,6 +954,9 @@ static int do_an_op(instr_t *ip)
                     ret = store_word(TPR.CA, word);
                 return ret;
             }
+            // ansq unimplemented
+            // ansx0 .. ansx7 unimplemented
+            // anx0 .. anx7 unimplemented
 
             case opcode0_ora: { // OR to A
                 t_uint64 word;
@@ -1066,7 +1097,7 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
-            // _ersq
+            // _ersq unimplemented
             case opcode0_ersx0:     // XOR to Index Register N
             case opcode0_ersx1:
             case opcode0_ersx2:
@@ -1089,6 +1120,7 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
+            // opcode0_erx0 .. erx7 unimplemented
 
             case opcode0_cana: {    // Comparative AND with A reg
                 t_uint64 word;
@@ -1100,6 +1132,7 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
+            // opcode0_canaq unimplemented
             case opcode0_canq: {    // Comparative AND with Q
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
@@ -1129,6 +1162,13 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
 
+            // cnaa unimplemented
+            // cnaaq unimplemented
+            // cnaq unimplemented
+            // cnax0 .. cnax7 unimplemented
+
+            // dfld unimplemented
+
             case opcode0_fld: {
                 int ret;
                 t_uint64 word;
@@ -1145,12 +1185,55 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
 
+            // dfst unimplemented
+            // dfstr unimplemented
+            // fst unimplemented
+            // fstr unimplemented
+            // dfad unimplemented
+            // dufa unimplemented
+            // fad unimplemented -- floating add
+            // ufa unimplemented -- unnormalized floating add
+            // dfsb unimplemented -- double precision floating subtract
+            // dufs unimplemented -- double precision unnormalized floating subtract
+            // fsb unimplemented -- floating subtract
+            // ufs unimplemented -- unnormalized floating subtract
+            // dfmp unimplemented -- double-precision floating multiply
+            // dufmp unimplemented -- double-precision unnormalized floating multiply
+            // fmp unimplemented -- floating multiply
+            // ufm unimplemented -- unnormalized floating multiply
+            // dfdi unimplemented -- double precision floating divide inverted
+            // dfdv unimplemented -- double precision floating divide
+            // fdi unimplemented -- floating divide inverted
+            // fdv unimplemented -- floating divide
+            // fneg unimplemented -- floating negate
+            // fno unimplemented -- floating normalize
+            // dfrd unimplemented -- double precision floating round
+            // frd unimplemented -- floating round
+            // dfcmg unimplemented -- double precision floating compare magnitude
+            // dfcmp unimplemented -- double precision floating compare
+            // fcmg unimplemented -- floating compare magnitude
+            // cmp unimplemented -- floating compare
+            
+            // ade unimplemented
+            // fszn unimplemented
+            // lde unimplemented
+            // ste unimplemented
+            
+            // call6 unimplemented -- call using pr6 and pr7
+            // opcode0_ret unimplemented
+            // opcode0_rtcd unimplemented
+            
+            // opcode0_teo unimplemented
+            // opcode0_teu unimplemented
+            
             case opcode0_tmi:
                 if (IR.neg) {
                     PPR.IC = TPR.CA;
                     PPR.PSR = TPR.TSR;
                 }
                 return 0;
+            // tmoz -- see opcode1_tmoz
+            //
             case opcode0_tnc:
                 if (! IR.carry) {
                     PPR.IC = TPR.CA;
@@ -1178,6 +1261,7 @@ static int do_an_op(instr_t *ip)
                     PPR.PSR = TPR.TSR;
                 }
                 return 0;
+            // tpnz -- see opcode1_tpnz
             case opcode0_tra:
                 PPR.IC = TPR.CA;
                 PPR.PSR = TPR.TSR;
@@ -1188,6 +1272,11 @@ static int do_an_op(instr_t *ip)
                     PPR.PSR = TPR.TSR;
                 }
                 return 0;
+            // trtf -- see opcode1_trtf
+            // trtn -- see opcode1_trtn
+            // opcode0_tsp0 .. tsp7 unimplemented
+            // opcode0_tss unimplemented
+
             case opcode0_tsx0:  // transfer and set X[n]
             case opcode0_tsx1:
             case opcode0_tsx2:
@@ -1202,12 +1291,25 @@ static int do_an_op(instr_t *ip)
                 PPR.PSR = TPR.TSR;
                 return 0;
             }
+            // ttf unimplemented
             case opcode0_tze:
                 if (IR.zero) {
                     PPR.IC = TPR.CA;
                     PPR.PSR = TPR.TSR;
                 }
                 return 0;
+
+            case opcode0_easp0:
+                return do_easp(0);
+            case opcode0_easp2:
+                return do_easp(2);
+            case opcode0_easp4:
+                return do_easp(4);
+            case opcode0_easp6:
+                return do_easp(6);
+
+            // eawp0 ..eawp7 unimplemented
+            // epbp0 .. epbp7 unimplemented
 
             case opcode0_epp0:
                 return do_epp(0);
@@ -1248,8 +1350,9 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
-            // lprp*
-            // spbp*
+            // lprp0 .. lprp7 unimplemented
+            // spbp0 .. spbp7 unimplemented
+
             case opcode0_spri: {
                 if (get_addr_mode() == BAR_mode) {
                     fault_gen(illproc_fault);
@@ -1274,6 +1377,13 @@ static int do_an_op(instr_t *ip)
                 spri_to_words(n, &word0, &word1);
                 return store_pair(TPR.CA, word0, word1);
             }
+
+            // sprp0 .. sprp7 unimplemented
+            // adwp0 .. adwp7 unimplemented
+            // epaq unimplemented
+
+            // rccl unimplemented
+            // drl unimplemented
 
             case opcode0_xec: {
                 // todo: combine with xec
@@ -1340,11 +1450,54 @@ static int do_an_op(instr_t *ip)
                 break;
             }
 
+            // mme unimplemented
+            // mme2 unimplemented
+            // mme3 unimplemented
+            // mme4 unimplemented
+
             case opcode0_nop:
             case opcode0_puls1:
             case opcode0_puls2:
                 // BUG: certain address forms may generate faults -- so addr_mod should gen faults
                 return 0;
+
+            // rpd unimplemented -- repeat double
+            // rpl unimplemented -- repeat link
+            
+            case opcode0_rpt: {
+                cu.rpts = 1;
+                // AL39, page 209
+                uint tally = (ip->addr >> 10);
+                uint c = (ip->addr >> 7) & 1;
+                uint term = ip->addr & 0177;
+                cu.delta = ip->mods.single.tag;
+                if (c) {
+#if 1
+                    reg_X[0] = ip->addr;    // Entire 18 bits
+#else
+                    t_uint64 instr;
+                    if (fetch_word(PPR.IC + 1, &instr) != 0) {
+                        complain_msg("OPU", "Error fetching next word for repeat\n");
+                        return 1;
+                    }
+                    reg_X[0] = getbits36(instr, 0, 18);
+#endif
+                }
+                cu.rpt = 1;
+                cu.repeat_first = 1;
+                // Setting cu.rpt will cause the instruction to be executed
+                // until the termination is met.
+                // See cpu.c for the rest of the handling.
+                warn_msg("OPU", "RPT instruction found\n");
+                cancel_run(STOP_WARN);
+                return 0;
+            }
+
+            // opcode1_sra unimplemented
+            // opcode0_sbar unimplemented
+            // bcd unimplemented -- binary to binary-coded-decimal
+            // gtb unimplemented -- gray to binary
+            // lbar unimplemented
 
             case opcode0_lcpr: {    // load central processor reg (priv)
                 int ret = 0;
@@ -1416,14 +1569,15 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
-            // lptp
-            // lptr
-            // lra
-            // lsdp
-            // lsdr
-            // rcu
-            // scpr
-            // scu
+            // lptp unimplemented
+            // lptr unimplemented
+            // lra unimplemented
+            // lsdp unimplemented
+            // lsdr unimplemented
+            // rcu unimplemented -- restore control unit
+            // scpr unimplemented -- store cp register
+            // scu unimplemented -- store control unit
+
             case opcode0_sdbr: {
                 t_uint64 word0, word1;
                 word0 = DSBR.addr << 12;
@@ -1432,12 +1586,14 @@ static int do_an_op(instr_t *ip)
                 word1 = setbits36(word1, 0, 23, DSBR.stack); // 60-36-1=23
                 return store_pair(TPR.CA, word0, word1);
             }
-            // sptp
-            // sptr
-            // ssdp
-            // ssdr
+            // sptp unimplemented
+            // sptr unimplemented
+            // ssdp unimplemented
+            // ssdr unimplemented
+
             case opcode0_cams: {    // Clear Associative Memory Segments
                 if (get_addr_mode() != ABSOLUTE_mode) {
+                    complain_msg("OPU", "cams executed when mode is not absolute.\n");
                     fault_gen(illproc_fault);
                     return 1;
                 }
@@ -1464,6 +1620,8 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
+
+            // rmcm unimplemented -- read memory controller mask register
 
             case opcode0_rscr: { // priv
                 // read system controller register (to AQ)
@@ -1532,6 +1690,8 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
 
+            // rsw unimplemented -- read switches
+
             case opcode0_cioc: { // priv
                 // Connect I/O channel
                 debug_msg("OPU", "CIOC\n");
@@ -1555,6 +1715,7 @@ static int do_an_op(instr_t *ip)
                 }
                 return scu_set_cpu_mask(TPR.CA);    // don't convert via appending
             }
+            // smic unimplemented
             case opcode0_sscr: { // priv
                 // set system controller register (to value in AQ)
                 if (get_addr_mode() != ABSOLUTE_mode && ! is_priv_mode()) {
@@ -1651,51 +1812,12 @@ static int do_an_op(instr_t *ip)
                     reg_A = addr << 12; // upper 24 bits
                 return ret;
             }
-            // dis
+            // dis unimplemented
 
             // limr ??
             // ldo ??
             // camp2 ??
             //
-            case opcode0_easp0:
-            case opcode0_easp2:
-            case opcode0_easp4:
-            case opcode0_easp6: {
-                if (get_addr_mode() == BAR_mode) {
-                    fault_gen(illproc_fault);
-                    return 1;
-                }
-                int n = op & 07;
-                AR_PR[n].PR.snr = TPR.CA;
-                return 0;
-            }
-
-            case opcode0_rpt: {
-                // AL39, page 209
-                uint tally = (ip->addr >> 10);
-                uint c = (ip->addr >> 7) & 1;
-                uint term = ip->addr & 0177;
-                uint delta = ip->mods.single.tag;
-                if (c) {
-                    t_uint64 instr;
-                    if (fetch_word(PPR.IC + 1, &instr) != 0) {
-                        complain_msg("OPU", "Error fetching next word for repeat\n");
-                        return 1;
-                    }
-                    reg_X[0] = getbits36(instr, 0, 18);
-                }
-                if (tally == 0)
-                    tally = 256;
-                cu.rpt = 1;
-                cu.repeat_first = 1;
-                // Setting cu.rpt will cause the instruction to be executed
-                // until the termination is met.
-                // See cpu.c for the rest of the handling.
-                // IR.tally_runout = getbits36(reg_X[9], 0, 8) == 0;
-                complain_msg("OPU", "RPT instruction unimplemented\n");
-                cancel_run(STOP_BUG);
-                return 1;
-            }
 
             default:
                 complain_msg("OPU", "Unimplemented opcode 0%0o(0)\n", op);
@@ -1783,34 +1905,40 @@ static int do_an_op(instr_t *ip)
                 int ret = op_mlr(ip);
                 return ret;
             }
-            // mrl
-            // mve
+            // mrl unimplemented
+            // mve unimplemented -- move alphanumeric edited
             case opcode1_mvt: {
                 int ret = op_mvt(ip);
                 return ret;
             }
+            // cmp0 .. cmp7 unimplemented -- compare numeric
+            // mvn unimplemented -- move numeric
+            // mvne unimplemented -- move numeric edited
+            // csl unimplemented -- combine bit strings left -- STOPPED scanning AL39 here
 
-            // aarn
-            // larn
-            // lpl
-            // narn
-            // ara
-            // arn
-            // sarn
-            // sareg
-            // spl
-            // a4bd
+            // aar0 .. aar7 unimplemented -- alphanumeric descriptor to address register
+            // lar0 .. lar7 unimplemented
+            // lareg unimplemented
+            // lpl unimplemented
+            // nar0 .. nar7  unimplemented
+            // ara0 .. ara7 unimplemented
+            // arn0 .. arn7 unimplemented
+            // sar0 .. sar7 unimplemented
+            // sareg unimplemented
+            // spl unimplemented
+            // a4bd unimplemented -- add 4 bit displacement to addr register
             // a6bd
             case opcode1_a9bd:
                 debug_msg("OPU::a9bd", "APU does our work for us\n");
                 return 0;
-            // abd
-            // awd
-            // s4bd
-            // s6bd
-            // s9bd
-            // sbd
-            // swd
+            // abd unimplemented -- add bit displacement to addr register
+            // awd unimplemented
+            // s4bd unimplemented
+            // s6bd unimplemented
+            // s9bd unimplemented
+            // sbd unimplemented
+            // swd unimplemented
+
             case opcode1_cmpc: {
                 return op_unimplemented_mw(ip, op, opname, 2);
             }
@@ -1828,19 +1956,19 @@ static int do_an_op(instr_t *ip)
                 spri_to_words(n, &word0, &word1);
                 return store_pair(TPR.CA, word0, word1);
             }
+            // opcode1_scd unimplemented -- scan characters double
+            // opcode1_scdr unimplemented -- scan characters double in reverse
+            // opcode1_scm unimplemented -- scan with mask
+            // opcode1_scmr unimplemented -- scan with mask in reverse
 
             case opcode1_easp1:
+                return do_easp(1);
             case opcode1_easp3:
+                return do_easp(3);
             case opcode1_easp5:
-            case opcode1_easp7: {
-                if (get_addr_mode() == BAR_mode) {
-                    fault_gen(illproc_fault);
-                    return 1;
-                }
-                int n = op & 07;
-                AR_PR[n].PR.snr = TPR.CA;
-                return 0;
-            }
+                return do_easp(5);
+            case opcode1_easp7:
+                return do_easp(7);
 
             default:
                 complain_msg("OPU", "Unimplemented opcode 0%0o(1)\n", op);
@@ -2129,6 +2257,19 @@ static int do_epp(int epp)
     char buf[20];
     sprintf(buf, "OPU::epp%d", epp);;
     debug_msg(buf, "PR[%o]=TPR -- rnr=0%o, snr=0%o, wordno=%o, bitno=%o\n", epp, AR_PR[epp].PR.rnr, AR_PR[epp].PR.snr, AR_PR[epp].wordno, AR_PR[epp].PR.bitno);
+    return 0;
+}
+
+
+// ============================================================================
+
+static int do_easp(int n)
+{
+    if (get_addr_mode() == BAR_mode) {
+        fault_gen(illproc_fault);
+        return 1;
+    }
+    AR_PR[n].PR.snr = TPR.CA;
     return 0;
 }
 

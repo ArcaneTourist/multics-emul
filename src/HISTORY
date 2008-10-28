@@ -416,4 +416,23 @@ History of pre-release versions
 === Pre-Version 42 10/22/2008
     iom.c
         Modifications to the IOM to parse DCWs into a structure.
+        Re-work looping mechanisms.  Remove "for foo" hack.  Instead, the
+        payload channels will request an indirect data service after any
+        I-DCW involving a data transfer.  The indirect data service is
+        implemented as just an additional list service call, but that
+        seems sufficient.
 
+
+=== Pre-Version 43 10/27/2008
+    General
+        Faults executing cams instr in non-absolute mode.   This isn't legal, but  bootload_loader.alm
+        only skips the cams instruction if the system_type is two.  The value for system_type is
+        determined by bootload_tape_label.alm based on the contents of memory location zero.  A
+        non-zero value for system_type indicates the presence of an IOX rather than an IOM.  So, the
+        IOM will need to be replaced by an IOX.
+    cpu.c
+        Dump history of changed registers after each instruction.
+        Handling of the "rpt" repeat instruction.
+    opu.c
+        Handling of the "rpt" repeat instruction.
+        Fixed easp* instructions to work on the correct registers (not opcode&07).

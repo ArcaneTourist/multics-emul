@@ -208,12 +208,12 @@ void iom_interrupt()
     // dump_iom();
 
     extern DEVICE cpu_dev;
-    ++ opt_debug; ++ cpu_dev.dctrl;
+    //++ opt_debug; ++ cpu_dev.dctrl;
     //dump_cioc();
     debug_msg("IOM::CIOC::intr", "Starting\n");
     do_conn_chan();
     debug_msg("IOM::CIOC::intr", "Finished\n");
-    -- opt_debug; -- cpu_dev.dctrl;
+    //-- opt_debug; -- cpu_dev.dctrl;
 }
 
 static int do_conn_chan()
@@ -249,7 +249,7 @@ static int handle_pcw(int chan, int addr)
     debug_msg(moi, "PCW for chan %d, addr 0%o\n", chan, addr);
     pcw_t pcw;
     parse_pcw(&pcw, addr, 1);
-    debug_msg(moi, "PCW is: %s\n", pcw2text(&pcw));
+    warn_msg(moi, "PCW is: %s\n", pcw2text(&pcw));
 
     if (pcw.chan < 0 || pcw.chan >= 040) {  // 040 == 32 decimal
         iom_fault(chan, __LINE__, 1, iom_ill_chan); // BUG: what about ill-ser-req? -- is iom issuing a pcw or is channel requesting svc?
@@ -646,7 +646,7 @@ static int do_pcw(int chan, pcw_t *p)
 
 static int dev_send_pcw(int chan, pcw_t *p)
 {
-    debug_msg("IOM::dev-send-pcw", "Starting\n");
+    warn_msg("IOM::dev-send-pcw", "Starting for channel 0%o(%d).  PCW: %s\n", chan, chan, pcw2text(p));
 
     DEVICE* devp = iom.devices[chan];
     // if (devp == NULL || devp->units == NULL)
