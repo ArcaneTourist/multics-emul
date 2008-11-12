@@ -233,6 +233,7 @@ static int do_conn_chan()
             ret = handle_pcw(IOM_CONNECT_CHAN, addr);
         } else {
             debug_msg(moi, "Return code non-zero from Connect Channel list service, skipping dcw\n");
+            break;
         }
         // BUG: update LPW for chan 2 in core -- unless list service does it
         // BUG: Stop if tro system fault occured
@@ -277,11 +278,14 @@ static int do_channel(int chan, pcw_t *p)
     int ret = 0;
     chan_status.chan = chan;
 
-    debug_msg(moi, "Starting for channel 0%o (%d)\n", chan);
+    debug_msg(moi, "Starting for channel 0%o (%d)\n", chan, chan);
 
     // First, send any PCW command to the device
 
     ret = dev_send_pcw(chan, p);
+    if (ret != 0) {
+        warn_msg(moi, "Device on channel 0%o(%d) did not like our PCW -- non zero return.\n", chan, chan);
+    }
 
     // Second, check if PCW tells use to request a list service, send an interrupt, etc
     // BUG: A loop for calling list service and doing returned DCWs should probably be here
@@ -354,7 +358,7 @@ while (ret == 0 && control != 0) {
             case 3:
                 // BUG: set marker interrupt and proceed (list service)
                 complain_msg(moi, "Set marker not implemented\n");
-                cancel_run(STOP_BUG);
+                //cancel_run(STOP_BUG);
                 ret = 1;
                 //debug_msg(moi, "Asking for a list service due to set-marker-interrupt-and-proceed.\n");
                 //control = 2;
@@ -669,7 +673,8 @@ static int dev_send_pcw(int chan, pcw_t *p)
         case DEV_TAPE: {
             int ret = mt_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chan_status.major, &chan_status.substatus);
             debug_msg("IOM::dev-send-pcw", "MT returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
-            return 0;   // ignore ret in favor of chan_status.{major,substatus}
+            //return 0; // ignore ret in favor of chan_status.{major,substatus}
+            return ret; // caller must choose between our return and the chan_status.{major,substatus}
         }
         case DEV_CON: {
             int ret = con_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chan_status.major, &chan_status.substatus);
@@ -713,7 +718,8 @@ static int dev_io(int chan, t_uint64 *wordp)
             int ret = mt_iom_io(chan, wordp, &chan_status.major, &chan_status.substatus);
             if (ret != 0 || chan_status.major != 0)
                 debug_msg("IOM::dev-io", "MT returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
-            return 0;   // ignore ret in favor of chan_status.{major,substatus}
+            //return 0; // ignore ret in favor of chan_status.{major,substatus}
+            return ret; // caller must choose between our return and the chan_status.{major,substatus}
         }
         case DEV_CON: {
             int ret = con_iom_io(chan, wordp, &chan_status.major, &chan_status.substatus);
@@ -751,9 +757,16 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
     if (type == 3 && tally != 1)
         complain_msg("IOM::DDCW", "Type is 3, but tally is %d\n", tally);
     int ret;
-    debug_msg("IOM::DDCW", "I/O Request(s) starting at addr 0%o; tally = %d\n", daddr, tally);
+    if (tally == 0) {
+        debug_msg("IOM::DDCW", "Tally of zero interpreted as 010000(4096)\n");
+        tally = 4096;
+        debug_msg("IOM::DDCW", "I/O Request(s) starting at addr 0%o; tally = zero->%d\n", daddr, tally);
+    } else
+        debug_msg("IOM::DDCW", "I/O Request(s) starting at addr 0%o; tally = %d\n", daddr, tally);
     for (;;) {
         ret = dev_io(chan, wordp);
+        if (ret != 0)
+            debug_msg("IOM::DDCW", "Device for chan 0%o(%d) returns non zero (out of band return)\n", chan, chan);
         if (ret != 0 || chan_status.major != 0)
             break;
         ++daddr;    // todo: remove from loop
@@ -992,7 +1005,8 @@ static int status_service(int chan)
         -- scw;         // force y-pair behavior
     }
     int addr = getbits36(M[scw], 0, 18);    // absolute
-    debug_msg("IOM::status", "Writing status for chan %d to 0%o\n", chan, addr);
+    // debug_msg("IOM::status", "Writing status for chan %d to 0%o\n", chan, addr);
+    debug_msg("IOM::status", "Writing status for chan %d to 0%o=>0%o\n", chan, scw, addr);
     debug_msg("IOM::status", "Status: 0%012Lo 0%012Lo\n", word1, word2);
     debug_msg("IOM::status", "Status: (0)t=Y, (1)pow=%d, (2..5)major=0%02o, (6..11)substatus=0%02o, (12)e/o=Z, (13)marker=Y, (14..15)Z, 16(Z?), 17(Z)\n",
         chan_status.power_off, chan_status.major, chan_status.substatus);

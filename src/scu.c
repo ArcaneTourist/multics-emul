@@ -295,12 +295,13 @@ int scu_get_calendar(t_uint64 addr)
         reg_Q = 0;
         return 1;
     }
-    // returned time is since epoch of 00:00:00 UTC, Jan 1, 1970
     t_uint64 seconds = tv.tv_sec;
-    seconds += (t_uint64) 69 * 365 * 24 * 3600;
+    seconds += (t_uint64) 69 * 365 * 24 * 3600; // returned time is since epoch of 00:00:00 UTC, Jan 1, 1970
     t_uint64 now = seconds * 1000 + tv.tv_usec;
     reg_Q = now & MASK36;
     reg_A = (now >> 36) & MASK36;
+    calendar_a = reg_A; // only for debugging
+    calendar_q = reg_Q; // only for debugging
 
     return 0;
 }

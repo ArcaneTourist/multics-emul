@@ -271,6 +271,7 @@ typedef struct {
 
     /* word 6 */
     instr_t IR;     /* Working instr register; addr & tag are modified */
+    uint tag;       // td portion of instr tag (we only update this for rpt instructions which is the only time we need it)
 
     /* word 7 */
     // instr_t IRODD;   /* Instr holding register; odd word of last pair fetched */
@@ -352,7 +353,9 @@ typedef struct {
 
 // Physical Switches
 typedef struct {
+    // Switches on the Processor's maintenance and configuration panels
     int FLT_BASE;   // normally 7 MSB of 12bit fault base addr
+    int cpu_num;
 } switches_t;
 
 typedef struct {
@@ -516,6 +519,9 @@ extern uint8 reg_RALR;      // Ring Alarm Reg, 3 bits
 extern ctl_unit_data_t cu;
 extern cpu_state_t cpu;
 extern t_bool fault_gen_no_fault;
+
+extern t_uint64 calendar_a;
+extern t_uint64 calendar_q;
 
 // ============================================================================
 // === Functions

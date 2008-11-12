@@ -129,6 +129,8 @@ static int cmp_symtab(const t_symtab_ent *a, const t_symtab_ent *b)
 
 t_symtab_ent *symtab_find(int addr)
 {
+    if (n_sym == 0)
+        return NULL;
     int lo = 0;
     int hi = n_sym;
     while (lo < hi) {

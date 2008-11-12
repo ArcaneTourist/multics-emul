@@ -129,10 +129,11 @@ static void hw6180_init(void)
 
     // CPU Switches
     memset(&switches, 0, sizeof(switches));
+    switches.cpu_num = 0;   // only one cpu
     // multics uses same vector for interrupts & faults?
     // OTOH, AN87, 1-41 claims faults are at 100o ((flt_base=1)<<5)
-    switches.FLT_BASE = 0;  // multics uses same vector for interrupts & faults?
-    // switches.FLT_BASE = 0100;
+    // switches.FLT_BASE = 0;   // multics uses same vector for interrupts & faults?
+    switches.FLT_BASE = 0100;
 
     // Only one SCU
     memset(&scu, 0, sizeof(scu));
@@ -151,7 +152,9 @@ static void hw6180_init(void)
     for (int i = 0; i < ARRAY_SIZE(cpu_ports.ports); ++i)
         cpu_ports.ports[i] = -1;
 
-    init_memory_iom();      // IOX includes unknown instr ldo
+
+    init_memory_iom();      // IOX includes unknown instr ldo and has an undocumented mailbox architecture
+    //init_memory_iox();
 
     // CPU port 'b'(1) connected to SCU port '7' -- arbitrary
     cpu_ports.scu_port = 7;
@@ -193,7 +196,7 @@ static void init_memory_iom()
     iom.devices[tape_chan] = &tape_dev;
 
     int base = 014;         // 12 bits; IOM base
-    int pi_base = 01200;    // 15 bits; interrupt cells
+    int pi_base = 01200;    // 15 bits; interrupt cells; bootload_io.alm insists that we match template_slt_$iom_mailbox_absloc
     int iom = 0;            // 3 bits; only IOM 0 would use vector 030
 
     t_uint64 cmd = 5;       // 6 bits; 05 for tape, 01 for cards
@@ -201,12 +204,10 @@ static void init_memory_iom()
 
     t_uint64 imu = 0;       // 1 bit; Maybe an is-IMU flag; IMU is later version of IOM
 
-    // arbitrary -- zero first 4K words
-    //for (int i = 0; i < 4096; ++i)
-    //  M[i] = 0;
 #define MAXMEMSIZE (16*1024*1024)   /* BUG */
     memset(M, 0, MAXMEMSIZE*sizeof(M[0]));
 
+#if 0
     M[0] = 0720201;                 // Bootload channel PCW, word 1 (this is an 18 bit value)
     //  3/0, 6/Chan#, 30/0, 3/Port -- NOT 3/0, 12/Chan#, 24/0, 3/Port# -- also non-zero port may not be valid for low bits
     M[1] = ((t_uint64) tape_chan << 27) | port;     // Bootload channel PCW, word 2
@@ -235,61 +236,119 @@ static void init_memory_iom()
     M[mbx+0] = (3<<18) | (2<<12) | 3;                   //  Boot dev LPW -> IDCW @ 000003
     // debug_msg("SYS", "Channel MBX @%0o: %0Lo\n", mbx, M[mbx]);
     M[mbx+2] = (base <<24);                         //  Boot dev SCW -> IOM mailbox
+#endif
+
+#if 1
+    /* Description of the bootload channel from 43A239854
+        Legend
+            BB - Bootload channel #
+            C - Cmd (1 or 5)
+            N - IOM #
+            P - Port #
+            XXXX00 - Base Addr -- 01400
+            XXYYYY0 Program Interrupt Base
+    */
+    t_uint64 dis0 = 0616200;
+    /* 1*/ M[010 + 2 * iom] = (imu << 34) | dis0;           // system fault vector; DIS 0 instruction (imu bit not mentioned by 43A239854)
+    /* 2*/ M[030 + 2 * iom] = dis0;                     // terminate interrupt vector (overwritten by bootload)
+    int base_addr = base << 6; // 01400
+
+// 18 bit or 24 bit?
+    // /* 3*/ M[base_addr + 7] = ((t_uint64) base_addr << 24) | 02000002;   // tally word for sys fault status
+    /* 3*/ M[base_addr + 7] = ((t_uint64) base_addr << 18) | 02000002;  // tally word for sys fault status
+
+    /* 4*/ M[base_addr + 010] = 040000;     // Connect channel LPW
+    int mbx = base_addr + 4 * tape_chan;
+    /* 5*/ M[mbx] = 03020003;               // Boot device LPW
+    /* 6*/ M[4] = 030 << 18;                // Second IDCW: IOTD to loc 30 (startup fault vector)
+    /* 7*/ M[mbx + 2] = ((t_uint64)base_addr << 24);        // SCW -- verified correct
+    /* 8*/ M[0] = 0720201;                  // 1st word of bootload channel PCW
+    /* 9*/ M[1] = ((t_uint64) tape_chan << 27) | port;      // 2nd word of PCW pair
+
+    // following verified correct; instr 362 will not yield 1572 with a different shift
+    /*10*/ M[2] = ((t_uint64) base_addr << 18) | pi_base | iom; // word after PCW (used by program)
+
+    /*11*/ M[3] = (cmd << 30) | (dev << 24) | 0700000;      // IDCW for read binary
+
+#endif
     
 }
 
-#if 0
-
-init_memory_iox() untested.   Never updated for a console
+#if 1
 
 static void init_memory_iox()
 {
+    // On the physical hardware, settings of various switchs are reflected into memory.  We provide
+    // no support for simulation of the physical switches because there is only one
+    // useful value for almost all of the switches.  So, we hard code the memory values
+    // that represent usable switch settings.
+    //
     // All values from bootload_tape_label.alm
     // See also doc #43A239854.
-    // This is for an IOX
-    // init_memory_iom() is more up to date...
+    // BUG: This is for an IOM.  Do we want an IOM or an IOX?
+    // The presence of a 0 in the top six bits of word 0 denote an IOM boot from an IOX boot
 
-// " The channel number ("Chan#") is set by the switches on the IOM to be the
-// " channel for the tape subsystem holding the bootload tape. The drive number
-// " for the bootload tape is set by switches on the tape MPC itself.
+    // " The channel number ("Chan#") is set by the switches on the IOM to be the
+    // " channel for the tape subsystem holding the bootload tape. The drive number
+    // " for the bootload tape is set by switches on the tape MPC itself.
 
-    int cmd = 5;        // 6 bits; 05 for tape, 01 for cards
-    int dev = -1;           // 6 bits
+    int iox_offset = 0;     // 12 bits; not sure what this is...
 
-    int iox_offset = -1;    // 12 bits
+    int tape_chan = 036;                // 12 bits;
+    int port = iom.scu_port;    // 3 bits;  SCU port (to which bootload IOM is attached (deduced))
 
-    //int chan = -1;        // 12 bits;
-    //int port = -1;        // 3 bits; 
+    iom.channels[tape_chan] = DEV_TAPE;
+    iom.devices[tape_chan] = &tape_dev;
 
-    //int base = 012;       // 12 bits; IOM base; must be 0012 for Multics
-    //int pi_base = -1; // 15 bits
-    //int iom = 0;      // 3 bits; only IOM 0 would use vector 030
+    int base = 014;         // 12 bits; IOM base
+    int pi_base = 01200;    // 15 bits; interrupt cells; bootload_io.alm insists that we match template_slt_$iom_mailbox_absloc
+    int iom = 0;            // 3 bits; only IOM 0 would use vector 030
+
+    t_uint64 cmd = 5;       // 6 bits; 05 for tape, 01 for cards
+    int dev = 0;            // 6 bits: drive number
 
 
-    int imu = -1;       // 1 bit
+    t_uint64 imu = 0;       // 1 bit; Maybe an is-IMU flag; IMU is later version of IOM
 
-    // arbitrary -- zero first 4K words
-    for (int i = 0; i < 4096; ++i)
-        M[i] = 0;
+#define MAXMEMSIZE (16*1024*1024)   /* BUG */
+    memset(M, 0, MAXMEMSIZE*sizeof(M[0]));
 
     //  6/Command, 6/Device#, 6/0, 18/700000
     M[0] = (cmd << 30) | (dev << 24) | 0700000; // Bootload IDCW
     M[1] = 030 << 18;                           // Second IDCW: IOTD to loc 30 (startup fault vector)
     // 24/7000000,12/IOXoffset
-    M[3] = (07000000 << 12) | iox_offset;       // A register value for connect
+    M[4] = ((t_uint64)07000000 << 12) | iox_offset;     // A register value for connect
 
     M[010] = (1<<18) | 0612000;                 // System fault vector; a HALT instruction
     M[030] = (010<<18) | 0612000;               // Terminate interrupt vector (overwritten by bootload)
 
-    // IOM Mailbox
+    // IOX Mailbox
     M[001400] = 0;      // base addr 0
     M[001401] = 0;      // base addr 1
     M[001402] = 0;      // base addr 2
     M[001403] = 0;      // base addr 3
-    M[001404] = (0777777<<18);  // bound 0, bound 1
+    M[001404] = ((t_uint64)0777777<<18);    // bound 0, bound 1
     M[001405] = 0;              // bound 2, bound 3
     M[001406] = 03034;          // channel link word
-    M[001407] = (0400 << 27) | 0400;    // lpw
+    M[001407] = (0400 << 9) | 0400; // lpw
+        // but what the heck lpw is Chan 01 -- [dcw=00 ires=1 hrel=0 ae=0 nc=0 trun=0 srel=0 tally=0400] [lbnd=00 size=05(5) idcw=020001]
+
+    // The following were set by bootload..
+    //M[001407] = 001402000002; // Chan 01 -- [dcw=01402 ires=0 hrel=0 ae=0 nc=0 trun=0 srel=0 tally=02]
+    //M[001410] = 000000040000; // [lbnd=00 size=00(0) idcw=040000]
+    //M[001402] = 000000000000;
+    //M[001403] = 000000000000;
+    //M[040000] = 013732054000;
+
+    /* Described in A43A239854_600B_IOM_Spec_Jul75.pdf */
+    // LPW for connect channel
+    // M[001410] = 05040000;    // LPW for connect channel; NC=1; DCW=5
+    M[001410] = 05020001;   // LPW for connect channel; NC=0, tro=1, tally=1, DCW=5
+    // PCW for connect channel -- we'll arbitrarily use words 5 and 6
+    M[5] = 0720201;                 // Bootload channel PCW, word 1 (this is an 18 bit value)
+    M[6] = ((t_uint64) tape_chan << 27) | port;     // Bootload channel PCW, word 2
+    // LPW for bootload channel (channel #5) -- BUG, we probably need one...
+    // NOTE: Two DCW words for bootload channel are at location zero
 }
 #endif
 
@@ -401,35 +460,65 @@ t_stat XX_clk_svc(UNIT *up)
 
 //=============================================================================
 
+static int inline is_octal_digit(char x)
+{
+    return isdigit(x) && x != '8' && x != '9';
+}
+
 static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
 {
     *optr = cptr;
-    //if (strcmp(dptr->name, "CPU") != 0) {
-    //  return 0;
-    //}
     int force_abs = 0;
     int force_seg = 0;
-    if (*cptr == '#') {     // SIMH won't let us use '='
-        force_abs = 1;
-        ++ cptr;
-    } else if (*cptr == '|' || *cptr == '$') {
-        force_seg = 1;
-        ++ cptr;
-    }
-    if (!isdigit(*cptr) || *cptr == '8' || *cptr == '9')
-        return 0;
+
+    char *offsetp;
     int seg = -1;
-    unsigned int offset;
-    sscanf(cptr, "%o", &offset);
-    cptr += strspn(cptr, "01234567");
-    if (*cptr == '|' || *cptr == '$') {
-        if (force_abs || force_seg)
-            return 0;
-        ++ cptr;
-        seg = offset;
-        sscanf(cptr, "%o", &offset);
+    int pr = -1;
+    unsigned int offset = 0;
+    if ((offsetp = strchr(cptr, '|')) != NULL || ((offsetp = strchr(cptr, '$')) != NULL)) {
+        // accept an octal segment number
+        force_seg = 1;
+        //warn_msg("parse_addr", "arg is '%s'\n", cptr);
+        if (cptr[0] == 'P' && cptr[1] == 'R' && is_octal_digit(cptr[2]) && cptr+3 == offsetp) {
+            // handle things like pr4|2,x7
+            pr = cptr[2] - '0'; // BUG: ascii only
+            seg = AR_PR[pr].PR.snr;
+            offset = AR_PR[pr].wordno;
+            //warn_msg("parse_addr", "PR[%d] uses 0%o|0%o\n", pr, seg, offset);
+            cptr += 4;
+        } else {
+            if (!is_octal_digit(*cptr))
+                return 0;
+            sscanf(cptr, "%o", &seg);
+            cptr += strspn(cptr, "01234567");
+            if (cptr !=  offsetp)
+                return 0;
+            ++cptr;
+        }
+    } else
+        if (*cptr == '#') {     // SIMH won't let us use '='
+            force_abs = 1;  // ignore TPR.TRS, interpret as absolute mode reference
+            ++ cptr;
+        }
+
+    if (*cptr == 'X' && is_octal_digit(cptr[1]) && cptr[2] == '*') {
+        int n = cptr[1] - '0';  // BUG: ascii only
+        offset += reg_X[n];
+        cptr += 3;
+    } else {
+        unsigned int off;
+        sscanf(cptr, "%o", &off);
+        offset += off;
         cptr += strspn(cptr, "01234567");
     }
+    int mod_x = 0;
+    if (cptr[0] == ',' && cptr[1] == 'X' && is_octal_digit(cptr[2])) {
+        int n = cptr[2] - '0';  // BUG: ascii only
+        mod_x = reg_X[n];
+        offset += mod_x;
+        cptr += 3;
+    }
+    
     if (force_abs || (seg == -1 && get_addr_mode() == ABSOLUTE_mode)) {
         *optr = cptr;
         return offset;
@@ -437,6 +526,7 @@ static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
     uint addr;
     uint saved_seg = -1;
     if (seg != -1) {
+        saved_seg = TPR.TSR;
         TPR.TSR = seg;
     }
     fault_gen_no_fault = 1;
@@ -444,6 +534,7 @@ static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
         if (saved_seg != -1)
             TPR.TSR = saved_seg;
         fault_gen_no_fault = 0;
+        *optr = cptr;
         return 0;
     }
     fault_gen_no_fault = 0;

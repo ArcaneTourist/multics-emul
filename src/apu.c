@@ -247,10 +247,10 @@ int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop, int nbit
 #endif
         offset = TPR.CA;
         TPR.CA = saved_CA;
-        // BUG: ERROR: Apply EIS reg mod
+        // BUG: ERROR: Apply EIS reg mod -- is this already fixed?
         warn_msg("APU::get-addr", "Register mod 0%o: offset was 0%o, now 0%o\n", reg, o, offset);
-        warn_msg("APU::get-addr", "Auto-breakpoint\n");
-        cancel_run(STOP_IBKPT);
+        //warn_msg("APU::get-addr", "Auto-breakpoint\n");
+        //cancel_run(STOP_IBKPT);
     }
 
     uint perm = 0;  // BUG: need to have caller specify
@@ -310,14 +310,23 @@ int addr_mod(const instr_t *ip)
     if (cu.rpt) {
         TPR.bitno = 0;
 #if 1
+        cu.tag = ca_temp.tag;
+        uint td = ca_temp.tag & 017;
+        int n = td & 07;
         if (cu.repeat_first) {
             debug_msg("APU", "RPT: First repetition; incr will be 0%o(%d).\n", ip->addr, ip->addr);
             TPR.CA = ip->addr;
             ca_temp.soffset = ip->addr; // BUG: do we need to sign-extend to allow for negative "addresses"?
         } else {
-            debug_msg("APU", "RPT: Non-first repetition; delta will be 0%o(%d).\n", cu.delta, cu.delta);
-            TPR.CA = cu.delta;
-            ca_temp.soffset = cu.delta; // BUG: do we need to sign-extend to allow for negative "addresses"?
+            // Note that we don't add in a delta for X[n] here.   Instead the CPU
+            // increments X[n] after every instruction.  So, for instructions like
+            // cmpaq, the index register points to the entry after the one found.
+            //debug_msg("APU", "RPT: Non-first repetition; delta will be 0%o(%d).\n", cu.delta, cu.delta);
+            //TPR.CA = cu.delta;
+            //ca_temp.soffset = cu.delta;   // BUG: do we need to sign-extend to allow for negative "addresses"?
+            TPR.CA = 0;
+            ca_temp.soffset = 0;
+            debug_msg("APU", "RPT: X[%d] is 0%o(%d).\n", n, reg_X[n], reg_X[n]);
         }
 #else
         uint td = ca_temp.tag & 017;
@@ -327,8 +336,11 @@ int addr_mod(const instr_t *ip)
 
             reg_X[n] += ip->addr;   // BUG: do we need to sign-extend to allow for negative "addresses"?
         } else {
-            reg_X[n] += cu.delta;
-            debug_msg("APU", "RPT: X[%d] was 0%o(%d).  Non-first repetition, adding delta 0%o(%d); result 0%o(%d).\n", n, reg_X[n], reg_X[n], cu.delta, cu.delta, reg_X[n] + cu.delta, reg_X[n] + cu.delta);
+            // Note that we don't increment X[n] here.   Instead the CPU does it after every instruction.
+            // So, for instructions like cmpaq, the index register points to the entry after the one found.
+            // reg_X[n] += cu.delta;
+            // debug_msg("APU", "RPT: X[%d] was 0%o(%d).  Non-first repetition, adding delta 0%o(%d); result 0%o(%d).\n", n, reg_X[n], reg_X[n], cu.delta, cu.delta, reg_X[n] + cu.delta, reg_X[n] + cu.delta);
+            debug_msg("APU", "RPT: X[%d] is 0%o(%d).\n", n, reg_X[n]);
         }
         ca_temp.soffset = reg_X[n];
         TPR.CA = reg_X[n];
@@ -748,8 +760,8 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         TPR.CA = AR_PR[n].wordno + i_wordno + r;
         TPR.CA &= MASK18;
         ca_tempp->more = 1;
-        complain_msg("APU", "ITP not tested\n");
-        cancel_run(STOP_WARN);
+        warn_msg("APU", "ITP not validated\n");
+        //cancel_run(STOP_WARN);
         return 0;
     } else if (ca_tempp->tag == 043) {
         // its
@@ -1017,6 +1029,7 @@ static SDWAM_t* page_in_sdw()
                 return NULL;
         } else {
             // Descriptor table is paged
+#if 0
             if (segno * 2 >= 16 * (DSBR.bound + 1)) {
                 warn_msg("APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault -- not sure if this check is appropriate though.\n", DSBR.bound, DSBR.bound);
                 //cu.word1flags.oosb = 1;           // ERROR: nothing clears
@@ -1024,6 +1037,7 @@ static SDWAM_t* page_in_sdw()
                 // return NULL;
                 cancel_run(STOP_WARN);
             }
+#endif
 
             // First, the DSPTW fetch cycle (PTWAM doesn't cache the DS?)
             uint y1 = (2 * segno) % page_size;          // offset within page table

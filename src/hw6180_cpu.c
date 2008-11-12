@@ -215,7 +215,8 @@ t_bool fault_gen_no_fault;
 int opt_debug;
 extern int bootimage_loaded;    // only relevent for the boot CPU ?
 extern uint32 sim_emax;
-
+t_uint64 calendar_a;
+t_uint64 calendar_q;
 
 //-----------------------------------------------------------------------------
 //***  Constants, unchanging lookup tables, etc
@@ -293,6 +294,10 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
         return ret;
     }
 
+#if 0
+    // When using an IOM, we can get away with reading the tape with no involvement
+    // from the IOM.   We just need to leave the virtual tape positioned past the
+    // first block.
     const size_t bufsz = 4096 * 1024;
     uint8 buf[bufsz];
     t_mtrlnt tbc;
@@ -303,6 +308,14 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
     warn_msg("CPU::boot", "Read %d bytes from simulated tape %s\n", (int) tbc, fname);
     tape_block(buf, tbc, 030);
     bootimage_loaded = 1;
+#else
+    // When using an IOX, the bootload_tape_label.alm code will check the result in the
+    // status mailbox.   So, we might as well run the IOX to do the I/O.
+    ++ opt_debug; ++ cpu_dev.dctrl;
+    iom_interrupt();
+    -- opt_debug; -- cpu_dev.dctrl;
+    bootimage_loaded = 1;
+#endif
 
     return 0;
 }
@@ -352,6 +365,9 @@ t_stat cpu_reset (DEVICE *dptr)
         cycle = INTERRUPT_cycle;
         events.interrupts[12] = 1;
     }
+
+    calendar_a = 0xdeadbeef;
+    calendar_q = 0xdeadbeef;
 
     return 0;
 }
@@ -828,17 +844,24 @@ static t_stat control_unit(void)
                             cycle = FETCH_cycle;
                     } else {
                         // Executed a repeated instruction
-                        warn_msg("CU", "Address handing for repeated instr was probably wrong.\n");
+                        // warn_msg("CU", "Address handing for repeated instr was probably wrong.\n");
                         // Check for tally runout or termination conditions
-                        uint t = getbits36(reg_X[0], 0, 8);
+                        uint t = reg_X[0] >> 10;    // bits 0..7 of 18bit register
                         if (cu.repeat_first && t == 0)
                             t = 256;
                         cu.repeat_first = 0;
                         --t;
-                        reg_X[0] = setbits36(reg_X[0], 0, 8, t);
+                        reg_X[0] = ((t&0377) << 10) | (reg_X[0] & 01777);
+                        // Note that we increment X[n] here, not in the APU. So, for
+                        // instructions like cmpaq, the index register points to the
+                        // entry after the one found.
+                        int n = cu.tag & 07;
+                        reg_X[n] += cu.delta;
+                        debug_msg("CU", "Incrementing X[%d] by 0%o to 0%o.\n", n, cu.delta, reg_X[n]);
                         if (t == 0) {
                             IR.tally_runout = 1;
-                            debug_msg("CU", "Repeated instruction hits tally runout.\n");
+                            cu.rpt = 0;
+                            debug_msg("CU", "Repeated instruction hits tally runout; halting rpt.\n");
                         } else {
                             // Check for termination conditions
                             // Note that register X[0] is 18 bits
@@ -876,7 +899,6 @@ static t_stat control_unit(void)
                             }
                         }
                     }
-                    (void) cancel_run(STOP_WARN);
                     // TODO: if rpt double incr PPR.IC with wrap
                 }
                 // Retest cu.rpt -- we might have just finished repeating
@@ -1438,7 +1460,10 @@ static void hist_dump()
     if (reg_A != hist.reg_A)
         debug_msg("HIST", "Reg A: 0%012Lo\n", reg_A);
     if (reg_Q != hist.reg_Q)
-        debug_msg("HIST", "Reg Q: 0%012Lo\n", reg_Q);
+        if (reg_Q == calendar_q)
+            debug_msg("HIST", "Reg Q: <calendar>\n");
+        else
+            debug_msg("HIST", "Reg Q: 0%012Lo\n", reg_Q);
     if (reg_E != hist.reg_E)
         debug_msg("HIST", "Reg E: 0%012Lo\n", reg_E);
     for (int i = 0; i < ARRAY_SIZE(reg_X); ++i)
@@ -1460,8 +1485,12 @@ static void hist_dump()
     if (memcmp(&hist.PPR, &PPR, sizeof(hist.PPR)) != 0)
         debug_msg("HIST", "PPR: PRR=0%o, PSR=0%o, P=0%o, IC=0%o\n", PPR.PRR, PPR.PSR, PPR.P, PPR.IC);
     if (memcmp(&hist.TPR, &TPR, sizeof(hist.TPR)) != 0)
-        debug_msg("HIST", "TPR: TRR=0%o, TSR=0%o, TBR=0%o, CA=0%o, bitno=0%o, is_value=%c, value=0%Lo\n",
-            TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA, TPR.bitno, TPR.is_value ? 'Y' : 'N', TPR.value);
+        if (TPR.is_value)
+            debug_msg("HIST", "TPR: TRR=0%o, TSR=0%o, TBR=0%o, CA=0%o, bitno=0%o, is_value=Y, value=0%Lo\n",
+                TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA, TPR.bitno, TPR.value);
+        else
+            debug_msg("HIST", "TPR: TRR=0%o, TSR=0%o, TBR=0%o, CA=0%o, bitno=0%o, is_value=N\n",
+                TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA, TPR.bitno);
     if (memcmp(&hist.DSBR, &DSBR, sizeof(hist.DSBR)) != 0)
         debug_msg("HIST", "DSBR: addr=0%o, bound=0%o(%d), unpaged=%c, stack=0%o\n",
             DSBR.addr, DSBR.bound, DSBR.bound, DSBR.u ? 'Y' : 'N', DSBR.stack);

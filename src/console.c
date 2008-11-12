@@ -90,19 +90,25 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             *majorp = 00;
             *subp = 0;
             return 0;
-        case 051:               // Write Alert -- Ring Bell
-            out_msg("CONSOLE: ALERT\n");
-            *majorp = 0;
-            *subp = 0;
-            return 0;
         case 040:               // Reset
             con_statep->io_mode = no_mode;
             *majorp = 0;
             *subp = 0;
             return 0;
-        default: {
+        case 051:               // Write Alert -- Ring Bell
+            // AN70-1 says only console channels respond to this command
+            out_msg("CONSOLE: ALERT\n");
+            *majorp = 0;
+            *subp = 0;
+            return 0;
+        case 057:               // Read ID (according to AN70-1)
+            complain_msg("CON::iom_cmd", "Read ID unimplemented\n");
             *majorp = 05;
             *subp = 1;
+            return 1;
+        default: {
+            *majorp = 05;   // command reject
+            *subp = 1;      // invalid instruction code
             complain_msg("CON::iom_cmd", "Unknown command 0%o\n", dev_cmd);
             cancel_run(STOP_BUG);
             return 1;

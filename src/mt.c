@@ -63,8 +63,8 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             if (sim_tape_wrp(unitp)) *subp |= 1;
             if (sim_tape_bot(unitp)) *subp |= 2;
             if (sim_tape_eot(unitp)) {
-                *majorp = 44;
-                *subp = 23;
+                *majorp = 044;  // BUG? should be 3?
+                *subp = 023;    // BUG: should be 040?
             }
             // todo: switch to having all cmds update status reg?  This would allow setting 047 bootload complete
             return 0;
@@ -74,7 +74,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             if (tape_statep->bufp == NULL)
                 if ((tape_statep->bufp = malloc(bufsz)) == NULL) {
                     complain_msg("MT::iom_cmd", "Malloc error\n");
-                    *majorp = 010;  // BUG: arbitrary error code; config switch
+                    *majorp = 012;  // BUG: arbitrary error code; config switch
                     *subp = 1;
                     return 1;
                 }
@@ -90,7 +90,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
                 } else {
                     complain_msg("MT::iom_cmd", "Cannot read tape: %d - %s\n", ret, simh_tape_msg(ret));
                     complain_msg("MT::iom_cmd", "Returning arbitrary error code\n");
-                    *majorp = 010;  // BUG: arbitrary error code; confgi switch
+                    *majorp = 010;  // BUG: arbitrary error code; config switch
                     *subp = 1;
                     return 1;
                 }
@@ -106,6 +106,26 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             *majorp = 0;
             *subp = 0;
             return 0;
+        case 046: {             // BSR
+            // BUG: Do we need to clear the buffer?
+            t_mtrlnt tbc;
+            int ret;
+            if ((ret = sim_tape_sprecr(unitp, &tbc)) == 0) {
+                warn_msg("MT::iom_cmd", "Backspace one record\n");
+            } else {
+                complain_msg("MT::iom_cmd", "Cannot backspace record: %d - %s\n", ret, simh_tape_msg(ret));
+                if (ret == MTSE_BOT) {
+                    *majorp = 05;
+                    *subp = 010;
+                } else {
+                    complain_msg("MT::iom_cmd", "Returning arbitrary error code\n");
+                    *majorp = 010;  // BUG: arbitrary error code; config switch
+                    *subp = 1;
+                }
+                return 1;
+            }
+            return 0;
+        }
         case 051:               // CMD 051 -- Reset Device Status
             *majorp = 0;
             *subp = 0;
@@ -153,8 +173,14 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
     } else if (tape_statep->io_mode == read_mode) {
         // read
         if (bitstm_get(tape_statep->bitsp, 36, wordp) != 0) {
-            *majorp = 013;  // MPC Device Data Alert
-            *subp = 02;     // Inconsistent command
+            // BUG: How did this tape hardare handle an attempt to read more data than was present?
+            // For "long" reads, bootload_tape_label.alm seems to assume a 4000 all-clear status,
+            // so we'll set the flags to all-ok, but return an out-of-band non-zero status to
+            // make the iom stop
+            //*majorp = 013;    // MPC Device Data Alert
+            //*subp = 02;       // Inconsistent command
+            *majorp = 0;    // MPC Device Data Alert
+            *subp = 0;      // Inconsistent command
             complain_msg("MT::iom_io", "Read buffer exhausted on channel %d\n", chan);
             return 1;
         }

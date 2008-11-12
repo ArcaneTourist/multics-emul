@@ -436,3 +436,9 @@ History of pre-release versions
     opu.c
         Handling of the "rpt" repeat instruction.
         Fixed easp* instructions to work on the correct registers (not opcode&07).
+
+=== Pre-Version 44
+    General
+        Expiremented with trying to provide an IOX instead of an IOM.
+    opu.c
+        Repaired adlaq and sbaq
