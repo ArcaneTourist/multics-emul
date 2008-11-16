@@ -208,7 +208,7 @@ static void hist_dump(void);
 
 scu_t scu;  // only one for now
 iom_t iom;  // only one for now
-t_bool fault_gen_no_fault;
+flag_t fault_gen_no_fault;
 
 //-----------------------------------------------------------------------------
 //***  Other Externs
@@ -490,16 +490,17 @@ if (opt_debug) {
 
 void load_IR(t_uint64 word)
 {
+    memset(&IR, 0, sizeof(IR));
     IR.zero = getbits36(word, 18, 1);
     IR.neg = getbits36(word, 19, 1);
     IR.carry = getbits36(word, 20, 1);
     IR.overflow = getbits36(word, 21, 1);
-    // IR.exp_overflow = getbits36(word, 22, 1);
-    // IR.exp_underflow = getbits36(word, 23, 1);
+    IR.exp_overflow = getbits36(word, 22, 1);
+    IR.exp_underflow = getbits36(word, 23, 1);
     IR.overflow_mask = getbits36(word, 24, 1);
     IR.tally_runout = getbits36(word, 25, 1);
-    // IR.parity_error = getbits36(word, 25, 1);
-    // IR.parity_mask = getbits36(word, 27, 1);
+    IR.parity_error = getbits36(word, 26, 1);
+    IR.parity_mask = getbits36(word, 27, 1);
     IR.not_bar_mode = getbits36(word, 28, 1);
     IR.truncation = getbits36(word, 29, 1);
     IR.mid_instr_intr_fault = getbits36(word, 30, 1);
@@ -522,10 +523,12 @@ void save_IR(t_uint64* wordp)
         (IR.neg << (35-19)) |
         (IR.carry << (35-20)) |
         (IR.overflow << (35-21)) |
-        // (IR.exp_overflow << (35-22)) |
-        // (IR.exp_underflow << (35-23)) |
+        (IR.exp_overflow << (35-22)) |
+        (IR.exp_underflow << (35-23)) |
         (IR.overflow_mask << (35-24)) |
         (IR.tally_runout << (35-25)) |
+        (IR.parity_error << (35-26)) |
+        (IR.parity_mask << (35-27)) |
         (IR.not_bar_mode << (35-28)) |
         (IR.truncation << (35-29)) |
         (IR.mid_instr_intr_fault << (35-30)) |
@@ -616,6 +619,7 @@ static t_stat control_unit(void)
             TPR.TRR = PPR.PRR;
             if (fetch_instr(PPR.IC - PPR.IC % 2, &cu.IR) != 0)
                 cycle = FAULT_cycle;
+            cpu.IC_abs = cpu.read_addr;
             if (fetch_word(PPR.IC - PPR.IC % 2 + 1, &cu.IRODD) != 0)
                 cycle = FAULT_cycle;
             if (opt_debug && get_addr_mode() != ABSOLUTE_mode)
@@ -810,8 +814,16 @@ static t_stat control_unit(void)
                 else
                     debug_msg("CU", "Cycle = EXEC, odd instr\n");
             }
-            if (cpu.ic_odd)
+            if (cpu.ic_odd) {
+                if (cpu.irodd_invalid) {
+                    cpu.irodd_invalid = 0;
+                    cycle = FETCH_cycle;
+                    warn_msg("CU", "Invalidating cached odd instruction; auto breakpointn\n");
+                    reason = STOP_IBKPT;    /* stop simulation */
+                    break;
+                }
                 decode_instr(&cu.IR, cu.IRODD);
+            }
             if (sim_brk_summ) {
                 if (sim_brk_test (PPR.IC, SWMASK ('E'))) {
                     warn_msg("CU", "Execution Breakpoint\n");
@@ -1012,8 +1024,17 @@ int fetch_instr(uint IC, instr_t *ip)
             complain_msg("CU::fetch-instr", "Addr 0%o (%d decimal) is too large\n", IC, IC);
             (void) cancel_run(STOP_BUG);
         }
-        if (ip)
-            decode_instr(ip, M[IC]);    // WARNING: skips fetch_word (but we're in absolute mode)
+        if (ip) {
+#if 0
+            decode_instr(ip, M[IC]);        // WARNING: skips fetch_word (but we're in absolute mode)
+#else
+            t_uint64 word;
+            int ret = fetch_abs_word(IC, &word);
+            if (ret != 0)
+                return ret;
+            decode_instr(ip, word);
+#endif
+        }
         return 0;
     }
 
@@ -1097,6 +1118,7 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
             (void) cancel_run(STOP_IBKPT);
         }
 
+    cpu.read_addr = addr;
     *wordp = M[addr];   // absolute memory reference
     return 0;
 }
@@ -1158,6 +1180,10 @@ int store_abs_word(uint addr, t_uint64 word)
         }
 
     M[addr] = word; // absolute memory reference
+    if (addr == cpu.IC_abs + 1) {
+        warn_msg("CU::store", "Flagging cached odd instruction as invalidated.\n");
+        cpu.irodd_invalid = 1;
+    }
     return 0;
 }
 
@@ -1382,7 +1408,7 @@ static t_stat cpu_dep (t_value v, t_addr addr, UNIT *uptr, int32 switches)
 {
     // BUG: sanity check args
     // NOTE: We ignore UNIT, because all CPUS see the same memory
-    M[addr] = v;        // SIMH absolute reference
+    M[addr] = v;        // SIMH absolute reference; BUG: use store_abs_word in case we need cache invalidation
     return 0;
 }
 

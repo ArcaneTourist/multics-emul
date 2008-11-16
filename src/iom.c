@@ -290,23 +290,23 @@ static int do_channel(int chan, pcw_t *p)
     // Second, check if PCW tells use to request a list service, send an interrupt, etc
     // BUG: A loop for calling list service and doing returned DCWs should probably be here
 
-#if 0
-    int control = p->control;
-    int first_list = 1;
-    if (ret == 0)
-        if (control == 0)
-            debug_msg(moi, "PCW control flag for chan %d is zero -- no list-service\n", chan);
-        else
-            debug_msg(moi, "PCW control flag for chan %d is non zero (%d)\n", chan, control);
-#else
     int first = 1;
     int control = p->control;
     int first_list = 1;
     if (control == 0 && chan_status.major == 0) {
-            warn_msg(moi, "Forcing at least one list service\n");
+#if 1
+        // this seems to be what the boot tape wants
+        warn_msg(moi, "Forcing at least one list service.\n");
+        control = 2;
+#else
+        // this might be what the diag tape wants
+        if (p->chan_cmd != 02) {
+            warn_msg(moi, "Forcing at least one list service (this PCW implies data service).\n");
             control = 2;
-    }
+        } else
+            warn_msg(moi, "Not forcing at least one list service (this PCW does no data xfer).\n");
 #endif
+    }
 
 if (ret != 0 || control == 0)
     warn_msg(moi, "Not doing a single DCW loop.\n");
@@ -641,12 +641,12 @@ static char* pcw2text(const pcw_t *p)
 }
 
 
+//static int do_pcw(int chan, pcw_t *p)
+//{
+//  debug_msg("IOM::do-pcw", "Using dev-send-pcw\n");
+//  return dev_send_pcw(chan, p);
+//}
 
-static int do_pcw(int chan, pcw_t *p)
-{
-    debug_msg("IOM::do-pcw", "Using dev-send-pcw\n");
-    return dev_send_pcw(chan, p);
-}
 
 static int dev_send_pcw(int chan, pcw_t *p)
 {
@@ -854,9 +854,9 @@ static int do_dcw(int chan, int addr, int *controlp, int *need_indir_svc)
         dcw.fields.instr.chan = chan;   // Real HW would not populate
         debug_msg("IOM::DCW", "%s\n", dcw2text(&dcw));
         *controlp = dcw.fields.instr.control;
-        int ret = do_pcw(chan, &dcw.fields.instr);
+        int ret = dev_send_pcw(chan, &dcw.fields.instr);
         if (ret != 0)
-            debug_msg("IOM::dcw", "do_pcw returns %d.\n", ret);
+            debug_msg("IOM::dcw", "dev-send-pcw returns %d.\n", ret);
         if (dcw.fields.instr.chan_cmd != 02) {
 #if 1
             *need_indir_svc = 1;

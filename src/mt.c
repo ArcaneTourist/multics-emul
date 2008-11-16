@@ -99,12 +99,14 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             tape_statep->bitsp = bitstm_new(tape_statep->bufp, tbc);
             *majorp = 0;
             *subp = 0;
+            if (sim_tape_wrp(unitp)) *subp |= 1;
             tape_statep->io_mode = read_mode;
             return 0;
         }
         case 040:               // CMD 040 -- Reset Status
             *majorp = 0;
             *subp = 0;
+            if (sim_tape_wrp(unitp)) *subp |= 1;
             return 0;
         case 046: {             // BSR
             // BUG: Do we need to clear the buffer?
@@ -112,6 +114,9 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             int ret;
             if ((ret = sim_tape_sprecr(unitp, &tbc)) == 0) {
                 warn_msg("MT::iom_cmd", "Backspace one record\n");
+                *majorp = 0;
+                *subp = 0;
+                if (sim_tape_wrp(unitp)) *subp |= 1;
             } else {
                 complain_msg("MT::iom_cmd", "Cannot backspace record: %d - %s\n", ret, simh_tape_msg(ret));
                 if (ret == MTSE_BOT) {
@@ -129,6 +134,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
         case 051:               // CMD 051 -- Reset Device Status
             *majorp = 0;
             *subp = 0;
+            if (sim_tape_wrp(unitp)) *subp |= 1;
             return 0;
         default: {
             *majorp = 05;
@@ -179,14 +185,16 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
             // make the iom stop
             //*majorp = 013;    // MPC Device Data Alert
             //*subp = 02;       // Inconsistent command
-            *majorp = 0;    // MPC Device Data Alert
-            *subp = 0;      // Inconsistent command
+            *majorp = 0;
+            *subp = 0;
+            if (sim_tape_wrp(unitp)) *subp |= 1;
             complain_msg("MT::iom_io", "Read buffer exhausted on channel %d\n", chan);
             return 1;
         }
         // debug_msg("MT::iom_io", "Data moved from tape controller buffer to IOM\n");
         *majorp = 0;
         *subp = 0;      // BUG: do we need to detect end-of-record?
+        if (sim_tape_wrp(unitp)) *subp |= 1;
         return 0;
     } else {
         // write
@@ -196,12 +204,11 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
         return 1;
     }
 
-    //*majorp = 05; // Real HW could not be on bad channel
-    //*subp = 2;
+    /*notreached*/
     *majorp = 0;
     *subp = 0;
-    return 1;
-
+    complain_msg("MT::iom_io", "Internel error.\n");
+    cancel_run(STOP_BUG);
     return 1;
 }
 

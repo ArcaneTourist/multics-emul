@@ -361,6 +361,7 @@ static int do_an_op(instr_t *ip)
                 save_IR(&word);
                 word = setbits36(word, 25, 1, initial_tally);
                 word |= ((PPR.IC + 1) << 18);
+                warn_msg("OPU::stct1", "saving %012Lo to 0%o\n", word, TPR.CA);
                 return store_word(TPR.CA, word);
             }
             case opcode0_stc2: {
@@ -1825,11 +1826,39 @@ static int do_an_op(instr_t *ip)
             case opcode0_rsw: { // read switches
                 int low = TPR.CA & 07;
                 switch(low) {
+                    case 0: // unformatted; maintenance panel data switches
+                        // GB61-01B says that DPS8 systems have a display instead of a panel.
+                        // Various switches should be on including some of 4..28.  But
+                        // how do these match up to bit positions?
+#if 1                       
+                        reg_A = 0;
+#else
+                        reg_A = 0;
+                        reg_A = setbits36(reg_A, 0, 2, 03); // enable match?
+                        reg_A = setbits36(reg_A, 2+4, 1, 1);    // data switches
+                        reg_A = setbits36(reg_A, 2+6, 1, 1);    // data switches
+                        reg_A = setbits36(reg_A, 2+18, 1, 1);   // data switches
+                        reg_A = setbits36(reg_A, 2+19, 1, 1);   // data switches
+                        reg_A = setbits36(reg_A, 2+20, 1, 1);   // data switches
+                        reg_A = setbits36(reg_A, 2+23, 1, 1);   // data switches
+                        reg_A = setbits36(reg_A, 2+24, 1, 1);   // data switches
+                        reg_A = setbits36(reg_A, 2+25, 1, 1);   // data switches
+                        reg_A = setbits36(reg_A, 2+26, 1, 1);   // data switches
+                        reg_A = setbits36(reg_A, 2+28, 1, 1);   // data switches
+                        // 31, auto?, off
+                        // 32, cycle?, off
+                        reg_A = setbits36(reg_A, 33, 1, 1); // execute pb
+                        // 34, init?, off
+                        // 35, execute?, off
+#endif
+                        warn_msg("OPU::opcode::rsw", "function xxx%o is undocumented.\n", low);
+                        cancel_run(STOP_BUG);
+                        break;
                     case 2:
                         reg_A = setbits36(0, 4, 2, 0);  // 0 for L68 or DPS
                         reg_A = setbits36(0, 6, 7, switches.FLT_BASE);
                         reg_A = setbits36(reg_A, 19, 1, 0); // 0 for L68
-                        reg_A = setbits36(reg_A, 27, 1, 0); // cache disabled
+                        reg_A = setbits36(reg_A, 27, 1, 1); // cache
                         reg_A = setbits36(reg_A, 28, 1, 0); // gcos mode extended memory option off
                         reg_A = setbits36(reg_A, 29, 4, 016);   // 1110b=>L68 re start_cpu.pl1
                         reg_A = setbits36(reg_A, 33, 3, switches.cpu_num);
@@ -1837,10 +1866,10 @@ static int do_an_op(instr_t *ip)
                         break;
                     default:
                         warn_msg("OPU::opcode::rsw", "function xxx%o not implemented.\n", low);
+                        cancel_run(STOP_BUG);
                 }
                 IR.zero = reg_A == 0;
                 IR.neg = bit36_is_neg(reg_A);
-                cancel_run(STOP_BUG);
                 return 0;
             }
 

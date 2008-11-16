@@ -103,11 +103,11 @@ typedef struct {
     uint neg;               // bit 19
     uint carry;             // bit 20; see AL39, 3-6
     uint overflow;          // bit 21
-    // exp_overflow;        // bit 22
-    // exp_underflow;       // bit 23
+    uint exp_overflow;      // bit 22   (used only by ldi/stct1)
+    uint exp_underflow;     // bit 23   (used only by ldi/stct1)
     uint overflow_mask;     // bit 24
     uint tally_runout;      // bit 25
-    // parity_error;        // bit 26
+    uint parity_error;      // bit 26   (used only by ldi/stct1)
     uint parity_mask;       // bit 27
     uint not_bar_mode;      // bit 28
     uint truncation;        // bit 29
@@ -118,10 +118,13 @@ typedef struct {
 
 
 // more simulator state variables for the cpu
-// these probably belong elsewhere..
+// these probably belong elsewhere, perhaps control unit data...
 typedef struct {
-    t_bool ic_odd;  // executing odd pair?
-    t_bool xfr;     // most recent instruction was a transfer instr?
+    flag_t ic_odd;  // executing odd pair?
+    flag_t xfr;     // most recent instruction was a transfer instr?
+    uint IC_abs;    // translation of even IC to an absolute address; see ADDRESS of cu history
+    flag_t irodd_invalid;   // cached odd instr invalid due to memory write by even instr
+    uint read_addr; // last absolute read; might be same as CA for our purposes...; see APU RMA
 } cpu_state_t;
 
 
@@ -140,12 +143,12 @@ typedef struct {
 // Simulator-only interrupt and fault info
 // tentative
 typedef struct {
-    t_bool any;                 // true if any of the below are true
-    t_bool int_pending;
+    flag_t any;                 // true if any of the below are true
+    flag_t int_pending;
     int low_group;          // Lowest group-number fault preset
     uint32 group7;          // bitmask for multiple group 7 faults
     int fault[6];           // only one fault in groups 1..6 can be pending
-    t_bool interrupts[32];
+    flag_t interrupts[32];
 } events_t;
 
 // Base Address Register (BAR) -- 18 bits
@@ -518,7 +521,7 @@ extern uint8 reg_RALR;      // Ring Alarm Reg, 3 bits
 
 extern ctl_unit_data_t cu;
 extern cpu_state_t cpu;
-extern t_bool fault_gen_no_fault;
+extern flag_t fault_gen_no_fault;
 
 extern t_uint64 calendar_a;
 extern t_uint64 calendar_q;
