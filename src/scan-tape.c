@@ -227,7 +227,7 @@ void tape_block(unsigned char *p, uint32 len)
     size_t hack = 0;
     bitstream_t *bp = bitstm_new(p, len);
     if ((len * 8) % 36 != 0) {
-        complain_msg("CPU::boot", "Length %u bytes is not a multiple of 36 bits.\n");
+        log_msg(ERR_MSG, "CPU::boot", "Length %u bytes is not a multiple of 36 bits.\n");
     }
     printf("=============================================================\n");
     printf("Tape block: %u bytes, %u 36-bit words\n", len, len*8/36);
@@ -248,7 +248,7 @@ void tape_block(unsigned char *p, uint32 len)
     }
     printf("\n");
     if (nbits != 0) {
-        complain_msg("CPU::boot", "Internal error getting bits from tape\n");
+        log_msg(ERR_MSG, "CPU::boot", "Internal error getting bits from tape\n");
     }
 }
 

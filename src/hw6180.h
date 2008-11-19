@@ -27,7 +27,7 @@ typedef enum {
 
 enum faults {
     shutdown_fault = 0, store_fault = 1, f1_fault = 3,
-    timer_fault = 4, connect_fault = 8,
+    timer_fault = 4, cmd_fault = 5, connect_fault = 8,
     illproc_fault = 10, startup_fault = 12, overflow_fault = 13,
     div_fault = 14, dir_flt0_fault = 16, acc_viol_fault = 20, trouble_fault = 31,
     //
@@ -44,6 +44,7 @@ enum sim_stops {
     STOP_IBKPT,         // breakpoint
 };
 enum dev_type { DEV_NONE, DEV_TAPE, DEV_CON, DEV_DISK };    // devices connected to an IOM
+enum log_level { DEBUG_MSG, NOTIFY_MSG, WARN_MSG, ERR_MSG };
 
 
 // ============================================================================
@@ -161,7 +162,7 @@ typedef struct {
 typedef struct {
     int wordno; // offset from segment base;
     struct {
-        int snr;    // segment #
+        int snr;    // segment #, 15 bits
         uint rnr;   // effective ring number
         int bitno;  // index into wordno
     } PR;   // located in APU in physical hardware
@@ -194,7 +195,7 @@ typedef struct {
     uint TBR;   // Current bit offset as calculated from ITS and ITP
     uint CA;    // Current computed addr relative to the segment in TPR.TSR, 18 bits
     //t_uint64 CA;  // Current computed addr relative to the segment in TPR.TSR, 18 bits
-    int bitno;
+    //int bitno;    // see TBR
     // BUG: CA value should probably be placed in ctl_unit_data_t
     uint is_value;  // is offset a value or an address? (du or dl modifiers)
     t_uint64 value; // 36bit value from opcode constant via du/dl
@@ -222,12 +223,10 @@ typedef struct {
             IC  bits [0..17] of word 4
     */
 
-    /* word 1 */
-    struct {
-        unsigned oosb:1;    // out of segment bounds
-    } word1flags;
-
 #if 0
+
+    /* First we list some registers we either don't use or that we have represented elsewhere */
+
     /* word 0 */
     // PPR portions copied from Appending Unit
     uint PPR_PRR;       /* Procedure ring register; 3 bits @ 0[0..2] */
@@ -262,6 +261,17 @@ typedef struct {
     uint CA;        // 18 bits at 5[0..17]; computed address value (offset) used in the last address preparation cycle
     // cu bits for repeats, execute double, restarts, etc
 #endif
+
+
+
+    /* word 0, continued */
+    flag_t SD_ON;   // SDWAM enabled
+    flag_t PT_ON;   // PTWAM enabled
+
+    /* word 1, continued  */
+    struct {
+        unsigned oosb:1;    // out of segment bounds
+    } word1flags;
 
     /* word 2, continued */
     uint delta;     // 6 bits at 2[30..35]; addr increment for repeats
@@ -320,7 +330,7 @@ typedef struct {
     uint r1;        // 3 bits
     uint r2;        // 3 bits
     uint r3;        // 3 bits
-    flag_t f;       // In SDW bit 33, stored by ssdp but not ssdr
+    flag_t f;       // In memory if one, fault if zero;  In SDW bit 33, stored by ssdp but not ssdr
     uint fc;        // directed fault; Bits 34..35 of even word; in SDW, but not SDWAM?
     // odd word:
     uint bound;     // 14 bits; 14 high order bits of furtherest Y-block16
@@ -342,7 +352,7 @@ typedef struct {
         uint ptr;           // 15 bits; effective segment #
         uint is_full;   // flag; this SDW is valid
         uint use;       // counter, 4 bits
-        uint enabled;   // internal flag, not part of the register
+        // uint enabled;    // internal flag, not part of the register
     } assoc;
 } SDWAM_t;
 
@@ -446,6 +456,7 @@ static const t_uint64 MASK36 = ~(~((t_uint64)0)<<36);   // lower 36 bits all one
 static const t_uint64 MASK18 = ~(~((t_uint64)0)<<18);   // lower 18 bits all ones
 #define MASKBITS(x) ( ~(~((t_uint64)0)<<x) )    // lower (x) bits all ones
 
+extern void log_msg(enum log_level, const char* who, const char* format, ...);
 
 /*  Extract (i)th bit of a 36 bit word (held in a uint64). */
 #define bitval36(word,i) ( ((word)>>(35-i)) & (uint64_t) 1 )
@@ -453,12 +464,11 @@ static const t_uint64 MASK18 = ~(~((t_uint64)0)<<18);   // lower 18 bits all one
     the (i)th bit. */
 #define bitset36(word,i) ( (word) | ( (uint64_t) 1 << (35 - i)) )
 #define bitclear36(word,i) ( (word) & ~ ( (uint64_t) 1 << (35 - i)) )
-extern void complain_msg(const char* who, const char* format, ...);
 static inline t_uint64 getbits36(t_uint64 x, int i, int n) {
     // bit 35 is right end, bit zero is 36th from the right
     int shift = 35-i-n+1;
     if (shift < 0 || shift > 35) {
-        complain_msg("getbits36", "bad args (%Lo,i=%d,n=%d)\n", x, i, n);
+        log_msg(ERR_MSG, "getbits36", "bad args (%Lo,i=%d,n=%d)\n", x, i, n);
     } else
         return (x >> shift) & ~ (~0 << n);
 }
@@ -472,7 +482,7 @@ static inline t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
         // 2 => ..11
     int shift = 36 - p - n;
     if (shift < 0 || shift > 35) {
-        complain_msg("setbit36", "bad args\n");
+        log_msg(ERR_MSG, "setbit36", "bad args\n");
         return 0;
     }
     mask <<= 36 - p - n;    // shift 1s to proper position; result 0*1{n}0*
@@ -484,7 +494,7 @@ static inline t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
     t_uint64 temp1 = (x & ~ mask) | (val << (36 - p - n));
     t_uint64 temp2 = (x & ~ mask) | ((val&MASKBITS(n)) << (36 - p - n));
     if (temp1 != temp2) {
-        complain_msg("setbits36", "x=0%Lo, p=%d, n=%d, val=0%Lo: mask=0%Lo: result 0%Lo vs 0%Lo\n", x, p, n, val, mask, temp1, temp2);
+        log_msg(ERR_MSG, "setbits36", "x=0%Lo, p=%d, n=%d, val=0%Lo: mask=0%Lo: result 0%Lo vs 0%Lo\n", x, p, n, val, mask, temp1, temp2);
     }
     return temp2;
 }
@@ -529,9 +539,10 @@ extern t_uint64 calendar_q;
 // ============================================================================
 // === Functions
 
-extern void debug_msg(const char* who, const char* format, ...);
-extern void warn_msg(const char* who, const char* format, ...);
-extern void complain_msg(const char* who, const char* format, ...);
+extern void log_msg(enum log_level, const char* who, const char* format, ...);
+//extern void debug_msg(const char* who, const char* format, ...);
+//extern void warn_msg(const char* who, const char* format, ...);
+//extern void complain_msg(const char* who, const char* format, ...);
 extern void out_msg(const char* format, ...);
 extern void cancel_run(enum sim_stops reason);
 extern void execute_instr(void);

@@ -67,7 +67,7 @@ static int fetch_mf_op(uint opnum, const eis_mf_t* mfp, t_uint64* wordp)
         return 1;
     if (mfp != NULL && mfp->id) {
         // don't implement until we see an example
-        complain_msg("APU", "Fetch EIS multi-word op: MF with indir bit set is unsupported:\n");
+        log_msg(ERR_MSG, "APU", "Fetch EIS multi-word op: MF with indir bit set is unsupported:\n");
         uint addr = *wordp >> 18;
         uint a = getbits36(*wordp, 29, 1);
         uint td = *wordp & MASKBITS(4);
@@ -79,10 +79,10 @@ static int fetch_mf_op(uint opnum, const eis_mf_t* mfp, t_uint64* wordp)
             int32 soffset = sign15(offset);
             // PR[pr]
             // generalize: int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop)
-            complain_msg("APU", "Indir word %012Lo: pr=0%o, offset=0%o(%d); REG(Td)=0%o\n", *wordp, pr, offset, soffset, td); 
+            log_msg(ERR_MSG, "APU", "Indir word %012Lo: pr=0%o, offset=0%o(%d); REG(Td)=0%o\n", *wordp, pr, offset, soffset, td); 
         } else {
             // use 18 bit addr in all words -- fetch_word will handle
-            complain_msg("APU", "Indir word %012Lo: offset=0%o(%d); REG(Td)=0%o\n", *wordp, addr, sign18(addr), td); 
+            log_msg(ERR_MSG, "APU", "Indir word %012Lo: offset=0%o(%d); REG(Td)=0%o\n", *wordp, addr, sign18(addr), td); 
         }
         // enum atag_tm tm = atag_r;
         // TPR.CA = 0;
@@ -150,24 +150,24 @@ void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* 
 int n = descp->n;
     descp->nbits = (descp->ta == 0) ? 9 : (descp->ta == 1) ? 6 : (descp->ta == 2) ? 4 : -1;
     if (descp->nbits == -1) {
-        complain_msg("APU::EIS", "Illegal ta value in MF\n");
+        log_msg(ERR_MSG, "APU::EIS", "Illegal ta value in MF\n");
         fault_gen(illproc_fault);
         cancel_run(STOP_BUG);
     }
     fix_mf_len(&descp->n, mfp, descp->nbits);
 if ((descp->n >> 12) != 0) {
-    warn_msg("APU", "parse_eis_alpha_desc: desc: n orig 0%o; After mod 0%o => 0%o\n", n, descp->n, descp->n & MASKBITS(12));
+    log_msg(WARN_MSG, "APU", "parse_eis_alpha_desc: desc: n orig 0%o; After mod 0%o => 0%o\n", n, descp->n, descp->n & MASKBITS(12));
     descp->n &= MASKBITS(12);
 }
     if (descp->nbits == 9) {
         if ((descp->cn & 1) != 0) {
-            complain_msg("APU::EIS", "TA of 0 (9bit) not legal with cn of %d\n", descp->cn);
+            log_msg(ERR_MSG, "APU::EIS", "TA of 0 (9bit) not legal with cn of %d\n", descp->cn);
             fault_gen(illproc_fault);
         } else
             descp->cn /= 2;
     }
     if (descp->nbits * descp->cn >= 36) {
-        complain_msg("APU::EIS", "Data type TA of %d (%d bits) does not allow char pos of %d\n", descp->ta, descp->nbits, descp->cn);
+        log_msg(ERR_MSG, "APU::EIS", "Data type TA of %d (%d bits) does not allow char pos of %d\n", descp->ta, descp->nbits, descp->cn);
         fault_gen(illproc_fault);
     }
     descp->first = 1;
@@ -196,7 +196,7 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
                     cancel_run(STOP_BUG);
                 }
                 if (nbits != 9) {
-                    warn_msg("APU", "MF len: nbits=%d, reg modifier 05: A=0%Lo => 0%o\n", nbits, reg_A, *np);
+                    log_msg(WARN_MSG, "APU", "MF len: nbits=%d, reg modifier 05: A=0%Lo => 0%o\n", nbits, reg_A, *np);
                     cancel_run(STOP_IBKPT);
                 }
                 return;
@@ -213,7 +213,7 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
                     cancel_run(STOP_BUG);
                 }
                 if (nbits != 9) {
-                    warn_msg("APU", "MF len: nbits=%d, reg modifier 06: A=0%Lo => 0%o\n", nbits, reg_A, *np);
+                    log_msg(WARN_MSG, "APU", "MF len: nbits=%d, reg modifier 06: A=0%Lo => 0%o\n", nbits, reg_A, *np);
                     cancel_run(STOP_IBKPT);
                 }
                 return;
@@ -228,7 +228,7 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
                 *np = reg_X[*np&7];
                 return;
             default:
-                complain_msg("APU", "MF len: reg modifier 0%o not implemented.\n", *np);
+                log_msg(ERR_MSG, "APU", "MF len: reg modifier 0%o not implemented.\n", *np);
                 cancel_run(STOP_BUG);
         }
     }
@@ -252,7 +252,7 @@ int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
     // High order bits of nib are zero filled 
 
 
-    //warn_msg("APU::eis-an-get", "Starting at IC 0%o\n", PPR.IC);
+    //log_msg(WARN_MSG, "APU::eis-an-get", "Starting at IC 0%o\n", PPR.IC);
     //return get_via_eis_an(mfp, descp, -1, nib);
     return get_eis_an_fwd(mfp, descp, nib);
 }
@@ -267,25 +267,25 @@ static int get_eis_an_base(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
     uint addr1;
 
     if (get_mf_an_addr(descp->base_addr, mfp, &addr1, &descp->base_bitpos, descp->nbits) != 0) {
-        warn_msg(moi, "Failed: get_mf_an_addr\n");
+        log_msg(WARN_MSG, moi, "Failed: get_mf_an_addr\n");
         return 1;
     }
     if (descp->base_bitpos == 0) {
-        debug_msg(moi, "Base address is 0%o (with no bit offset)\n", addr1);
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Base address is 0%o (with no bit offset)\n", addr1);
     } else {
-        debug_msg(moi, "Base address is 0%o with bit offset %d\n", addr1, descp->base_bitpos);
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Base address is 0%o with bit offset %d\n", addr1, descp->base_bitpos);
     }
     descp->base_addr = addr1;
 
     if (descp->cn != 0) {
         descp->base_bitpos += descp->cn * descp->nbits;
         if (descp->base_bitpos >= 36) {
-            warn_msg(moi, "Too many offset bits for a single word.  Base address is 0%o with bit offset %d; CN offset is %d (%d bits).\n", descp->base_addr, descp->base_bitpos, descp->cn, descp->cn * descp->nbits);
+            log_msg(WARN_MSG, moi, "Too many offset bits for a single word.  Base address is 0%o with bit offset %d; CN offset is %d (%d bits).\n", descp->base_addr, descp->base_bitpos, descp->cn, descp->cn * descp->nbits);
             cancel_run(STOP_WARN);
             descp->base_addr += descp->base_bitpos % 36;
             descp->base_bitpos /= 36;
         }
-        debug_msg(moi, "Cn is %d, so base bitpos becomes %d\n", descp->cn, descp->base_bitpos);
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Cn is %d, so base bitpos becomes %d\n", descp->cn, descp->base_bitpos);
     }
 
     return 0;
@@ -300,10 +300,10 @@ static int get_eis_an_fwd(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib
     const char* moi = "APU::eis-an-get-f";
 
     if (descp->first)
-        debug_msg(moi, "Starting\n");
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Starting\n");
 
     if (descp->n == 0) {
-        warn_msg(moi, "Descriptor exhausted\n");
+        log_msg(WARN_MSG, moi, "Descriptor exhausted\n");
         cancel_run(STOP_WARN);
         return 1;
     }
@@ -315,7 +315,7 @@ static int get_eis_an_fwd(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib
         // forward sequential
         descp->addr = descp->base_addr;
         descp->bitpos = descp->base_bitpos;
-        debug_msg(moi, "First char is at addr 0%o, bit offset %d\n", descp->addr, descp->bitpos);
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "First char is at addr 0%o, bit offset %d\n", descp->addr, descp->bitpos);
         need_fetch = 1;
     } else {
         need_fetch = descp->bitpos == 36;
@@ -327,12 +327,12 @@ static int get_eis_an_fwd(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib
     if (need_fetch) {
         // fetch a new src word
 
-        // debug_msg(moi, "Fetching src word.\n");
+        // log_msg(DEBUG_MSG, moi, "Fetching src word.\n");
         if (fetch_abs_word(descp->addr, &descp->word) != 0) {
-            warn_msg(moi, "Failed: fetch word 0%o\n", descp->addr);
+            log_msg(WARN_MSG, moi, "Failed: fetch word 0%o\n", descp->addr);
             return 1;
         }
-        debug_msg(moi, "Fetched word at 0%o %012Lo\n", descp->addr, descp->word);
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Fetched word at 0%o %012Lo\n", descp->addr, descp->word);
 
         if (descp->first)
             descp->first = 0;
@@ -341,7 +341,7 @@ static int get_eis_an_fwd(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib
 
     *nib = getbits36(descp->word, descp->bitpos, descp->nbits);
     //if (opt_debug)
-    //  debug_msg(moi, "%dbit char at bit %d of word %012Lo, value is 0%o\n", descp->nbits, descp->bitpos, descp->word, *nib);
+    //  log_msg(DEBUG_MSG, moi, "%dbit char at bit %d of word %012Lo, value is 0%o\n", descp->nbits, descp->bitpos, descp->word, *nib);
     -- descp->n;
     descp->bitpos += descp->nbits;
     return 0;
@@ -355,10 +355,10 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib)
     const char* moi = "APU::eis-an-get-r";
 
     if (descp->first)
-        debug_msg(moi, "Starting\n");
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Starting\n");
 
     if (descp->n <= 0) {
-        warn_msg(moi, "Descriptor exhausted\n");
+        log_msg(WARN_MSG, moi, "Descriptor exhausted\n");
         cancel_run(STOP_WARN);
         return 1;
     }
@@ -378,14 +378,14 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib)
         int ndx = descp->n + descp->base_bitpos / descp->nbits;
         -- ndx; // index, not length
         ndx -= descp->cn; // BUG: We assume CN doesn't mean string is shorter than N
-        debug_msg(moi, "Base at 0%o.  Using offset of %d (len=%d - 1 + b=%dc - cn=%d) %dbit chars\n",
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Base at 0%o.  Using offset of %d (len=%d - 1 + b=%dc - cn=%d) %dbit chars\n",
             descp->base_addr, ndx, descp->n, descp->base_bitpos / descp->nbits, descp->cn, descp->nbits);
         descp->n -= descp->cn;  // will hit zero at cn instead of base
         descp->addr = descp->base_addr + ndx / nparts;
         descp->bitpos = (ndx % nparts) * descp->nbits;
-        debug_msg(moi, "Last char is at addr 0%o, bit offset %d\n", descp->addr, descp->bitpos);
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Last char is at addr 0%o, bit offset %d\n", descp->addr, descp->bitpos);
         if (descp->cn != 0) {
-            warn_msg(moi, "Non zero CN for reverse string access.\n");
+            log_msg(WARN_MSG, moi, "Non zero CN for reverse string access.\n");
             cancel_run(STOP_WARN);
         }
         need_fetch = 1;
@@ -399,14 +399,14 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib)
     if (need_fetch) {
         // fetch a new src word
 
-        // debug_msg(moi, "Fetching src word.\n");
+        // log_msg(DEBUG_MSG, moi, "Fetching src word.\n");
         if (fetch_abs_word(descp->addr, &descp->word) != 0) {
-            warn_msg(moi, "Failed: fetch word 0%o\n", descp->addr);
+            log_msg(WARN_MSG, moi, "Failed: fetch word 0%o\n", descp->addr);
             cancel_run(STOP_WARN);
             opt_debug = saved_debug;
             return 1;
         }
-        debug_msg(moi, "Fetched word at 0%o %012Lo\n", descp->addr, descp->word);
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Fetched word at 0%o %012Lo\n", descp->addr, descp->word);
 
         if (descp->first)
             descp->first = 0;
@@ -415,7 +415,7 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib)
 
     *nib = getbits36(descp->word, descp->bitpos, descp->nbits);
     if (opt_debug)
-        debug_msg(moi, "%dbit char at bit %d of word %012Lo, value is 0%o\n", descp->nbits, descp->bitpos, descp->word, *nib);
+        log_msg(DEBUG_MSG, moi, "%dbit char at bit %d of word %012Lo, value is 0%o\n", descp->nbits, descp->bitpos, descp->word, *nib);
     -- descp->n;
     descp->bitpos -= descp->nbits;
     opt_debug = saved_debug;
@@ -432,10 +432,10 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
     const char* moi = "APU::eis-an-put-f";
 
     if (descp->first)
-        debug_msg(moi, "Starting\n");
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Starting\n");
 
     if (descp->n == 0) {
-        warn_msg(moi, "Descriptor exhausted\n");
+        log_msg(WARN_MSG, moi, "Descriptor exhausted\n");
         cancel_run(STOP_WARN);
         return 1;
     }
@@ -453,16 +453,16 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
         descp->bitpos = descp->base_bitpos;
         if (descp->bitpos == 0) {
             descp->word = 0;    // makes debug output easier to read
-            debug_msg(moi, "Initial output at addr 0%o is at offset zero, so not loading initial word\n", descp->addr);
+            if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Initial output at addr 0%o is at offset zero, so not loading initial word\n", descp->addr);
         } else {
             // Read in contents of target word because we won't be overwriting all of it
-            //debug_msg(moi, "First put, bit pos is %d -- loading in partial word\n", descp->bitpos);
+            //log_msg(DEBUG_MSG, moi, "First put, bit pos is %d -- loading in partial word\n", descp->bitpos);
             if (fetch_abs_word(descp->addr, &descp->word) != 0) {
-                warn_msg(moi, "Failed.\n");
+                log_msg(WARN_MSG, moi, "Failed.\n");
                 return 1;
             }
             //opt_debug = 1;
-            debug_msg(moi, "Fetched target word %012Lo from addr 0%o because output starts at bit %d.\n", descp->word, descp->addr, descp->bitpos);
+            if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Fetched target word %012Lo from addr 0%o because output starts at bit %d.\n", descp->word, descp->addr, descp->bitpos);
             opt_debug = saved_debug;
         }
         descp->first = 0;
@@ -470,7 +470,7 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
 
     if (descp->bitpos == 36) {
         // BUG: this might be possible if page faulted on earlier write attempt?
-        warn_msg(moi, "Internal error, prior call did not flush buffer\n");
+        log_msg(WARN_MSG, moi, "Internal error, prior call did not flush buffer\n");
         cancel_run(STOP_WARN);
         if (save_eis_an(mfp, descp) != 0) {
             opt_debug = saved_debug;
@@ -481,7 +481,7 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
     t_uint64 tmp = descp->word;
     descp->word = setbits36(descp->word, descp->bitpos, descp->nbits, nib);
     if (opt_debug > 1)
-        debug_msg(moi, "Setting %d-bit char at position %2d of %012Lo to 0%o: %012Lo\n",
+        log_msg(DEBUG_MSG, moi, "Setting %d-bit char at position %2d of %012Lo to 0%o: %012Lo\n",
             descp->nbits, descp->bitpos, tmp, nib, descp->word);
 
     -- descp->n;
@@ -490,9 +490,9 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
     if (descp->bitpos == 36) {
         // Word is full, so output it
         // Note: Bitno is irrelevent -- if necessary, we folded in the first word
-        debug_msg(moi, "Storing %012Lo to addr=0%o\n", descp->word, descp->addr);
+        if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Storing %012Lo to addr=0%o\n", descp->word, descp->addr);
         if (store_abs_word(descp->addr, descp->word) != 0) {
-            warn_msg(moi, "Failed.\n");
+            log_msg(WARN_MSG, moi, "Failed.\n");
             opt_debug = saved_debug;
             return 1;
         }
@@ -521,26 +521,26 @@ int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
     int saved_debug = opt_debug;
 
     if (descp->bitpos == 36) {
-        warn_msg(moi, "Odd, dest is a full word.\n");   // why didn't we write it during loop?
+        log_msg(WARN_MSG, moi, "Odd, dest is a full word.\n");  // why didn't we write it during loop?
         cancel_run(STOP_WARN);
     } else {
-        //debug_msg(moi, "Dest word isn't full.  Loading dest from memory 0%o and folding.\n", addr2);
+        //log_msg(DEBUG_MSG, moi, "Dest word isn't full.  Loading dest from memory 0%o and folding.\n", addr2);
         t_uint64 word;
         if (fetch_abs_word(descp->addr, &word) != 0) {
-            warn_msg(moi, "Failed.\n");
+            log_msg(WARN_MSG, moi, "Failed.\n");
             opt_debug = saved_debug;
             return 1;
         }
         t_uint64 tmp = descp->word;
         descp->word = setbits36(descp->word, descp->bitpos, 36 - descp->bitpos, word);
-        debug_msg(moi, "Combined buffered dest %012Lo with fetched %012Lo: %012Lo\n", tmp, word, descp->word);
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Combined buffered dest %012Lo with fetched %012Lo: %012Lo\n", tmp, word, descp->word);
     }
 
     //opt_debug = 1;
-    debug_msg(moi, "Storing %012Lo to addr=0%o.\n", descp->word, descp->addr);
+    if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Storing %012Lo to addr=0%o.\n", descp->word, descp->addr);
     opt_debug = 0;
     if (store_abs_word(descp->addr, descp->word) != 0) {
-        warn_msg(moi, "Failed.\n");
+        log_msg(WARN_MSG, moi, "Failed.\n");
         opt_debug = saved_debug;
         return 1;
     }
@@ -587,7 +587,7 @@ void fnord()
         // Current instruction should have been fetched via APPEND mode if
         // ops are to be fetched in that mode...
         if (get_addr_mode() != APPEND_mode) {
-            complain_msg("APU", "Fetch MF op: Cannot use append mode for operand when not in append mode.\n");
+            log_msg(ERR_MSG, "APU", "Fetch MF op: Cannot use append mode for operand when not in append mode.\n");
             cancel_run(STOP_BUG);
             return 1;
         }
@@ -613,22 +613,22 @@ int get_eis_indir_addr(t_uint64 word, uint* addrp)
         int32 offset = addr & MASKBITS(15);
         int32 soffset;
         soffset = sign15(offset);
-        warn_msg(moi, "Indir word %012Lo: pr=0%o, offset=0%o(%d); REG(Td)=0%o\n", word, pr, offset, soffset, td); 
+        log_msg(WARN_MSG, moi, "Indir word %012Lo: pr=0%o, offset=0%o(%d); REG(Td)=0%o\n", word, pr, offset, soffset, td); 
     } else {
         // use 18 bit addr in all words -- fetch_word will handle
-        warn_msg(moi, "Indir word %012Lo: offset=0%o(%d); REG(Td)=0%o\n", word, addr, sign18(addr), td); 
+        log_msg(WARN_MSG, moi, "Indir word %012Lo: offset=0%o(%d); REG(Td)=0%o\n", word, addr, sign18(addr), td); 
     }
 
     uint bitno;
     int ret = get_address(addr, a, td, addrp, &bitno, 36);
     if (bitno != 0) {
-        warn_msg(moi, "Non zero bitno %d cannot be returned\n", bitno);
+        log_msg(WARN_MSG, moi, "Non zero bitno %d cannot be returned\n", bitno);
         cancel_run(STOP_BUG);
     } else {
-        // warn_msg(moi, "Auto breakpoint\n");
+        // log_msg(WARN_MSG, moi, "Auto breakpoint\n");
         // cancel_run(STOP_IBKPT);
     }
-    //warn_msg(moi, "Resulting addr is 0%o\n", *addrp);
+    //log_msg(WARN_MSG, moi, "Resulting addr is 0%o\n", *addrp);
     return ret;
 }
 
@@ -661,8 +661,8 @@ int addr_mod_eis_addr_reg(instr_t *ip)
             // if (oops) {
             {
                 if (oops) ++ opt_debug;
-                debug_msg("APU::eis-addr-reg", "CA = 0%o => 0%o =>%d\n", TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
-                debug_msg("APU::eis-addr-reg", "Initial AR[%d]:   wordno = 0%o, charno=0%o, bitno=0%o; PR bitno=%d\n",
+                if (opt_debug>0) log_msg(DEBUG_MSG, "APU::eis-addr-reg", "CA = 0%o => 0%o =>%d\n", TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
+                if (opt_debug>0) log_msg(DEBUG_MSG, "APU::eis-addr-reg", "Initial AR[%d]:   wordno = 0%o, charno=0%o, bitno=0%o; PR bitno=%d\n",
                     ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
             }
             if (a == 0) {
@@ -670,7 +670,7 @@ int addr_mod_eis_addr_reg(instr_t *ip)
                 AR_PR[ar].AR.charno = TPR.CA % 4;
                 if (AR_PR[ar].AR.bitno != 0) {
                     // BUG: AL39 doesn't say to clear bitno, but it seems we'd want to
-                    warn_msg("APU::eis-addr-reg", "a9bd: AR bitno is non zero\n");
+                    log_msg(WARN_MSG, "APU::eis-addr-reg", "a9bd: AR bitno is non zero\n");
                     cancel_run(STOP_WARN);
                 }
                 // handle anomaly (AL39 AR description)
@@ -682,11 +682,11 @@ int addr_mod_eis_addr_reg(instr_t *ip)
                 // handle anomaly (AL39 AR description)
                 AR_PR[ar].PR.bitno = AR_PR[ar].AR.charno * 9;   // 0, 9, 18, 27
             }
-            debug_msg("APU", "Addr mod: AR[%d]: wordno = 0%o, charno=0%o, bitno=0%o; PR bitno=%d\n",
+            if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Addr mod: AR[%d]: wordno = 0%o, charno=0%o, bitno=0%o; PR bitno=%d\n",
                 ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
 if (AR_PR[ar].wordno == 010000005642) {
-                warn_msg("APU", "a=%d; CA is 0%o\n", a, TPR.CA);
-                warn_msg("APU", "soffset is %d\n", soffset);
+                log_msg(WARN_MSG, "APU", "a=%d; CA is 0%o\n", a, TPR.CA);
+                log_msg(WARN_MSG, "APU", "soffset is %d\n", soffset);
                 cancel_run(STOP_BUG);
             }
             if (oops) -- opt_debug;
@@ -695,7 +695,7 @@ if (AR_PR[ar].wordno == 010000005642) {
         case opcode1_a4bd:
         case opcode1_a6bd:
         default:
-            debug_msg("APU", "internal error: opcode 0%0o(%d) not valid for EIS address register arithmetic\n", op, bit27);
+            log_msg(ERR_MSG, "APU", "internal error: opcode 0%0o(%d) not valid for EIS address register arithmetic\n", op, bit27);
             cancel_run(STOP_BUG);
     }
     return 1;

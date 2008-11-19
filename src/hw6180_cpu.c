@@ -246,7 +246,9 @@ int fetch_instr(uint IC, instr_t *ip);
 void execute_ir(void);
 void fault_gen(enum faults f);
 void decode_instr(instr_t *ip, t_uint64 word);
-static void init_ops();
+static void init_ops(void);
+static void ic_history_init(void);
+static void ic_history_add(void);
 
 void tape_block(unsigned char *p, uint32 len, uint32 addr);
 
@@ -268,7 +270,7 @@ static int32 sign15(uint x)
 {
     if (bit_is_neg(x,15)) {
         int32 r = - ((1<<15) - (x&MASKBITS(15)));
-        debug_msg("sign15", "0%Lo => 0%o (%+d decimal)\n", x, r, r);
+        // log_msg(DEBUG_MSG, "sign15", "0%Lo => 0%o (%+d decimal)\n", x, r, r);
         return r;
     }
     else
@@ -286,11 +288,11 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
     int ret;
     uint32 old_switches = sim_switches;
     sim_switches |= SWMASK ('R');   // Read-only -- don't create an empty boot tape
-    debug_msg("CPU::boot", "Attaching file %s to tape drive\n", fname);
+    log_msg(DEBUG_MSG, "CPU::boot", "Attaching file %s to tape drive\n", fname);
     ret = sim_tape_attach(&mt_unit, fname);
     sim_switches = old_switches;
     if (ret != 0) {
-        complain_msg("CPU::boot", "Cannot attach file '%s' to tape unit.\n", fname);
+        log_msg(ERR_MSG, "CPU::boot", "Cannot attach file '%s' to tape unit.\n", fname);
         return ret;
     }
 
@@ -302,10 +304,10 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
     uint8 buf[bufsz];
     t_mtrlnt tbc;
     if ((ret = sim_tape_rdrecf(&mt_unit, buf, &tbc, bufsz)) != 0) {
-        complain_msg("CPU::boot", "Cannot read tape\n");
+        log_msg(ERR_MSG, "CPU::boot", "Cannot read tape\n");
         return ret;
     }
-    warn_msg("CPU::boot", "Read %d bytes from simulated tape %s\n", (int) tbc, fname);
+    log_msg(WARN_MSG, "CPU::boot", "Read %d bytes from simulated tape %s\n", (int) tbc, fname);
     tape_block(buf, tbc, 030);
     bootimage_loaded = 1;
 #else
@@ -338,15 +340,18 @@ t_stat cpu_reset (DEVICE *dptr)
     // being seeing after boot load.   Actually, we could just require
     // the user to load a boot tape image before starting the CPU...
 
-    debug_msg("CPU", "Reset\n");
+    log_msg(DEBUG_MSG, "CPU", "Reset\n");
 
     init_ops();
+    ic_history_init();
 
     bootimage_loaded = 0;
     memset(&events, 0, sizeof(events));
     memset(&cpu, 0, sizeof(cpu));
     memset(&cu, 0, sizeof(cu));
     memset(&PPR, 0, sizeof(PPR));
+    cu.SD_ON = 1;
+    cu.PT_ON = 1;
     cpu.ic_odd = 0;
 
     // BUG: reset *all* other structures to zero
@@ -384,7 +389,7 @@ void cancel_run(enum sim_stops reason)
     (void) sim_cancel_step();
     if (cancel == 0 || reason < cancel)
         cancel = reason;
-    debug_msg("CU", "Cancel requested: %d\n", reason);
+    log_msg(DEBUG_MSG, "CU", "Cancel requested: %d\n", reason);
 }
 
 uint32 ninstr;
@@ -406,7 +411,7 @@ t_stat sim_instr(void)
     if (! bootimage_loaded) {
         // We probably should not do this
         // See AL70, section 8
-        complain_msg("MAIN", "Memory is empty, no bootimage loaded yet\n");
+        log_msg(ERR_MSG, "MAIN", "Memory is empty, no bootimage loaded yet\n");
         // return STOP_MEMCLEAR;
     }
 
@@ -434,32 +439,32 @@ ninstr = 0;
         uint32 t;
         {
             if ((t = sim_is_active(&TR_clk_unit)) == 0)
-                ; // debug_msg("MAIN::clock", "TR is not running\n", t);
+                ; // log_msg(DEBUG_MSG, "MAIN::clock", "TR is not running\n", t);
             else
-                debug_msg("MAIN::clock", "TR is running with %d time units left.\n", t);
+                log_msg(DEBUG_MSG, "MAIN::clock", "TR is running with %d time units left.\n", t);
         }
 #endif
 if (opt_debug) {
     // fflush(stdout); printf("\n\r"); fflush(stdout);
     // fflush(stdout); printf("\n"); fflush(stdout);
     printf("\n");
-    // debug_msg("MAIN", "IC: %o\n", PPR.IC);
+    // log_msg(DEBUG_MSG, "MAIN", "IC: %o\n", PPR.IC);
     if (source) {
         if (source->addr_lo <= PPR.IC && PPR.IC <= source->addr_hi)
-            debug_msg("MAIN", "IC: %o\n", PPR.IC);  // source unchanged
+            log_msg(DEBUG_MSG, "MAIN", "IC: %o\n", PPR.IC); // source unchanged
         else {
             char *old = source->name;
             source = symtab_find(PPR.IC);
             if (source)
-                debug_msg("MAIN", "IC: %o\tSource: %s\n", PPR.IC, source->name);
+                log_msg(DEBUG_MSG, "MAIN", "IC: %o\tSource: %s\n", PPR.IC, source->name);
             else
-                debug_msg("MAIN", "IC: %o\tSource: Unknown (leaving %s)\n", PPR.IC, old);
+                log_msg(DEBUG_MSG, "MAIN", "IC: %o\tSource: Unknown (leaving %s)\n", PPR.IC, old);
         } 
     } else {
         if ((source = symtab_find(PPR.IC)) != NULL)
-            debug_msg("MAIN", "IC: %o\tSource: %s\n", PPR.IC, source->name);
+            log_msg(DEBUG_MSG, "MAIN", "IC: %o\tSource: %s\n", PPR.IC, source->name);
         else
-            debug_msg("MAIN", "IC: %o\n", PPR.IC);  // still unknown
+            log_msg(DEBUG_MSG, "MAIN", "IC: %o\n", PPR.IC); // still unknown
     }
 }
         reason = control_unit();
@@ -478,7 +483,7 @@ if (opt_debug) {
     uint32 delta = sim_os_msec() - start;
     //if (delta > 2000)
     if (delta > 200)
-        warn_msg("CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
+        log_msg(WARN_MSG, "CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
             (float) delta / 1000, ncycles, ncycles*1000/delta, ninstr, ninstr*1000/delta);
 
     // BUG: pack private variables into SIMH's world
@@ -577,29 +582,29 @@ static t_stat control_unit(void)
 
     switch(cycle) {
         case FETCH_cycle:
-            if (opt_debug) debug_msg("CU", "Cycle = FETCH; IC = %0o (%dd)\n", PPR.IC, PPR.IC);
+            if (opt_debug) log_msg(DEBUG_MSG, "CU", "Cycle = FETCH; IC = %0o (%dd)\n", PPR.IC, PPR.IC);
             // If execution of the current pair is complete, the processor
             // checks two? internal flags for group 7 faults and/or interrupts.
             if (events.any) {
                 if (break_on_fault) {
-                    warn_msg("CU", "Fault: auto breakpoint\n");
+                    log_msg(WARN_MSG, "CU", "Fault: auto breakpoint\n");
                     (void) cancel_run(STOP_IBKPT);
                 }
                 if (events.low_group != 0) {
                     // BUG: don't need test below now that we detect 1-6 here
-                    debug_msg("CU", "Fault detected prior to FETCH\n");
+                    if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Fault detected prior to FETCH\n");
                     cycle = FAULT_cycle;
                     break;
                 }
                 if (events.group7 != 0) {
                     // Group 7 -- See tally runout in IR, connect fields of the
                     // fault register.  DC power off must come via an interrupt?
-                    debug_msg("CU", "Fault detected prior to FETCH\n");
+                    if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Fault detected prior to FETCH\n");
                     cycle = FAULT_cycle;
                     break;
                 }
                 if (events.int_pending) {
-                    debug_msg("CU", "Interrupt detected prior to FETCH\n");
+                    if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Interrupt detected prior to FETCH\n");
                     cycle = INTERRUPT_cycle;
                     break;
                 }
@@ -623,13 +628,13 @@ static t_stat control_unit(void)
             if (fetch_word(PPR.IC - PPR.IC % 2 + 1, &cu.IRODD) != 0)
                 cycle = FAULT_cycle;
             if (opt_debug && get_addr_mode() != ABSOLUTE_mode)
-                debug_msg("CU", "Fetched odd half of instruction pair\n");
+                log_msg(DEBUG_MSG, "CU", "Fetched odd half of instruction pair\n");
             break;
 
 #if 0
     // we don't use an ABORT cycle
         case ABORT_cycle:
-            debug_msg("CU", "Cycle = ABORT\n");
+            log_msg(DEBUG_MSG, "CU", "Cycle = ABORT\n");
             // Invoked when control unit decides to handle fault
             // Bring all overlapped functions to an orderly halt -- however,
             // the simulator has no overlapped functions?
@@ -642,7 +647,7 @@ static t_stat control_unit(void)
         case FAULT_cycle:
             // BUG: low_group not used/maintained
             {
-            debug_msg("CU", "Cycle = FAULT\n");
+            log_msg(DEBUG_MSG, "CU", "Cycle = FAULT\n");
             addr_modes_t saved_addr_mode = get_addr_mode();
             set_addr_mode(ABSOLUTE_mode); // until execution of a transfer instr whose operand is obtained via explicit use of the appending HW mechanism -- AL39, 1-3
 
@@ -656,7 +661,7 @@ static t_stat control_unit(void)
             if (fault == 0) {
                 if (events.group7 == 0) {
                     // bogus fault
-                    complain_msg("CU", "Fault cycle with no faults set\n");
+                    log_msg(ERR_MSG, "CU", "Fault cycle with no faults set\n");
                     reason = STOP_BUG;
                     break;
                 } else {
@@ -670,14 +675,14 @@ static t_stat control_unit(void)
                     }
                     if (hi == -1) {
                         // no group 7 fault
-                        complain_msg("CU", "Fault cycle with missing group-7 fault\n");
+                        log_msg(ERR_MSG, "CU", "Fault cycle with missing group-7 fault\n");
                         reason = STOP_BUG;
                         break;
                     } else
                         fault = hi;
                 }
             }
-            debug_msg("CU", "fault = %d (group %d)\n", fault, group);
+            log_msg(DEBUG_MSG, "CU", "fault = %d (group %d)\n", fault, group);
             if (fault != trouble_fault) {
                 // TODO: Safe store control unit data into invisible registers
                 // in prep for a store control unit (scu) instr
@@ -687,7 +692,7 @@ static t_stat control_unit(void)
             int next_fault = 0;
             if (fault == 7) {
                 // BUG: clear group 7 fault
-                complain_msg("CU", "BUG: Fault group-7\n");
+                log_msg(ERR_MSG, "CU", "BUG: Fault group-7\n");
             } else {
                 events.fault[group] = 0;
                 // Find next remaining fault (and its group)
@@ -713,18 +718,21 @@ static t_stat control_unit(void)
 
             // todo: Check for SIMH breakpoint on execution for that addr or
             // maybe in the code for the xed opcode.
-            debug_msg("CU", "calling execute_ir() for xed\n");
+            log_msg(DEBUG_MSG, "CU", "calling execute_ir() for xed\n");
             uint IC_temp = PPR.IC;
+            PPR.IC = addr;
+            ic_history_add();
+            PPR.IC = IC_temp;
             execute_ir();   // executing in FAULT CYCLE, not EXECUTE CYCLE
             if (break_on_fault) {
-                warn_msg("CU", "Fault: auto breakpoint\n");
+                log_msg(WARN_MSG, "CU", "Fault: auto breakpoint\n");
                 (void) cancel_run(STOP_IBKPT);
             }
             if (events.any && events.fault[fault2group[trouble_fault]] == trouble_fault) {
                 // Fault occured during execution, so fault_gen() flagged
                 // a trouble fault
                 // Stay in FAULT CYCLE
-                debug_msg("CU", "re-faulted, remaining in fault cycle\n");
+                log_msg(WARN_MSG, "CU", "re-faulted, remaining in fault cycle\n");
             } else {
                 // BUG: track events.any
                 if (next_fault == 0 && events.group7 == 0) {
@@ -734,15 +742,15 @@ static t_stat control_unit(void)
                     events.any = 1;
                 // BUG: kill cpu.xfr
                 if (!cpu.xfr && PPR.IC == IC_temp) {
-                    warn_msg("CU", "no re-fault, no transfer -- incrementing IC\n");
+                    log_msg(WARN_MSG, "CU", "no re-fault, no transfer -- incrementing IC\n");
                     // BUG: Faulted instr doesn't get re-invoked?
                             (void) cancel_run(STOP_IBKPT);
                     ++ PPR.IC;
                     if (cpu.ic_odd) {
-                        if (PPR.IC % 2 != 0) { complain_msg("CU", "Fault on odd half of instr pair results in next instr being at an odd IC\n"); }
+                        if (PPR.IC % 2 != 0) { log_msg(ERR_MSG, "CU", "Fault on odd half of instr pair results in next instr being at an odd IC\n"); }
                         cycle = FETCH_cycle;
                     } else {
-                        if (PPR.IC % 2 != 1) { complain_msg("CU", "Fault on even half of instr pair results in odd half pending with an even IC\n"); }
+                        if (PPR.IC % 2 != 1) { log_msg(ERR_MSG, "CU", "Fault on even half of instr pair results in odd half pending with an even IC\n"); }
                         cycle = EXEC_cycle;
                     }
                     // Note that we don't automatically return to the original
@@ -750,7 +758,7 @@ static t_stat control_unit(void)
                     // to set the correct ring
                     // set_addr_mode(saved_addr_mode);  // FIXED BUG: this wasn't appropriate
                 } else {
-                    debug_msg("CU", "no re-fault, but a transfer done -- not incrementing IC\n");
+                    if (opt_debug) log_msg(DEBUG_MSG, "CU", "no re-fault, but a transfer done -- not incrementing IC\n");
                 }
             }
             } // end case FAULT_cycle
@@ -759,15 +767,15 @@ static t_stat control_unit(void)
         case INTERRUPT_cycle: {
             // This code is just a quick-n-dirty sketch to test booting via an interrupt instead of via a fault
             set_addr_mode(ABSOLUTE_mode); // until execution of a transfer instr whose operand is obtained via explicit use of the appending HW mechanism -- AL39, 1-3
-            warn_msg("CU", "Interrupts only partially implemented\n");
+            log_msg(WARN_MSG, "CU", "Interrupts only partially implemented\n");
             PPR.PRR = 0;    // set ring zero
             int intr;
             for (intr = 0; intr < 32; ++intr)
                 if (events.interrupts[intr])
                     break;
             if (intr == 32)
-                complain_msg("CU", "Interrupt cycle with no pending interrupt.\n");
-            warn_msg("CU", "Interrupts 0%o (%d) found.\n", intr, intr);
+                log_msg(ERR_MSG, "CU", "Interrupt cycle with no pending interrupt.\n");
+            log_msg(WARN_MSG, "CU", "Interrupts 0%o (%d) found.\n", intr, intr);
             events.interrupts[intr] = 0;
             uint addr = 0 + 2 * intr; // ABSOLUTE mode
             // Force computed addr and xed opcode into the instruction
@@ -779,12 +787,15 @@ static t_stat control_unit(void)
             cu.IR.mods.single.tag = 0;
             reason = STOP_BUG;
 
-            debug_msg("CU", "calling execute_ir() for xed\n");
+            log_msg(DEBUG_MSG, "CU", "calling execute_ir() for xed\n");
             uint IC_temp = PPR.IC;
+            PPR.IC = addr;
+            ic_history_add();
+            PPR.IC = IC_temp;
             execute_ir();   // executing in INTERRUPT CYCLE, not EXECUTE CYCLE
 
             cycle = FETCH_cycle;    // BUG: is this right?
-            complain_msg("CU", "Interrupt probably mis-handled\n");
+            log_msg(ERR_MSG, "CU", "Interrupt probably mis-handled\n");
             break;
         }
 
@@ -810,15 +821,15 @@ static t_stat control_unit(void)
 
             if (opt_debug) { 
                 if (! cpu.ic_odd)
-                    debug_msg("CU", "Cycle = EXEC, even instr\n");
+                    log_msg(DEBUG_MSG, "CU", "Cycle = EXEC, even instr\n");
                 else
-                    debug_msg("CU", "Cycle = EXEC, odd instr\n");
+                    log_msg(DEBUG_MSG, "CU", "Cycle = EXEC, odd instr\n");
             }
             if (cpu.ic_odd) {
                 if (cpu.irodd_invalid) {
                     cpu.irodd_invalid = 0;
                     cycle = FETCH_cycle;
-                    warn_msg("CU", "Invalidating cached odd instruction; auto breakpointn\n");
+                    log_msg(WARN_MSG, "CU", "Invalidating cached odd instruction; auto breakpoint\n");
                     reason = STOP_IBKPT;    /* stop simulation */
                     break;
                 }
@@ -826,21 +837,22 @@ static t_stat control_unit(void)
             }
             if (sim_brk_summ) {
                 if (sim_brk_test (PPR.IC, SWMASK ('E'))) {
-                    warn_msg("CU", "Execution Breakpoint\n");
+                    log_msg(WARN_MSG, "CU", "Execution Breakpoint\n");
                     reason = STOP_IBKPT;    /* stop simulation */
                     break;
                 }
             }
             // We assume IC always point to correct instr -- should be advanced after even instr
             uint IC_temp = PPR.IC;
+            ic_history_add();
             execute_ir();
             // Check for fault from instr
             // todo: simplify --- cycle won't be EXEC anymore
             if (events.any && events.low_group && events.low_group < 7) {
                 // faulted
-                warn_msg("CU", "Probable fault after EXEC instr\n");
+                log_msg(WARN_MSG, "CU", "Probable fault after EXEC instr\n");
                 if (cu.rpt) {
-                    warn_msg("CU", "Repeat instruction terminated by fault.\n");
+                    log_msg(WARN_MSG, "CU", "Repeat instruction terminated by fault.\n");
                     cu.rpt = 0;
                 }
             } else {
@@ -856,7 +868,7 @@ static t_stat control_unit(void)
                             cycle = FETCH_cycle;
                     } else {
                         // Executed a repeated instruction
-                        // warn_msg("CU", "Address handing for repeated instr was probably wrong.\n");
+                        // log_msg(WARN_MSG, "CU", "Address handing for repeated instr was probably wrong.\n");
                         // Check for tally runout or termination conditions
                         uint t = reg_X[0] >> 10;    // bits 0..7 of 18bit register
                         if (cu.repeat_first && t == 0)
@@ -869,11 +881,11 @@ static t_stat control_unit(void)
                         // entry after the one found.
                         int n = cu.tag & 07;
                         reg_X[n] += cu.delta;
-                        debug_msg("CU", "Incrementing X[%d] by 0%o to 0%o.\n", n, cu.delta, reg_X[n]);
+                        if (opt_debug) log_msg(DEBUG_MSG, "CU", "Incrementing X[%d] by 0%o to 0%o.\n", n, cu.delta, reg_X[n]);
                         if (t == 0) {
                             IR.tally_runout = 1;
                             cu.rpt = 0;
-                            debug_msg("CU", "Repeated instruction hits tally runout; halting rpt.\n");
+                            if (opt_debug) log_msg(DEBUG_MSG, "CU", "Repeated instruction hits tally runout; halting rpt.\n");
                         } else {
                             // Check for termination conditions
                             // Note that register X[0] is 18 bits
@@ -891,7 +903,7 @@ static t_stat control_unit(void)
                             if (getbit18(reg_X[0], 16))
                                 terminate |= ! IR.carry;
                             if (getbit18(reg_X[0], 17)) {
-                                debug_msg("CU", "Checking termination conditions for overflows.\n");
+                                log_msg(DEBUG_MSG, "CU", "Checking termination conditions for overflows.\n");
                                 // Process overflows -- BUG: what are all the overflows?
                                 if (IR.overflow /* || IR.exp_overflow */ ) {
                                     if (IR.overflow_mask)
@@ -903,11 +915,11 @@ static t_stat control_unit(void)
                             }
                             if (terminate) {
                                 cu.rpt = 0;
-                                debug_msg("CU", "Repeated instruction meets termination condition.\n");
+                                log_msg(DEBUG_MSG, "CU", "Repeated instruction meets termination condition.\n");
                                 IR.tally_runout = 0;
                                 // BUG: need IC incr, etc
                             } else {
-                                debug_msg("CU", "Repeated instruction will continue.\n");
+                                if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Repeated instruction will continue.\n");
                             }
                         }
                     }
@@ -926,7 +938,7 @@ static t_stat control_unit(void)
                                 cycle = FETCH_cycle;    // IC changed; previously fetched instr for odd location isn't any good now
                             }
                     } else {
-                        warn_msg("CU", "Changed from EXEC cycle to %d, not updating IC\n", cycle);
+                        log_msg(WARN_MSG, "CU", "Changed from EXEC cycle to %d, not updating IC\n", cycle);
                     }
                 } else {
                     // Performed non-repeat instr at odd loc (or finished last repetition)
@@ -939,7 +951,7 @@ static t_stat control_unit(void)
             }
             break;
         default:
-            complain_msg("CU", "Unknown cycle # %d\n", cycle);
+            log_msg(ERR_MSG, "CU", "Unknown cycle # %d\n", cycle);
             reason = STOP_BUG;
     }
 
@@ -967,21 +979,21 @@ void fault_gen(enum faults f)
         events.any = 1;
 
     if (f == oob_fault) {
-        complain_msg("CU::fault", "Faulting for internal bug\n");
+        log_msg(ERR_MSG, "CU::fault", "Faulting for internal bug\n");
         f = trouble_fault;
         (void) cancel_run(STOP_BUG);
     }
 
     if (f < 1 || f > 32) {
-        complain_msg("CU::fault", "Bad fault # %d\n", f);
+        log_msg(ERR_MSG, "CU::fault", "Bad fault # %d\n", f);
         abort();
     }
     group = fault2group[f];
     if (fault_gen_no_fault) {
-        debug_msg("CU::fault", "Ignoring fault # %d in group %d\n", f, group);
+        log_msg(DEBUG_MSG, "CU::fault", "Ignoring fault # %d in group %d\n", f, group);
         return;
     }
-    debug_msg("CU::fault", "Recording fault # %d in group %d\n", f, group);
+    log_msg(DEBUG_MSG, "CU::fault", "Recording fault # %d in group %d\n", f, group);
     if (group < 1 || group > 7)
         abort();
     // if (f == shutdown_fault || f == timer_fault || f == connect_fault)
@@ -995,11 +1007,11 @@ void fault_gen(enum faults f)
         if (cycle == FAULT_cycle) {
             f = trouble_fault;
             group = fault2group[f];
-            debug_msg("CU::fault", "Double fault:  Recording current fault as a trouble fault (fault # %d in group %d).\n", f, group);
+            log_msg(DEBUG_MSG, "CU::fault", "Double fault:  Recording current fault as a trouble fault (fault # %d in group %d).\n", f, group);
         } else {
             if (events.fault[group]) {
                 // todo: error, unhandled fault
-                debug_msg("CU::fault", "Found unhandled prior fault #%d in group %d.\n", events.fault[group], group);
+                log_msg(WARN_MSG, "CU::fault", "Found unhandled prior fault #%d in group %d.\n", events.fault[group], group);
             }
             if (cycle == EXEC_cycle) {
                 // don't execute any pending odd half of an instruction pair
@@ -1021,7 +1033,7 @@ int fetch_instr(uint IC, instr_t *ip)
 
     if (get_addr_mode() == ABSOLUTE_mode) {
         if (IC >= ARRAY_SIZE(M)) {
-            complain_msg("CU::fetch-instr", "Addr 0%o (%d decimal) is too large\n", IC, IC);
+            log_msg(ERR_MSG, "CU::fetch-instr", "Addr 0%o (%d decimal) is too large\n", IC, IC);
             (void) cancel_run(STOP_BUG);
         }
         if (ip) {
@@ -1048,7 +1060,7 @@ int fetch_instr(uint IC, instr_t *ip)
             ip = &i;
             decode_instr(ip, word);
         }
-        debug_msg("CU::fetch-instr", "Fetched word %012Lo => %s\n", word, instr2text(ip));
+        if (opt_debug>0) log_msg(DEBUG_MSG, "CU::fetch-instr", "Fetched word %012Lo => %s\n", word, instr2text(ip));
     }
     return ret;
 }
@@ -1068,11 +1080,11 @@ int fetch_word(uint addr, t_uint64 *wordp)
     } else if (mode == ABSOLUTE_mode) {
         return fetch_abs_word(addr, wordp);
     } else if (mode == BAR_mode) {
-        complain_msg("CU::fetch", "Addr=0%o:  BAR mode unimplemented.\n", addr);
+        log_msg(ERR_MSG, "CU::fetch", "Addr=0%o:  BAR mode unimplemented.\n", addr);
         cancel_run(STOP_BUG);
         return fetch_abs_word(addr, wordp);
     } else {
-        complain_msg("CU::fetch", "Addr=0%o:  Unknown addr mode %d.\n", addr, mode);
+        log_msg(ERR_MSG, "CU::fetch", "Addr=0%o:  Unknown addr mode %d.\n", addr, mode);
         cancel_run(STOP_BUG);
         return fetch_abs_word(addr, wordp);
     }
@@ -1089,32 +1101,32 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
 
     // todo: efficiency: combine into a single min/max with sub-tests
     if (addr >= IOM_MBX_LOW && addr < IOM_MBX_LOW + IOM_MBX_LEN) {
-        debug_msg("CU::fetch", "Fetch from IOM mailbox area for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::fetch", "Fetch from IOM mailbox area for addr 0%o\n", addr);
         //cancel_run(STOP_WARN);
     }
     if (addr >= DN355_MBX_LOW && addr < DN355_MBX_LOW + DN355_MBX_LEN) {
-        debug_msg("CU::fetch", "Fetch from DN355 mailbox area for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::fetch", "Fetch from DN355 mailbox area for addr 0%o\n", addr);
         //cancel_run(STOP_WARN);
     }
 #define CONFIG_DECK_LOW 012000
 #define CONFIG_DECK_LEN 010000
     if (addr >= CONFIG_DECK_LOW && addr < CONFIG_DECK_LOW + CONFIG_DECK_LEN) {
-        debug_msg("CU::fetch", "Fetch from CONFIG DECK area for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::fetch", "Fetch from CONFIG DECK area for addr 0%o\n", addr);
         //cancel_run(STOP_WARN);
     }
     if (addr <= 030) {
-        debug_msg("CU::fetch", "Fetch from 0..030 for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::fetch", "Fetch from 0..030 for addr 0%o\n", addr);
     }
 
     if (addr >= ARRAY_SIZE(M)) {
-            complain_msg("CU::fetch", "Addr 0%o (%d decimal) is too large\n", addr, addr);
+            log_msg(ERR_MSG, "CU::fetch", "Addr 0%o (%d decimal) is too large\n", addr, addr);
             (void) cancel_run(STOP_BUG);
             return 0;
     }
 
     if (sim_brk_summ)
         if (sim_brk_test (addr, SWMASK ('M'))) {
-            warn_msg("CU::fetch", "Memory Breakpoint, address 0%o\n", addr);
+            log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address 0%o\n", addr);
             (void) cancel_run(STOP_IBKPT);
         }
 
@@ -1137,11 +1149,11 @@ int store_word(uint addr, t_uint64 word)
     } else if (mode == ABSOLUTE_mode) {
         return store_abs_word(addr, word);
     } else if (mode == BAR_mode) {
-        complain_msg("CU::store", "Addr=0%o:  BAR mode unimplemented.\n", addr);
+        log_msg(ERR_MSG, "CU::store", "Addr=0%o:  BAR mode unimplemented.\n", addr);
         cancel_run(STOP_BUG);
         return store_abs_word(addr, word);
     } else {
-        complain_msg("CU::store", "Addr=0%o:  Unknown addr mode %d.\n", addr, mode);
+        log_msg(ERR_MSG, "CU::store", "Addr=0%o:  Unknown addr mode %d.\n", addr, mode);
         cancel_run(STOP_BUG);
         return 1;   // BUG: gen fault
     }
@@ -1154,34 +1166,34 @@ int store_abs_word(uint addr, t_uint64 word)
 
     // todo: efficiency: combine into a single min/max with sub-tests
     if (addr >= IOM_MBX_LOW && addr < IOM_MBX_LOW + IOM_MBX_LEN) {
-        debug_msg("CU::store", "Store to IOM mailbox area for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::store", "Store to IOM mailbox area for addr 0%o\n", addr);
         //cancel_run(STOP_WARN);
     }
     if (addr >= DN355_MBX_LOW && addr < DN355_MBX_LOW + DN355_MBX_LEN) {
-        debug_msg("CU::store", "Store to DN355 mailbox area for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::store", "Store to DN355 mailbox area for addr 0%o\n", addr);
         //cancel_run(STOP_WARN);
     }
     if (addr >= CONFIG_DECK_LOW && addr < CONFIG_DECK_LOW + CONFIG_DECK_LEN) {
-        debug_msg("CU::store", "Store to CONFIG DECK area for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::store", "Store to CONFIG DECK area for addr 0%o\n", addr);
         //cancel_run(STOP_WARN);
     }
     if (addr <= 030) {
-        //debug_msg("CU::store", "Fetch from 0..030 for addr 0%o\n", addr);
+        //log_msg(DEBUG_MSG, "CU::store", "Fetch from 0..030 for addr 0%o\n", addr);
     }
     if (addr >= ARRAY_SIZE(M)) {
-            complain_msg("CU::store", "Addr 0%o (%d decimal) is too large\n");
+            log_msg(ERR_MSG, "CU::store", "Addr 0%o (%d decimal) is too large\n");
             (void) cancel_run(STOP_BUG);
             return 0;
     }
     if (sim_brk_summ)
         if (sim_brk_test (addr, SWMASK ('M'))) {
-            warn_msg("CU::store", "Memory Breakpoint, address 0%o\n", addr);
+            log_msg(WARN_MSG, "CU::store", "Memory Breakpoint, address 0%o\n", addr);
             (void) cancel_run(STOP_IBKPT);
         }
 
     M[addr] = word; // absolute memory reference
     if (addr == cpu.IC_abs + 1) {
-        warn_msg("CU::store", "Flagging cached odd instruction as invalidated.\n");
+        log_msg(WARN_MSG, "CU::store", "Flagging cached odd instruction as invalidated.\n");
         cpu.irodd_invalid = 1;
     }
     return 0;
@@ -1331,9 +1343,9 @@ void anal36 (const char* tag, t_uint64 word);
 
 void tape_block(unsigned char *p, uint32 len, uint32 addr)
 {
-    debug_msg("CPU::boot", "Tape block: %u bytes, %u 36-bit words\n", len, len*8/36);
+    log_msg(DEBUG_MSG, "CPU::boot", "Tape block: %u bytes, %u 36-bit words\n", len, len*8/36);
     if ((len * 8) % 36 != 0) {
-        complain_msg("CPU::boot", "Length %u bytes is not a multiple of 36 bits.\n");
+        log_msg(ERR_MSG, "CPU::boot", "Length %u bytes is not a multiple of 36 bits.\n");
     }
     bitstream_t *bp = bitstm_new(p, len);
     uint32 nbits = len * 8;
@@ -1342,7 +1354,7 @@ void tape_block(unsigned char *p, uint32 len, uint32 addr)
         nbits -= 36;
     }
     if (nbits != 0) {
-        complain_msg("CPU::boot", "Internal error.   Some bits left over while reading tape\n");
+        log_msg(ERR_MSG, "CPU::boot", "Internal error.   Some bits left over while reading tape\n");
     }
 }
 
@@ -1454,6 +1466,10 @@ typedef struct {
     PPR_t PPR;
     TPR_t TPR;
     DSBR_t DSBR;
+    struct {
+        flag_t SD_ON;
+        flag_t PT_ON;
+    } cu;
     SDWAM_t SDWAM[16];
     PTWAM_t PTWAM[16];
 } hist_t;
@@ -1469,6 +1485,8 @@ static void hist_save_x(hist_t *histp)
     memcpy(&histp->PPR, &PPR, sizeof(histp->PPR));
     memcpy(&histp->TPR, &TPR, sizeof(histp->TPR));
     memcpy(&histp->DSBR, &DSBR, sizeof(histp->DSBR));
+    histp->cu.SD_ON = cu.SD_ON;
+    histp->cu.PT_ON = cu.PT_ON;
     memcpy(histp->SDWAM, SDWAM, sizeof(histp->SDWAM));
     memcpy(histp->PTWAM, PTWAM, sizeof(histp->PTWAM));
 }
@@ -1484,65 +1502,107 @@ static void hist_dump()
 {
 
     if (reg_A != hist.reg_A)
-        debug_msg("HIST", "Reg A: 0%012Lo\n", reg_A);
+        log_msg(DEBUG_MSG, "HIST", "Reg A: 0%012Lo\n", reg_A);
     if (reg_Q != hist.reg_Q)
         if (reg_Q == calendar_q)
-            debug_msg("HIST", "Reg Q: <calendar>\n");
+            log_msg(DEBUG_MSG, "HIST", "Reg Q: <calendar>\n");
         else
-            debug_msg("HIST", "Reg Q: 0%012Lo\n", reg_Q);
+            log_msg(DEBUG_MSG, "HIST", "Reg Q: 0%012Lo\n", reg_Q);
     if (reg_E != hist.reg_E)
-        debug_msg("HIST", "Reg E: 0%012Lo\n", reg_E);
+        log_msg(DEBUG_MSG, "HIST", "Reg E: 0%012Lo\n", reg_E);
     for (int i = 0; i < ARRAY_SIZE(reg_X); ++i)
         if (reg_X[i] != hist.reg_X[i])
-            debug_msg("HIST", "Reg X[%d]: 0%06o\n", i, reg_X[i]);
+            log_msg(DEBUG_MSG, "HIST", "Reg X[%d]: 0%06o\n", i, reg_X[i]);
     if (memcmp(&hist.IR, &IR, sizeof(hist.IR)) != 0) {
         t_uint64 ir;
         save_IR(&ir);
-        debug_msg("HIST", "IR: %s\n", bin2text(ir, 18));
+        log_msg(DEBUG_MSG, "HIST", "IR: %s\n", bin2text(ir, 18));
     }
     if (memcmp(hist.AR_PR, AR_PR, sizeof(hist.AR_PR)) != 0) {
         for (int i = 0; i < ARRAY_SIZE(AR_PR); ++i)
             if (memcmp(hist.AR_PR + i, AR_PR + i, sizeof(*hist.AR_PR)) != 0) {
-                debug_msg("HIST", "PR[%d]: rnr=%o, snr=%o, wordno=%0o, bitno=0%o; AR: bitno=0%o, charno=0%o\n",
+                log_msg(DEBUG_MSG, "HIST", "PR[%d]: rnr=%o, snr=%o, wordno=%0o, bitno=0%o; AR: bitno=0%o, charno=0%o\n",
                     i, AR_PR[i].PR.rnr, AR_PR[i].PR.snr, AR_PR[i].wordno, AR_PR[i].PR.bitno,
                     AR_PR[i].AR.bitno, AR_PR[i].AR.charno);
             }
     }
     if (memcmp(&hist.PPR, &PPR, sizeof(hist.PPR)) != 0)
-        debug_msg("HIST", "PPR: PRR=0%o, PSR=0%o, P=0%o, IC=0%o\n", PPR.PRR, PPR.PSR, PPR.P, PPR.IC);
+        log_msg(DEBUG_MSG, "HIST", "PPR: PRR=0%o, PSR=0%o, P=0%o, IC=0%o\n", PPR.PRR, PPR.PSR, PPR.P, PPR.IC);
     if (memcmp(&hist.TPR, &TPR, sizeof(hist.TPR)) != 0)
         if (TPR.is_value)
-            debug_msg("HIST", "TPR: TRR=0%o, TSR=0%o, TBR=0%o, CA=0%o, bitno=0%o, is_value=Y, value=0%Lo\n",
-                TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA, TPR.bitno, TPR.value);
+            log_msg(DEBUG_MSG, "HIST", "TPR: TRR=0%o, TSR=0%o, TBR=0%o, CA=0%o, is_value=Y, value=0%Lo\n",
+                TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA, TPR.value);
         else
-            debug_msg("HIST", "TPR: TRR=0%o, TSR=0%o, TBR=0%o, CA=0%o, bitno=0%o, is_value=N\n",
-                TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA, TPR.bitno);
+            log_msg(DEBUG_MSG, "HIST", "TPR: TRR=0%o, TSR=0%o, TBR=0%o, CA=0%o, is_value=N\n",
+                TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA);
     if (memcmp(&hist.DSBR, &DSBR, sizeof(hist.DSBR)) != 0)
-        debug_msg("HIST", "DSBR: addr=0%o, bound=0%o(%d), unpaged=%c, stack=0%o\n",
+        log_msg(DEBUG_MSG, "HIST", "DSBR: addr=0%o, bound=0%o(%d), unpaged=%c, stack=0%o\n",
             DSBR.addr, DSBR.bound, DSBR.bound, DSBR.u ? 'Y' : 'N', DSBR.stack);
+    if (hist.cu.PT_ON != cu.PT_ON)
+        log_msg(DEBUG_MSG, "HIST", "PTWAM %s enabled\n", cu.PT_ON ? "is" : "is NOT");
     if (memcmp(hist.PTWAM, PTWAM, sizeof(hist.PTWAM)) != 0) {
         for (int i = 0; i < ARRAY_SIZE(PTWAM); ++i)
             if (memcmp(hist.PTWAM + i, PTWAM + i, sizeof(*hist.PTWAM)) != 0) {
-                debug_msg("HIST", "PTWAM[%d]: ptr/seg = 0%o, pageno=0%o, is_full/used=%c, use=%02o, enabled=%c\n",
-                    i, PTWAM[i].assoc.ptr, PTWAM[i].assoc.pageno, PTWAM[i].assoc.is_full ? 'Y' : 'N', PTWAM[i].assoc.use, PTWAM[i].assoc.enabled ? 'Y' : 'N');
-                debug_msg("HIST", "PTWAM[%d]: PTW: addr=0%06oxx, used=%c, mod=%c, fault=%c, fc=0%o\n",
+                log_msg(DEBUG_MSG, "HIST", "PTWAM[%d]: ptr/seg = 0%o, pageno=0%o, is_full/used=%c, use=%02o\n",
+                    i, PTWAM[i].assoc.ptr, PTWAM[i].assoc.pageno, PTWAM[i].assoc.is_full ? 'Y' : 'N', PTWAM[i].assoc.use);
+                log_msg(DEBUG_MSG, "HIST", "PTWAM[%d]: PTW: addr=0%06oxx, used=%c, mod=%c, fault=%c, fc=0%o\n",
                     i, PTWAM[i].ptw.addr, PTWAM[i].ptw.u ? 'Y' : 'N', PTWAM[i].ptw.m ? 'Y' : 'N',
                     PTWAM[i].ptw.f ? 'Y' : 'N', PTWAM[i].ptw.fc);
             }
     }
+    if (hist.cu.SD_ON != cu.SD_ON)
+        log_msg(DEBUG_MSG, "HIST", "SDWAM %s enabled\n", cu.SD_ON ? "is" : "is NOT");
     if (memcmp(hist.SDWAM, SDWAM, sizeof(hist.SDWAM)) != 0) {
         for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i)
             if (memcmp(hist.SDWAM + i, SDWAM + i, sizeof(*hist.SDWAM)) != 0) {
-                debug_msg("HIST", "SDWAM[%d]: ptr(segno)=0%05o, is-full=%c, use=0%02o(%02d) enabled=%c.\n",
+                log_msg(DEBUG_MSG, "HIST", "SDWAM[%d]: ptr(segno)=0%05o, is-full=%c, use=0%02o(%02d).\n",
                     i, SDWAM[i].assoc.ptr, SDWAM[i].assoc.is_full ? 'Y' : 'N',
-                    SDWAM[i].assoc.use, SDWAM[i].assoc.use, SDWAM[i].assoc.enabled ? 'Y' : 'N');
+                    SDWAM[i].assoc.use, SDWAM[i].assoc.use);
                 SDW_t *sdwp = &SDWAM[i].sdw;
-                debug_msg("HIST", "\tSDW for seg %d: addr = 0%08o, r1=%o r2=%o r3=%o, f=%c, fc=0%o.\n",
+                log_msg(DEBUG_MSG, "HIST", "\tSDW for seg %d: addr = 0%08o, r1=%o r2=%o r3=%o, f=%c, fc=0%o.\n",
                     SDWAM[i].assoc.ptr, sdwp->addr, sdwp->r1, sdwp->r2, sdwp->r3, sdwp->f ? 'Y' : 'N', sdwp->fc);
-                debug_msg("HIST", "\tbound = 0%05o(%d), r=%c e=%c w=%c, priv=%c, unpaged=%c, g=%c, c=%c, cl=%05o\n",
+                log_msg(DEBUG_MSG, "HIST", "\tbound = 0%05o(%d), r=%c e=%c w=%c, priv=%c, unpaged=%c, g=%c, c=%c, cl=%05o\n",
                     sdwp->bound, sdwp->bound, sdwp->r ? 'Y' : 'N', sdwp->e ? 'Y' : 'N', sdwp->w ? 'Y' : 'N',
                     sdwp->priv ? 'Y' : 'N', sdwp->u ? 'Y' : 'N', sdwp->g ? 'Y' : 'N',
                     sdwp->c ? 'Y' : 'N', sdwp->cl);
             }
     }
+}
+
+//=============================================================================
+
+#define ic_hist_max 40
+static int ic_hist_ptr;
+static int ic_hist_wrapped;
+static struct {
+    uint ic;
+    instr_t instr;
+} ic_hist[ic_hist_max];
+
+static void ic_history_init()
+{
+    ic_hist_wrapped = 0;
+    ic_hist_ptr = 0;
+}
+
+static void ic_history_add()
+{
+    // Caller should make sure IR is already set
+
+    ic_hist[ic_hist_ptr].ic = PPR.IC;
+    memcpy(&ic_hist[ic_hist_ptr].instr, &cu.IR, sizeof(ic_hist[ic_hist_ptr].instr));
+    if (++ic_hist_ptr == ic_hist_max) {
+        ic_hist_wrapped = 1;
+        ic_hist_ptr = 0;
+    }
+}
+
+void dump_history()
+{
+    if (ic_hist_wrapped) {
+        for (int i = ic_hist_ptr; i < ic_hist_max; ++i)
+            out_msg("IC: %06o: %s\n", ic_hist[i].ic, instr2text(&ic_hist[i].instr));
+    }
+    for (int i = 0; i < ic_hist_ptr; ++i)
+        out_msg("IC: %06o: %s\n", ic_hist[i].ic, instr2text(&ic_hist[i].instr));
 }

@@ -13,6 +13,27 @@ extern DEVICE cpu_dev;
 
 static void msg(const char* tag, const char *who, const char* format, va_list ap);
 
+void log_msg(enum log_level level, const char* who, const char* format, ...)
+{
+    if (level == DEBUG_MSG) {
+        if (opt_debug == 0)
+            return;
+        if (cpu_dev.dctrl == 0 && opt_debug < 1)        // todo: should CPU control all debug settings?
+            return;
+    }
+
+    va_list ap;
+    va_start(ap, format);
+    char *tag = (level == DEBUG_MSG) ? "Debug" :
+        (level == WARN_MSG) ? "WARNING" :
+        (level == NOTIFY_MSG) ? "NOTE" :
+        (level == ERR_MSG) ? "ERROR" :
+            "???MESSAGE";
+    msg(tag, who, format, ap);
+    va_end(ap);
+}
+
+#if 0
 void debug_msg(const char* who, const char* format, ...)
 {
     if (opt_debug == 0)
@@ -40,7 +61,7 @@ void complain_msg(const char* who, const char* format, ...)
     msg("ERROR", who, format, ap);
     va_end(ap);
 }
-
+#endif
 
 void out_msg(const char* format, ...)
 {

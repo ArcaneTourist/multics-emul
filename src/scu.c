@@ -145,7 +145,7 @@ void scu_dump()
 {
     int pima;
     for (pima = 0; pima < 4; ++pima)
-        debug_msg("SCU", "PIMA %d: mask assign = 0%o\n", pima, scu.mask_assign[pima]);
+        log_msg(DEBUG_MSG, "SCU", "PIMA %d: mask assign = 0%o\n", pima, scu.mask_assign[pima]);
 }
 #endif
 
@@ -154,7 +154,7 @@ static int scu_hw_arg_check(const char *tag, t_uint64 addr, int port) {
     // Verify that HW could have received signal
 
     if (port < 0 || port > 7) {
-        complain_msg("SCU", "%s: Port %d from sscr is out of range 0..7\n", tag, port);
+        log_msg(ERR_MSG, "SCU", "%s: Port %d from sscr is out of range 0..7\n", tag, port);
         cancel_run(STOP_BUG);
         return 1;
     }
@@ -168,17 +168,17 @@ static int scu_hw_arg_check(const char *tag, t_uint64 addr, int port) {
 
     // Verify that HW could have received signal
     if (cpu_port < 0) {
-        complain_msg("SCU", "Port %d is disabled\n", cpu_no);
+        log_msg(ERR_MSG, "SCU", "Port %d is disabled\n", cpu_no);
         cancel_run(STOP_WARN);
         return 1;
     }
     if (cpu_port > 7) {
-        complain_msg("SCU", "Port %d is not enabled (%d).\n", cpu_no, cpu_port);
+        log_msg(ERR_MSG, "SCU", "Port %d is not enabled (%d).\n", cpu_no, cpu_port);
         cancel_run(STOP_WARN);
         return 1;
     }
     if (cpu_ports.ports[cpu_port] != cpu_no) {
-        complain_msg("SCU", "Port %d on CPU is not connected to port %d of SCU.\n", cpu_port, cpu_no);
+        log_msg(ERR_MSG, "SCU", "Port %d on CPU is not connected to port %d of SCU.\n", cpu_port, cpu_no);
         cancel_run(STOP_WARN);
         return 1;
     }
@@ -215,26 +215,26 @@ int scu_set_mask(t_uint64 addr, int port)
                     maskno = i;
                     t_uint64 old = scu.masks[maskno];
                     scu.masks[maskno] = (getbits36(reg_A, 0, 16) << 16) | getbits36(reg_Q, 0, 16);
-                    warn_msg("SCU", "PIMA %d has CPU %d assigned; Mask[%d] was 0%o, now 0%o\n",
+                    log_msg(WARN_MSG, "SCU", "PIMA %d has CPU %d assigned; Mask[%d] was 0%o, now 0%o\n",
                         pima, cpu_no, maskno, old, scu.masks[maskno]);
                     cancel_run(STOP_IBKPT);
                 }
             }
             if (maskno == -1) {
                 // OTOH, see bootload_tape_label.alm -- SSCR will do nothing for unassigned masks
-                debug_msg("SCU", "PIMA %d has CPU %d assigned, but no PIMA has port %d assigned\n",
+                log_msg(DEBUG_MSG, "SCU", "PIMA %d has CPU %d assigned, but no PIMA has port %d assigned\n",
                     pima, cpu_no, port);
                 err = 1;
             }
         }
     }
     if (!found) {
-        warn_msg("SCU", "No masks assigned to cpu on port %d\n", cpu_no);
+        log_msg(WARN_MSG, "SCU", "No masks assigned to cpu on port %d\n", cpu_no);
         fault_gen(store_fault);
         return 1;
     } else
         if (found > 1)
-            warn_msg("SCU", "Multiple masks assigned to cpu on port %d\n", cpu_no);
+            log_msg(WARN_MSG, "SCU", "Multiple masks assigned to cpu on port %d\n", cpu_no);
     if (err) {
         return 1;
     }
@@ -290,7 +290,7 @@ int scu_get_calendar(t_uint64 addr)
     struct timeval tv;
     struct timezone tz;
     if (gettimeofday(&tv, &tz) != 0) {
-        complain_msg("SCU::getcal", "Error from OS gettimeofday\n");
+        log_msg(ERR_MSG, "SCU::getcal", "Error from OS gettimeofday\n");
         reg_A = 0;
         reg_Q = 0;
         return 1;
@@ -323,7 +323,7 @@ int scu_cioc(t_uint64 addr)
         return ret;
     }
     int port = word & 7;
-    debug_msg("SCU::cioc", "Contents of %Lo are: %Lo => port %d\n", addr, word, port);
+    log_msg(DEBUG_MSG, "SCU::cioc", "Contents of %Lo are: %Lo => port %d\n", addr, word, port);
     // OK ... what's a connect signal (as opposed to an interrupt?
     // A connect signal does the following (AN70, 8-7):
     //  IOM target: connect strobe to IOM
@@ -332,9 +332,9 @@ int scu_cioc(t_uint64 addr)
     // todo: check if enabled & not masked
     {
         static int n_cioc = 0;
-        warn_msg("SCU::cioc", "CIOC # %d\n", ++ n_cioc);
+        log_msg(WARN_MSG, "SCU::cioc", "CIOC # %d\n", ++ n_cioc);
     }
-    warn_msg("SCU::cioc", "Partially implemented: Connect sent to port %d => %d\n", port, scu.ports[port]);
+    log_msg(WARN_MSG, "SCU::cioc", "Partially implemented: Connect sent to port %d => %d\n", port, scu.ports[port]);
 
     // we only have one IOM, so signal it
     // todo: sanity check port connections

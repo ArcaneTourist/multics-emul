@@ -96,17 +96,17 @@ void set_addr_mode(addr_modes_t mode)
     if (mode == ABSOLUTE_mode) {
         IR.abs_mode = 1;
         IR.not_bar_mode = 1;
-        debug_msg("APU", "Setting absolute mode.\n");
+        if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Setting absolute mode.\n");
     } else if (mode == APPEND_mode) {       // BUG: is this correct?
         IR.abs_mode = 0;
         IR.not_bar_mode = 1;
-        debug_msg("APU", "Setting append mode.\n");
+        if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Setting append mode.\n");
     } else if (mode == BAR_mode) {
         IR.abs_mode = 0;    // BUG: is this correct?
         IR.not_bar_mode = 0;
-        debug_msg("APU", "Setting bar mode.\n");
+        if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Setting bar mode.\n");
     } else {
-        complain_msg("APU", "Unable to determine address mode.\n");
+        log_msg(ERR_MSG, "APU", "Unable to determine address mode.\n");
         cancel_run(STOP_BUG);
     }
 }
@@ -125,7 +125,7 @@ addr_modes_t get_addr_mode()
     // BUG: addr mode depends upon instr's operand
 
     if (IR.not_bar_mode == 0) {
-        warn_msg("APU", "BAR mode is untested\n");
+        log_msg(WARN_MSG, "APU", "BAR mode is untested\n");
         cancel_run(STOP_WARN);
         return BAR_mode;
     }
@@ -141,13 +141,13 @@ int is_priv_mode()
         return 1;
     SDW_t *SDWp = get_sdw();    // Get SDW for TPR.TSR
     if (SDWp == NULL) {
-        warn_msg("APU::is-priv-mode", "Segment does not exist?!?\n");
+        log_msg(WARN_MSG, "APU::is-priv-mode", "Segment does not exist?!?\n");
         cancel_run(STOP_BUG);
         return 0;   // arbitrary
     }
     if (SDWp->priv)
         return 1;
-    debug_msg("APU", "Priv check fails\n");
+    if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Priv check fails\n");
     return 0;
 }
 
@@ -215,17 +215,17 @@ int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop, int nbit
         saved_PSR = TPR.TSR;
         saved_PRR = TPR.TRR ;
         saved_CA = TPR.CA;
-        saved_bitno = TPR.bitno;
+        saved_bitno = TPR.TBR;
         //
         uint pr = y >> 15;
         int32 soffset = sign15(y & MASKBITS(15));
         TPR.TSR = AR_PR[pr].PR.snr;
         TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
         offset = AR_PR[pr].wordno + soffset;
-        TPR.bitno = AR_PR[pr].PR.bitno;
-        debug_msg("APU::get-addr", "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o(0%o+0%o), bitno=0%o\n",
-            pr, TPR.TSR, TPR.TRR, offset, AR_PR[pr].wordno, soffset, TPR.bitno);
-        *bitnop = TPR.bitno;
+        TPR.TBR = AR_PR[pr].PR.bitno;
+        if(opt_debug>0) log_msg(DEBUG_MSG, "APU::get-addr", "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o(0%o+0%o), bitno=0%o\n",
+            pr, TPR.TSR, TPR.TRR, offset, AR_PR[pr].wordno, soffset, TPR.TBR);
+        *bitnop = TPR.TBR;
     } else {
         offset = y;
         // sofset = sign18(y);
@@ -248,22 +248,22 @@ int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop, int nbit
         offset = TPR.CA;
         TPR.CA = saved_CA;
         // BUG: ERROR: Apply EIS reg mod -- is this already fixed?
-        warn_msg("APU::get-addr", "Register mod 0%o: offset was 0%o, now 0%o\n", reg, o, offset);
-        //warn_msg("APU::get-addr", "Auto-breakpoint\n");
+        log_msg(WARN_MSG, "APU::get-addr", "Register mod 0%o: offset was 0%o, now 0%o\n", reg, o, offset);
+        //log_msg(WARN_MSG, "APU::get-addr", "Auto-breakpoint\n");
         //cancel_run(STOP_IBKPT);
     }
 
     uint perm = 0;  // BUG: need to have caller specify
     int ret = page_in(offset, perm, addrp);
     if (ret != 0) {
-        debug_msg("APU::get-addr", "page-in faulted\n");
+        if (opt_debug>0) log_msg(DEBUG_MSG, "APU::get-addr", "page-in faulted\n");
     }
 
     if (ar) {
         TPR.TSR = saved_PSR;
         TPR.TRR = saved_PRR;
         TPR.CA = saved_CA;
-        TPR.bitno = saved_bitno;
+        TPR.TBR = saved_bitno;
     }
 
     return ret;
@@ -297,50 +297,52 @@ int addr_mod(const instr_t *ip)
     // Addr appending below
 
     addr_modes_t orig_mode = get_addr_mode();
-    addr_modes_t addr_mode = get_addr_mode();
+    addr_modes_t addr_mode = orig_mode;
     int ptr_reg_flag = ip->mods.single.pr_bit;
     ca_temp_t ca_temp;  // BUG: hack
 
     // BUG: The following check should only be done after a sequential
     // instr fetch, not after a transfer!  We're only called by do_op(),
     // so this criteria is *almost* met.   Need to detect transfers.
+    // Figure 6-10 claims we only check "PR" bit 29 if we're *not* doing a
+    // sequential instruciton fetch.
 
     ca_temp.tag = ip->mods.single.tag;
 
     if (cu.rpt) {
-        TPR.bitno = 0;
+        TPR.TBR = 0;
 #if 1
         cu.tag = ca_temp.tag;
         uint td = ca_temp.tag & 017;
         int n = td & 07;
         if (cu.repeat_first) {
-            debug_msg("APU", "RPT: First repetition; incr will be 0%o(%d).\n", ip->addr, ip->addr);
+            if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "RPT: First repetition; incr will be 0%o(%d).\n", ip->addr, ip->addr);
             TPR.CA = ip->addr;
             ca_temp.soffset = ip->addr; // BUG: do we need to sign-extend to allow for negative "addresses"?
         } else {
             // Note that we don't add in a delta for X[n] here.   Instead the CPU
             // increments X[n] after every instruction.  So, for instructions like
             // cmpaq, the index register points to the entry after the one found.
-            //debug_msg("APU", "RPT: Non-first repetition; delta will be 0%o(%d).\n", cu.delta, cu.delta);
+            //log_msg(DEBUG_MSG, "APU", "RPT: Non-first repetition; delta will be 0%o(%d).\n", cu.delta, cu.delta);
             //TPR.CA = cu.delta;
             //ca_temp.soffset = cu.delta;   // BUG: do we need to sign-extend to allow for negative "addresses"?
             TPR.CA = 0;
             ca_temp.soffset = 0;
-            debug_msg("APU", "RPT: X[%d] is 0%o(%d).\n", n, reg_X[n], reg_X[n]);
+            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "RPT: X[%d] is 0%o(%d).\n", n, reg_X[n], reg_X[n]);
         }
 #else
         uint td = ca_temp.tag & 017;
         int n = td & 07;
         if (cu.repeat_first) {
-            debug_msg("APU", "RPT: X[%d] was 0%o(%d).  First repetition, adding 0%o(%d); result 0%o(%d).\n", n, reg_X[n], reg_X[n], ip->addr, ip->addr, reg_X[n] + ip->addr, reg_X[n] + ip->addr);
+            log_msg(DEBUG_MSG, "APU", "RPT: X[%d] was 0%o(%d).  First repetition, adding 0%o(%d); result 0%o(%d).\n", n, reg_X[n], reg_X[n], ip->addr, ip->addr, reg_X[n] + ip->addr, reg_X[n] + ip->addr);
 
             reg_X[n] += ip->addr;   // BUG: do we need to sign-extend to allow for negative "addresses"?
         } else {
             // Note that we don't increment X[n] here.   Instead the CPU does it after every instruction.
             // So, for instructions like cmpaq, the index register points to the entry after the one found.
             // reg_X[n] += cu.delta;
-            // debug_msg("APU", "RPT: X[%d] was 0%o(%d).  Non-first repetition, adding delta 0%o(%d); result 0%o(%d).\n", n, reg_X[n], reg_X[n], cu.delta, cu.delta, reg_X[n] + cu.delta, reg_X[n] + cu.delta);
-            debug_msg("APU", "RPT: X[%d] is 0%o(%d).\n", n, reg_X[n]);
+            // log_msg(DEBUG_MSG, "APU", "RPT: X[%d] was 0%o(%d).  Non-first repetition, adding delta 0%o(%d); result 0%o(%d).\n", n, reg_X[n], reg_X[n], cu.delta, cu.delta, reg_X[n] + cu.delta, reg_X[n] + cu.delta);
+            log_msg(DEBUG_MSG, "APU", "RPT: X[%d] is 0%o(%d).\n", n, reg_X[n]);
         }
         ca_temp.soffset = reg_X[n];
         TPR.CA = reg_X[n];
@@ -350,7 +352,7 @@ int addr_mod(const instr_t *ip)
         // TPR.TSR = PPR.PSR;   -- done prior to fetch_instr()
         // TPR.TRR = PPR.PRR;   -- done prior to fetch_instr()
         TPR.CA = ip->addr;
-        TPR.bitno = 0;
+        TPR.TBR = 0;
     } else {
         set_addr_mode(addr_mode = APPEND_mode);
         // AL39: Page 341, Figure 6-7
@@ -360,9 +362,9 @@ int addr_mod(const instr_t *ip)
         TPR.TSR = AR_PR[pr].PR.snr;
         TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
         TPR.CA = (AR_PR[pr].wordno + ca_temp.soffset) & MASK18;
-        TPR.bitno = AR_PR[pr].PR.bitno;
-        debug_msg("APU", "Using PR[%d]: TSR=0%o, TRR=0%o, CA=0%o(0%o+0%o<=>%d+%d), bitno=0%o\n",
-            pr, TPR.TSR, TPR.TRR, TPR.CA, AR_PR[pr].wordno, ca_temp.soffset, AR_PR[pr].wordno, ca_temp.soffset, TPR.bitno);
+        TPR.TBR = AR_PR[pr].PR.bitno;
+        if(opt_debug>0)log_msg(DEBUG_MSG, "APU", "Using PR[%d]: TSR=0%o, TRR=0%o, CA=0%o(0%o+0%o<=>%d+%d), bitno=0%o\n",
+            pr, TPR.TSR, TPR.TRR, TPR.CA, AR_PR[pr].wordno, ca_temp.soffset, AR_PR[pr].wordno, ca_temp.soffset, TPR.TBR);
 
         // BUG: Enter append mode & stay if execute a transfer
     }
@@ -386,29 +388,29 @@ int addr_mod(const instr_t *ip)
     int mult = 0;
     while (ca_temp.more) {
         if (compute_addr(ip, &ca_temp) != 0) {
-            debug_msg("APU", "Final (incomplete) CA: 0%0o\n", TPR.CA);
+            if(opt_debug>0)log_msg(DEBUG_MSG, "APU", "Final (incomplete) CA: 0%0o\n", TPR.CA);
             return 1;
         }
         if (ca_temp.more)
             mult = 1;
         ca_temp.soffset = sign18(TPR.CA);
         if (ca_temp.more)
-            debug_msg("APU", "Post CA: Continuing indirect fetches\n");
+            if(opt_debug>0)log_msg(DEBUG_MSG, "APU", "Post CA: Continuing indirect fetches\n");
 #if 0
         if (ca_temp.more)
-            debug_msg("APU", "Pre Seg: Continuing indirect fetches\n");
+            log_msg(DEBUG_MSG, "APU", "Pre Seg: Continuing indirect fetches\n");
         if (do_esn_segmentation(ip, &ca_temp) != 0) {
-            debug_msg("APU", "Final (incomplete) CA: 0%0o\n", TPR.CA);
+            log_msg(DEBUG_MSG, "APU", "Final (incomplete) CA: 0%0o\n", TPR.CA);
             return 1;
         }
         if (ca_temp.more)
-            debug_msg("APU", "Post Seg: Continuing indirect fetches\n");
+            log_msg(DEBUG_MSG, "APU", "Post Seg: Continuing indirect fetches\n");
 #endif
         if (ca_temp.more)
             mult = 1;
     }
     if (mult) {
-            debug_msg("APU", "Final CA: 0%0o\n", TPR.CA);
+            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Final CA: 0%0o\n", TPR.CA);
     }
 
     addr_mode = get_addr_mode();    // may have changed
@@ -418,7 +420,7 @@ int addr_mod(const instr_t *ip)
             // Todo: Add CA to BAR.base; add in PR; check CA vs bound
         }
         // BUG: Section 4 says make sure CA cycle handled AR reg mode & constants
-        complain_msg("APU", "BAR mode not implemented.\n");
+        log_msg(ERR_MSG, "APU", "BAR mode not implemented.\n");
         cancel_run(STOP_BUG);
         return 1;
     }
@@ -456,10 +458,10 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
     if (cu.rpt) {
         // Check some requirements, but don't generate a fault (AL39 doesn't say if we should fault)
         if (tm != atag_r && tm != atag_ri)
-            complain_msg("APU", "Repeated instructions must use register or register-indirect address modes.\n");
+            log_msg(ERR_MSG, "APU", "Repeated instructions must use register or register-indirect address modes.\n");
         else
             if (td == 0)
-                complain_msg("APU", "Repeated instructions should not use X[0].\n");
+                log_msg(ERR_MSG, "APU", "Repeated instructions should not use X[0].\n");
     }
 
     switch(tm) {
@@ -474,27 +476,29 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
         case atag_ri: {     // Tm=1 -- register then indirect (ri)
             if (td == 3 || td == 7) {
                 // ",du" or ",dl"
-                warn_msg("APU", "RI with td==0%o is illegal.\n", td);
+                log_msg(WARN_MSG, "APU", "RI with td==0%o is illegal.\n", td);
                 fault_gen(illproc_fault);   // need illmod sub-category
                 return 1;
             }
             int off = ca_tempp->soffset;
             uint ca = TPR.CA;
             reg_mod(td, off);
-            debug_msg("APU", "RI: pre-fetch:  TPR.CA=0%o <==  TPR.CA=%o + 0%o\n",
+            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "RI: pre-fetch:  TPR.CA=0%o <==  TPR.CA=%o + 0%o\n",
                 TPR.CA, ca, TPR.CA - ca);
             t_uint64 word;
             if (cu.rpt) {
                 int n = td & 07;
                 reg_X[n] = TPR.CA;
-                debug_msg("APU", "RI for repeated instr: Setting X[%d] to CA 0%o(%d).\n", n, reg_X[n], reg_X[n]);
-                debug_msg("APU", "RI for repeated instr: Not doing address appending on CA.\n");
+                if (opt_debug>0) {
+                    log_msg(DEBUG_MSG, "APU", "RI for repeated instr: Setting X[%d] to CA 0%o(%d).\n", n, reg_X[n], reg_X[n]);
+                    log_msg(DEBUG_MSG, "APU", "RI for repeated instr: Not doing address appending on CA.\n");
+                }
                 if (fetch_abs_word(TPR.CA, &word) != 0)
                     return 1;
             } else
                 if (addr_append(&word) != 0)
                     return 1;
-            debug_msg("APU", "RI: fetch:  word at TPR.CA=0%o is 0%Lo\n", TPR.CA, word);
+            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "RI: fetch:  word at TPR.CA=0%o is 0%Lo\n", TPR.CA, word);
             if (cu.rpt) {
                 // ignore tag and don't allow more indirection
                 return 0;
@@ -502,10 +506,10 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
             ca_tempp->tag = word & MASKBITS(6);
             if (TPR.CA % 2 == 0 && (ca_tempp->tag == 041 || ca_tempp->tag == 043)) {
                     do_its_itp(ip, ca_tempp, word);
-                    debug_msg("APU", "RI: post its/itp: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
+                    if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "RI: post its/itp: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
             } else {
                 TPR.CA = word >> 18;
-                debug_msg("APU", "RI: post-fetch: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
+                if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "RI: post-fetch: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
             }
             // break;   // Continue a new CA cycle
             ca_tempp->more = 1;     // Continue a new CA cycle
@@ -516,7 +520,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
             // BUG: see "it" flowchart for looping (Td={15,17}
             switch(td) {
                 case 0:
-                    warn_msg("APU", "IT with Td zero not valid in instr word.\n");
+                    log_msg(WARN_MSG, "APU", "IT with Td zero not valid in instr word.\n");
                     fault_gen(f1_fault);    // This mode not ok in instr word
                     break;
                 case 014: {
@@ -537,7 +541,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                         TPR.CA = addr;
                         if (opt_debug) {
                             // give context for appending msgs
-                            debug_msg("APU", "IT(di): addr now 0%o, tally 0%o\n", addr, tally);
+                            log_msg(DEBUG_MSG, "APU", "IT(di): addr now 0%o, tally 0%o\n", addr, tally);
                         }
                         ret = store_word(iloc, iword);
                     }
@@ -563,14 +567,14 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                         iword = setbits36(iword, 18, 12, tally);
                         if (opt_debug) {
                             // give context for appending msgs
-                            debug_msg("APU", "IT(id): addr now 0%o, tally 0%o\n", addr, tally);
+                            log_msg(DEBUG_MSG, "APU", "IT(id): addr now 0%o, tally 0%o\n", addr, tally);
                         }
                         ret = store_word(iloc, iword);
                     }
                     return ret;
                 }
                 default:
-                    complain_msg("APU", "IT with Td 0%o not implmented.\n", td);
+                    log_msg(ERR_MSG, "APU", "IT with Td 0%o not implmented.\n", td);
                     cancel_run(STOP_BUG);
                     return 1;
             }
@@ -578,7 +582,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
         }
         case atag_ir: { // TM=3 -- indirect then register (ir)
 #if 0
-            complain_msg("APU", "IR addr mod not implemented.\n");
+            log_msg(ERR_MSG, "APU", "IR addr mod not implemented.\n");
             cancel_run(STOP_BUG);
             return 1;
 #else
@@ -586,27 +590,27 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 if (tm == atag_ir)
                     cu.CT_HOLD = td;
                 // BUG: Maybe handle special tag (41 itp, 43 its).  Or post handle?
-                debug_msg("APU::IR", "pre-fetch: Td=0%o, TPR.CA=0%o\n", td, TPR.CA);
+                if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR", "pre-fetch: Td=0%o, TPR.CA=0%o\n", td, TPR.CA);
                 t_uint64 word;
                 if (addr_append(&word) != 0)
                     return 1;
-                debug_msg("APU::IR", "fetched:  word at TPR.CA=0%o is 0%Lo:\n",
+                if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR", "fetched:  word at TPR.CA=0%o is 0%Lo:\n",
                     TPR.CA, word);
                 ca_tempp->tag = word & MASKBITS(6);
                 // BUG: is ITS and ITP valid for IR
                 if (TPR.CA % 2 == 0 && (ca_tempp->tag == 041 || ca_tempp->tag == 043)) {
-                        warn_msg("APU::IR", "found ITS/ITP\n");
+                        log_msg(WARN_MSG, "APU::IR", "found ITS/ITP\n");
                         cancel_run(STOP_WARN);
                         do_its_itp(ip, ca_tempp, word);
-                        debug_msg("APU::IR", "post its/itp: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
+                        if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR", "post its/itp: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
                 } else {
                     TPR.CA = word >> 18;
                     tm = (ca_tempp->tag >> 4) & 03;
-                    debug_msg("APU::IR", "post-fetch: TPR.CA=0%o, tag=0%o, new tm=0%o\n", TPR.CA, ca_tempp->tag, tm);
+                    if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR", "post-fetch: TPR.CA=0%o, tag=0%o, new tm=0%o\n", TPR.CA, ca_tempp->tag, tm);
                     if (td == 0) {
                         // BUG: Disallow a reg_mod() with td equal to NULL (AL39)
                         // Disallow always or maybe ok for ir?
-                        complain_msg("APU::IR", "Found td==0 (for tm=0%o)\n", tm);
+                        log_msg(ERR_MSG, "APU::IR", "Found td==0 (for tm=0%o)\n", tm);
                         cancel_run(STOP_WARN);
                     }
                     switch(tm) {
@@ -619,7 +623,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                             return 0;
                         case atag_it:
                             //reg_mod(td, ca_tempp->soffset);
-                            complain_msg("APU::IR", "Need to run normal IT algorithm, ignoring fault 1.\n"); // actually cannot have fault 1 if disallow td=0 above
+                            log_msg(ERR_MSG, "APU::IR", "Need to run normal IT algorithm, ignoring fault 1.\n"); // actually cannot have fault 1 if disallow td=0 above
                             cancel_run(STOP_BUG);
                             return 0;
                         case atag_ir:
@@ -627,7 +631,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                             break;
                     }
                 }
-                warn_msg("APU::RI", "Finished, but unverified.\n");
+                log_msg(WARN_MSG, "APU::RI", "Finished, but unverified.\n");
                 cancel_run(STOP_WARN);
                 return 0;
             }
@@ -652,7 +656,7 @@ static int32 nbits2words(int x, int nbits)
 {
     int div = 36 / nbits;
     if (x % div != 0) {
-        complain_msg("APU", "Reg mod for %d-bit data: Value %d isn't evenly divisible by %d\n", nbits, x, div);
+        log_msg(ERR_MSG, "APU", "Reg mod for %d-bit data: Value %d isn't evenly divisible by %d\n", nbits, x, div);
         cancel_run(STOP_BUG);
     }
     return x / div;
@@ -674,7 +678,7 @@ static void reg_mod_x(uint td, int off, int nbits)
         case 3: // ,du
             TPR.is_value = 1;   // BUG: Use "direct operand flag" instead
             TPR.value = ((t_uint64) TPR.CA) << 18;
-            debug_msg("APU", "Mod du: Value from offset 0%o is 0%Lo\n", TPR.CA, TPR.value);
+            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Mod du: Value from offset 0%o is 0%Lo\n", TPR.CA, TPR.value);
             break;
         case 4: // PPR.IC
             TPR.CA = off + PPR.IC;  // BUG: IC assumed to be unsigned
@@ -685,7 +689,7 @@ static void reg_mod_x(uint td, int off, int nbits)
             TPR.CA &= MASK18;
             if (opt_debug) {
                 uint a = getbits36(reg_A, 18, 18);
-                debug_msg("APU", "Tm=REG,Td=%02o: offset 0%o(%d) + A=0%Lo=>0%o(%+d decimal) ==> 0%o=>0%o(%+d)\n",
+                log_msg(DEBUG_MSG, "APU", "Tm=REG,Td=%02o: offset 0%o(%d) + A=0%Lo=>0%o(%+d decimal) ==> 0%o=>0%o(%+d)\n",
                     td, off, off, reg_A, a, sign18(a), TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
             }
             break;
@@ -696,7 +700,7 @@ static void reg_mod_x(uint td, int off, int nbits)
         case 7: // ,dl
             TPR.is_value = 1;   // BUG: Use "direct operand flag" instead
             TPR.value = TPR.CA; // BUG: Should we sign?
-            debug_msg("APU", "Mod dl: Value from offset 0%o is 0%Lo\n", TPR.CA, TPR.value);
+            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Mod dl: Value from offset 0%o is 0%Lo\n", TPR.CA, TPR.value);
             break;
         case 010:
         case 011:
@@ -709,7 +713,7 @@ static void reg_mod_x(uint td, int off, int nbits)
             TPR.CA = off + nbits2words(sign18(reg_X[td&07]), nbits);
             TPR.CA &= MASK18;
             if (opt_debug)
-                debug_msg("APU", "Tm=REG,Td=%02o: offset 0%o + X[%d]=0%o(%+d decimal)==>0%o(+%d) yields 0%o (%+d decimal)\n",
+                log_msg(DEBUG_MSG, "APU", "Tm=REG,Td=%02o: offset 0%o + X[%d]=0%o(%+d decimal)==>0%o(+%d) yields 0%o (%+d decimal)\n",
                     td, off, td&7, reg_X[td&7], reg_X[td&7], sign18(reg_X[td&7]), sign18(reg_X[td&7]), TPR.CA, TPR.CA);
             break;
     }
@@ -736,7 +740,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         TPR.TSR = AR_PR[n].PR.snr;
         SDW_t *SDWp = get_sdw();    // Get SDW for TPR.TSR
         if (SDWp == NULL) {
-            warn_msg("APU:ITS/ITP", "Segment missing.\n");
+            log_msg(WARN_MSG, "APU:ITS/ITP", "Segment missing.\n");
             cancel_run(STOP_BUG);
             return 1;
         }
@@ -752,7 +756,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
             uint i_mod_td = ca_tempp->tag & MASKBITS(4);
             r = i_mod_td;
         } else {
-            complain_msg("APU", "ITP addr mod with undefined r-value (tm=0%o,new-tm=0%o)\n", ca_tempp->special, i_mod_tm);
+            log_msg(ERR_MSG, "APU", "ITP addr mod with undefined r-value (tm=0%o,new-tm=0%o)\n", ca_tempp->special, i_mod_tm);
             cancel_run(STOP_BUG);
             r = 0;
         }
@@ -760,14 +764,14 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         TPR.CA = AR_PR[n].wordno + i_wordno + r;
         TPR.CA &= MASK18;
         ca_tempp->more = 1;
-        warn_msg("APU", "ITP not validated\n");
+        log_msg(WARN_MSG, "APU", "ITP not validated\n");
         //cancel_run(STOP_WARN);
         return 0;
     } else if (ca_tempp->tag == 043) {
         // its
         t_uint64 word1, word2;
         // BUG: are we supposed to fetch?
-        debug_msg("APU", "ITS: CA initially 0%o\n", TPR.CA);
+        if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "ITS: CA initially 0%o\n", TPR.CA);
         int ret = fetch_pair(TPR.CA, &word1, &word2);   // bug: refetching word1
         if (ret != 0)
             return ret;
@@ -776,7 +780,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         uint its_rn = getbits36(word1, 18, 3);
         SDW_t *SDWp = get_sdw();    // Get SDW for TPR.TSR
         if (SDWp == NULL) {
-            warn_msg("APU:ITS/ITP", "Segment is missing.\n");
+            log_msg(WARN_MSG, "APU:ITS/ITP", "Segment is missing.\n");
             cancel_run(STOP_BUG);
             return 1;
         }
@@ -786,7 +790,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         ca_tempp->tag = word2 & MASKBITS(6);
 
         uint i_mod_tm = ca_tempp->tag >> 4;
-        debug_msg("APU", "ITS: TPR.TSR = 0%o, rn=0%o, sdw.r1=0%o, TPR.TRR=0%o, TPR.TBR=0%o, tag=0%o(tm=0%o)\n",
+        if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "ITS: TPR.TSR = 0%o, rn=0%o, sdw.r1=0%o, TPR.TRR=0%o, TPR.TBR=0%o, tag=0%o(tm=0%o)\n",
             TPR.TSR, its_rn, sdw_r1, TPR.TRR, TPR.TBR, ca_tempp->tag, i_mod_tm);
         uint r;
         if (ca_tempp->special == atag_ir)
@@ -795,14 +799,14 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
             uint i_mod_td = ca_tempp->tag & MASKBITS(4);
             r = i_mod_td;
         } else {
-            complain_msg("APU", "ITS addr mod with undefined r-value (tm=0%o,new-tm=0%o)\n", ca_tempp->special, i_mod_tm);
+            log_msg(ERR_MSG, "APU", "ITS addr mod with undefined r-value (tm=0%o,new-tm=0%o)\n", ca_tempp->special, i_mod_tm);
             cancel_run(STOP_BUG);
             r = 0;
         }
         uint i_wordno = getbits36(word2, 0, 18);
         TPR.CA = i_wordno + r;
         TPR.CA &= MASK18;
-        debug_msg("APU", "ITS: CA = wordno=0%o + r=0%o => 0%o\n", i_wordno, r, TPR.CA);
+        if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "ITS: CA = wordno=0%o + r=0%o => 0%o\n", i_wordno, r, TPR.CA);
         ca_tempp->more = 1;
         return 0;
     }
@@ -813,10 +817,10 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         return 0;
 
     if (ip->opcode == (opcode0_rtcd << 1)) {
-        complain_msg("APU", "RTCD operand not implemented.\n");
+        log_msg(ERR_MSG, "APU", "RTCD operand not implemented.\n");
         cancel_run(STOP_BUG);
     } else if (ip->opcode == (opcode0_call6 << 1) || is_transfer_op(ip->opcode)) {
-        complain_msg("APU", "Call6 and transfer operands not implemented.\n");
+        log_msg(ERR_MSG, "APU", "Call6 and transfer operands not implemented.\n");
         cancel_run(STOP_BUG);
     } else {
         // BUG: What does the question "Appending unit data movement?" mean?
@@ -846,13 +850,13 @@ int fetch_appended(uint offset, t_uint64 *wordp)
     if (addr_mode == ABSOLUTE_mode)
         return fetch_abs_word(offset, wordp);
     if (addr_mode == BAR_mode) {
-        complain_msg("APU::append", "BAR mode not implemented.\n");
+        log_msg(ERR_MSG, "APU::append", "BAR mode not implemented.\n");
         cancel_run(STOP_BUG);
         return fetch_abs_word(offset, wordp);
     }
     if (addr_mode != APPEND_mode) {
         // impossible
-        complain_msg("APU::append", "Unknown mode\n");
+        log_msg(ERR_MSG, "APU::append", "Unknown mode\n");
         cancel_run(STOP_BUG);
         return fetch_abs_word(offset, wordp);
     }
@@ -860,10 +864,10 @@ int fetch_appended(uint offset, t_uint64 *wordp)
     uint addr;
     int ret = page_in(offset, 0, &addr);
     if (ret == 0) {
-        debug_msg("APU::fetch_append", "Using addr 0%o\n", addr);
+        if(opt_debug>0) log_msg(DEBUG_MSG, "APU::fetch_append", "Using addr 0%o\n", addr);
         ret = fetch_abs_word(addr, wordp);
     } else {
-        debug_msg("APU::fetch_append", "page-in faulted\n");
+        if(opt_debug>0) log_msg(DEBUG_MSG, "APU::fetch_append", "page-in faulted\n");
     }
     return ret;
 }
@@ -874,17 +878,17 @@ int store_appended(uint offset, t_uint64 word)
     addr_modes_t addr_mode = get_addr_mode();
     if (addr_mode != APPEND_mode) {
         // impossible
-        complain_msg("APU::store-append", "Not APPEND mode\n");
+        log_msg(ERR_MSG, "APU::store-append", "Not APPEND mode\n");
         cancel_run(STOP_BUG);
     }
 
     uint addr;
     int ret = page_in(offset, 0, &addr);
     if (ret == 0) {
-        debug_msg("APU::store-append", "Using addr 0%o\n", addr);
+        if(opt_debug>0) log_msg(DEBUG_MSG, "APU::store-append", "Using addr 0%o\n", addr);
         ret = store_abs_word(addr, word);
     } else
-        debug_msg("APU::store-append", "page-in faulted\n");
+        if(opt_debug>0) log_msg(DEBUG_MSG, "APU::store-append", "page-in faulted\n");
     return ret;
 }
 
@@ -896,6 +900,14 @@ void dump_vm()
 
     printf("DSBR: addr=0%08o, bound=0%o(%d), unpaged=%c\n",
         DSBR.addr, DSBR.bound, DSBR.bound, DSBR.u ? 'Y' : 'N');
+    if (cu.SD_ON)
+        printf("SDWAM is enabled.\n");
+    else
+        printf("SDWAM is NOT enabled.\n");
+    if (cu.PT_ON)
+        printf("PTWAM is enabled.\n");
+    else
+        printf("PTWAM is NOT enabled.\n");
     if (DSBR.u)
         printf("DSBR: SDW for segment 'segno' is at 0%08 + 2 * segno.\n", DSBR.addr);
     else {
@@ -904,9 +916,9 @@ void dump_vm()
         printf("DSBR: SDW for segment 'segno' is at PTW.addr<<6 + y1.\n");
     }
     for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i) {
-        printf("SDWAM[%d]: ptr(segno)=0%05o, is-full=%c, use=0%02o(%02d) enabled=%c.\n",
+        printf("SDWAM[%d]: ptr(segno)=0%05o, is-full=%c, use=0%02o(%02d)\n",
             i, SDWAM[i].assoc.ptr, SDWAM[i].assoc.is_full ? 'Y' : 'N',
-            SDWAM[i].assoc.use, SDWAM[i].assoc.use, SDWAM[i].assoc.enabled ? 'Y' : 'N');
+            SDWAM[i].assoc.use, SDWAM[i].assoc.use);
         SDW_t *sdwp = &SDWAM[i].sdw;
         printf("\tSDW for seg %d: addr = 0%08o, r1=%o r2=%o r3=%o, f=%c, fc=0%o.\n",
             SDWAM[i].assoc.ptr, sdwp->addr, sdwp->r1, sdwp->r2, sdwp->r3, sdwp->f ? 'Y' : 'N', sdwp->fc);
@@ -935,7 +947,7 @@ int get_seg_addr(uint offset, uint perm_mode, uint *addrp)
     // BUG: causes faults
     int ret = page_in(offset, perm_mode, addrp);
     if (ret)
-        warn_msg("APU::get_seg_addr", "page-in faulted\n");
+        log_msg(WARN_MSG, "APU::get_seg_addr", "page-in faulted\n");
     return ret;
 }
 
@@ -949,17 +961,17 @@ static int page_in(uint offset, uint perm_mode, uint *addrp)
 
     const char *moi = "APU::append::page-in";
     uint segno = TPR.TSR;   // Should be been loaded with PPR.PSR if this is an instr fetch...
-    debug_msg(moi, "Starting for Segno=0%o, offset=0%o.  (PPR.PSR is 0%o)\n", segno, offset, PPR.PSR);
+    if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Starting for Segno=0%o, offset=0%o.  (PPR.PSR is 0%o)\n", segno, offset, PPR.PSR);
 
     // ERROR: Validate that all PTWAM & SDWAM entries are always "full" and that use fields are always sane
     SDWAM_t* SDWp = page_in_sdw();
     if (SDWp == NULL) {
-        warn_msg(moi, "SDW not loaded\n");
+        log_msg(WARN_MSG, moi, "SDW not loaded\n");
         return 1;
     }
     int ret = page_in_page(SDWp, offset, perm_mode, addrp);
     if (ret != 0) {
-        warn_msg(moi, "page_in_page returned non zero.  Segno 0%o, offset 0%o(%d)\n", segno, offset);
+        log_msg(WARN_MSG, moi, "page_in_page returned non zero.  Segno 0%o, offset 0%o(%d)\n", segno, offset);
     }
     return ret;
 }
@@ -988,22 +1000,22 @@ static SDWAM_t* page_in_sdw()
         for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i) {
             if (SDWAM[i].assoc.ptr == segno && SDWAM[i].assoc.is_full) {
                 SDWp = SDWAM + i;
-                // debug_msg("APU::append", "Found SDW for segno 0%o in SDWAM[%d]\n", segno, i);
+                // log_msg(DEBUG_MSG, "APU::append", "Found SDW for segno 0%o in SDWAM[%d]\n", segno, i);
                 break;
             }
             //if (! SDWAM[i].assoc.is_full) {
-            //  debug_msg("APU::append", "Found SDWAM[%d] is unused\n", i);
+            //  log_msg(DEBUG_MSG, "APU::append", "Found SDWAM[%d] is unused\n", i);
             //}
             if (SDWAM[i].assoc.use == 0)
                 oldest_sdwam = i;
         }
     } else {
-        // debug_msg("APU::append", "SDW for segno 0%o is the MRU -- in SDWAM[%d]\n", segno, SDWp-SDWAM);
+        // log_msg(DEBUG_MSG, "APU::append", "SDW for segno 0%o is the MRU -- in SDWAM[%d]\n", segno, SDWp-SDWAM);
     }
 
     if (SDWp != NULL) {
         // SDW is in SDWAM; it becomes the LRU
-        // debug_msg("APU::append", "SDW is in SDWAM[%d].\n", SDWp - SDWAM);
+        // log_msg(DEBUG_MSG, "APU::append", "SDW is in SDWAM[%d].\n", SDWp - SDWAM);
         if (SDWp->assoc.use != 15) {
             for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i) {
                 if (SDWAM[i].assoc.use > SDWp->assoc.use)
@@ -1013,25 +1025,25 @@ static SDWAM_t* page_in_sdw()
         }
     } else {
         // Fetch SDW and place into SDWAM
-        debug_msg("APU::append", "SDW for segno 0%o is not in SDWAM.  DSBR addr is 0%o\n", segno, DSBR.addr);
+        if(opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "SDW for segno 0%o is not in SDWAM.  DSBR addr is 0%o\n", segno, DSBR.addr);
         t_uint64 sdw_word0, sdw_word1;
         if (DSBR.u) {
             // Descriptor table is unpaged
             // Do a NDSW cycle
             if (segno * 2 >= 16 * (DSBR.bound + 1)) {
                 cu.word1flags.oosb = 1;         // ERROR: nothing clears
-                warn_msg("APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault\n", DSBR.bound, DSBR.bound);
+                log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault\n", DSBR.bound, DSBR.bound);
                 fault_gen(acc_viol_fault);
                 return NULL;
             }
-            if(1) debug_msg("APU::append", "Fetching SDW for unpaged descriptor table from 0%o\n", DSBR.addr + 2 * segno);
+            if(1) log_msg(DEBUG_MSG, "APU::append", "Fetching SDW for unpaged descriptor table from 0%o\n", DSBR.addr + 2 * segno);
             if (fetch_abs_pair(DSBR.addr + 2 * segno, &sdw_word0, &sdw_word1) != 0)
                 return NULL;
         } else {
             // Descriptor table is paged
 #if 0
             if (segno * 2 >= 16 * (DSBR.bound + 1)) {
-                warn_msg("APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault -- not sure if this check is appropriate though.\n", DSBR.bound, DSBR.bound);
+                log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault -- not sure if this check is appropriate though.\n", DSBR.bound, DSBR.bound);
                 //cu.word1flags.oosb = 1;           // ERROR: nothing clears
                 // fault_gen(acc_viol_fault);
                 // return NULL;
@@ -1044,12 +1056,12 @@ static SDWAM_t* page_in_sdw()
             uint x1 = (2 * segno - y1) / page_size;     // offset within DS page
             PTW_t DSPTW;
             t_uint64 word;
-            if(1) debug_msg("APU::append", "Fetching DS-PTW for paged descriptor table from 0%o\n", DSBR.addr + x1);
+            if(1) log_msg(DEBUG_MSG, "APU::append", "Fetching DS-PTW for paged descriptor table from 0%o\n", DSBR.addr + x1);
             if (fetch_abs_word(DSBR.addr + x1, &word) != 0) // We assume DS is 1024 words (bound=077->16*64=1024)
                 return NULL;
             decode_PTW(word, &DSPTW);   // TODO: cache this
             if (DSPTW.f == 0) {
-                debug_msg("APU::append", "DSPTW directed fault\n");
+                if (opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "DSPTW directed fault\n");
                 fault_gen(dir_flt0_fault + DSPTW.fc);   // Directed Faults 0..4 use sequential fault numbers
                 return NULL;
             }
@@ -1062,13 +1074,13 @@ static SDWAM_t* page_in_sdw()
                 }
             }
             // PSDW cycle (Step 5 for case when Descriptor Segment is paged)
-            // debug_msg("APU::append", "Fetching SDW from 0%o<<6+0%o => 0%o\n", DSPTW.addr, y1, (DSPTW.addr<<6) + y1);
+            // log_msg(DEBUG_MSG, "APU::append", "Fetching SDW from 0%o<<6+0%o => 0%o\n", DSPTW.addr, y1, (DSPTW.addr<<6) + y1);
             if (fetch_abs_pair((DSPTW.addr<<6) + y1, &sdw_word0, &sdw_word1) != 0)
                 return NULL;
         }
         // Allocate a SDWAM entry
         if (oldest_sdwam == -1) {
-            complain_msg("APU::append", "SDWAM had no oldest entry\n");
+            log_msg(ERR_MSG, "APU::append", "SDWAM had no oldest entry\n");
             cancel_run(STOP_BUG);
             return NULL;
         }
@@ -1080,9 +1092,13 @@ static SDWAM_t* page_in_sdw()
         SDWp->assoc.ptr = segno;
         SDWp->assoc.use = 15;
         SDWp->assoc.is_full = 1;
+        if (opt_debug) {
+            log_msg(DEBUG_MSG, "APU::append", "Allocated SDWAM # %o for seg 0%o: addr - 0%o, bound = 0%o(%d), f=%d\n",
+                oldest_sdwam, segno, SDWp->sdw.addr, SDWp->sdw.bound, SDWp->sdw.bound, SDWp->sdw.f);
+        }
     }
 
-    //debug_msg("APU::append", "SDW: addr - 0%o, bound = 0%o(%d), f=%d\n",
+    //log_msg(DEBUG_MSG, "APU::append", "SDW: addr - 0%o, bound = 0%o(%d), f=%d\n",
     //  SDWp->sdw.addr, SDWp->sdw.bound, SDWp->sdw.bound, SDWp->sdw.f);
 
     return SDWp;
@@ -1096,27 +1112,28 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp)
 
     // Following done for either paged or unpaged segments
     if (SDWp->sdw.f == 0) {
-        debug_msg("APU::append", "SDW directed fault\n");
+        if (opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "SDW directed fault\n");
         fault_gen(dir_flt0_fault + SDWp->sdw.fc);   // Directed Faults 0..4 use sequential fault numbers
         return 1;
     }
+    // BUG: what does a bounds of zero mean?
     if (offset >= 16 * (SDWp->sdw.bound + 1)) {
         cu.word1flags.oosb = 1;         // ERROR: nothing clears
-        debug_msg("APU::append", "SDW: Offset=0%o(%u), bound = 0%o(%u) -- OOSB fault\n", offset, offset, SDWp->sdw.bound, SDWp->sdw.bound);
+        log_msg(NOTICE_MSG, "APU::append", "SDW: Offset=0%o(%u), bound = 0%o(%u) -- OOSB fault\n", offset, offset, SDWp->sdw.bound, SDWp->sdw.bound);
         fault_gen(acc_viol_fault);
         return 1;
     }
 
     // ERROR: check access bits of SDW.{r,e,etc} versus reference (perm_mode arg)
     if (perm_mode != 0) {
-        warn_msg("APU::append", "Segment permission checking not implemented\n");
+        log_msg(WARN_MSG, "APU::append", "Segment permission checking not implemented\n");
         cancel_run(STOP_WARN);
     }
 
     if (SDWp->sdw.u) {
         // Segment is unpaged (it is contiguous) -- FANP cycle
         *addrp = SDWp->sdw.addr + offset;
-        // debug_msg("APU::append", "Resulting addr is 0%o (0%o+0%o)\n", *addrp,  SDWp->sdw.addr, offset);
+        // log_msg(DEBUG_MSG, "APU::append", "Resulting addr is 0%o (0%o+0%o)\n", *addrp,  SDWp->sdw.addr, offset);
     } else {
         // Segment is paged -- find appropriate page
         // First, Step 10 -- get PTW
@@ -1132,17 +1149,17 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp)
             for (int i = 0; i < ARRAY_SIZE(PTWAM); ++i) {
                 if (PTWAM[i].assoc.ptr == segno && PTWAM[i].assoc.pageno == x2 && PTWAM[i].assoc.is_full) {
                     PTWp = PTWAM + i;
-                    // debug_msg("APU::append", "Found PTW for (segno 0%o, page 0%o) in PTWAM[%d]\n", segno, x2, i);
+                    // log_msg(DEBUG_MSG, "APU::append", "Found PTW for (segno 0%o, page 0%o) in PTWAM[%d]\n", segno, x2, i);
                     break;
                 }
                 if (PTWAM[i].assoc.use == 0)
                     oldest_ptwam = i;
                 //if (! PTWAM[i].assoc.is_full) {
-                //  debug_msg("APU::append", "PTW[%d] is not full\n", i);
+                //  log_msg(DEBUG_MSG, "APU::append", "PTW[%d] is not full\n", i);
                 //}
             }
         } else {
-            // debug_msg("APU::append", "PTW for (segno 0%o, page 0%o) is the MRU -- in PTWAM[%d]\n", segno, x2, PTWp-PTWAM);
+            // log_msg(DEBUG_MSG, "APU::append", "PTW for (segno 0%o, page 0%o) is the MRU -- in PTWAM[%d]\n", segno, x2, PTWp-PTWAM);
         }
         if (PTWp != NULL) {
             // PTW is in PTWAM; it becomes the LRU
@@ -1156,12 +1173,12 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp)
         } else {
             // Fetch PTW and put into PTWAM -- PTW cycle
             if (oldest_ptwam == -1) {
-                complain_msg("APU::append", "PTWAM had no oldest entry\n");
+                log_msg(ERR_MSG, "APU::append", "PTWAM had no oldest entry\n");
                 cancel_run(STOP_BUG);
                 return 1;
             }
             t_uint64 word;
-            // debug_msg("APU::append", "Fetching PTW for (segno 0%o, page 0%o) from 0%o(0%o+page)\n", segno, x2, SDWp->sdw.addr + x2, SDWp->sdw.addr);
+            // log_msg(DEBUG_MSG, "APU::append", "Fetching PTW for (segno 0%o, page 0%o) from 0%o(0%o+page)\n", segno, x2, SDWp->sdw.addr + x2, SDWp->sdw.addr);
             if (fetch_abs_word(SDWp->sdw.addr + x2, &word) != 0)
                 return 1;
             for (int i = 0; i < ARRAY_SIZE(PTWAM); ++i) {
@@ -1174,16 +1191,16 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp)
             PTWp->assoc.pageno = x2;
             PTWp->assoc.is_full = 1;
             if (PTWp->ptw.f == 0) {
-                debug_msg("APU::append", "PTW directed fault\n");
+                if(opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "PTW directed fault\n");
                 fault_gen(dir_flt0_fault + PTWp->ptw.fc);   // Directed Faults 0..4 use sequential fault numbers
                 return 1;
             }
         }
         *addrp = (PTWp->ptw.addr << 6) + y2;
-        // debug_msg("APU::append", "Resulting addr is 0%o (0%o<<6+0%o)\n", *addrp,  PTWp->ptw.addr, y2);
+        // log_msg(DEBUG_MSG, "APU::append", "Resulting addr is 0%o (0%o<<6+0%o)\n", *addrp,  PTWp->ptw.addr, y2);
     }
 
-    debug_msg("APU::append", "Resulting addr is 0%o\n", *addrp);
+    if(opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "Resulting addr for 0%o$0%o is 0%o\n", segno, offset, *addrp);
 
     return 0;
 }
@@ -1227,6 +1244,8 @@ static void decode_SDW(t_uint64 word0, t_uint64 word1, SDW_t *sdwp)
     sdwp->r1 = getbits36(word0, 24, 3);
     sdwp->r2 = getbits36(word0, 27, 3);
     sdwp->r3 = getbits36(word0, 30, 3);
+    // ssdr instruction stores zeros to 'f' and 'fc'
+    // Figure 5-5 indicates usage of 33..35. ssdp will store 'f'.
     sdwp->f = getbits36(word0, 33, 1);
     sdwp->fc = getbits36(word0, 34, 2);
 

@@ -61,10 +61,12 @@ const char *sim_stop_messages[] = {
 };
 
 static int vmdump(int32 arg, char *buf);
+static int history(int32 arg, char *buf);
 extern CTAB *sim_vm_cmd;
 static struct sim_ctab sim_cmds[] =  {
-    { "SYMTAB", symtab_parse, 0, "symtab                   define symtab entries\n" },
-    { "VMDUMP", vmdump, 0, "vmdump                   dump virtual memory caches\n" },
+    { "XSYMTAB", symtab_parse, 0, "xsymtab                  define symtab entries\n" },
+    { "XVMDUMP", vmdump, 0,   "xvmdump                  dump virtual memory caches\n" },
+    { "XHISTORY", history, 0, "xhistory                 display recent instruction counter values\n" },
     { 0, 0, 0, 0}
 };
 
@@ -227,15 +229,15 @@ static void init_memory_iom()
 
     // IOM Mailbox, at Base*6
     int mbx = base * 64;
-    M[mbx+07] = (base << 24) | (02 << 18) | 02;     // Fault channel DCW
-    // debug_msg("SYS", "IOM MBX @%0o: %0Lo\n", mbx+7, M[mbx+7]);
+    M[mbx+07] = ((t_uint64) base << 24) | (02 << 18) | 02;      // Fault channel DCW
+    // log_msg(DEBUG_MSG, "SYS", "IOM MBX @%0o: %0Lo\n", mbx+7, M[mbx+7]);
     M[mbx+010] = 04000;                             // Connect channel LPW -> PCW at 000000
 
     // Channel mailbox, at Base*64 + 4*Chan#
     mbx = (base * 64) + 4 * tape_chan;
     M[mbx+0] = (3<<18) | (2<<12) | 3;                   //  Boot dev LPW -> IDCW @ 000003
-    // debug_msg("SYS", "Channel MBX @%0o: %0Lo\n", mbx, M[mbx]);
-    M[mbx+2] = (base <<24);                         //  Boot dev SCW -> IOM mailbox
+    // log_msg(DEBUG_MSG, "SYS", "Channel MBX @%0o: %0Lo\n", mbx, M[mbx]);
+    M[mbx+2] = ((t_uint64) base <<24);                          //  Boot dev SCW -> IOM mailbox
 #endif
 
 #if 1
@@ -402,33 +404,33 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
 
 t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
 {
-    complain_msg("SYS::parse_sym", "unimplemented\n");
+    log_msg(ERR_MSG, "SYS::parse_sym", "unimplemented\n");
     return SCPE_ARG;
 }
 
 int activate_timer()
 {
     uint32 t;
-    debug_msg("SYS::clock", "TR is %Ld 0%Lo.\n", reg_TR, reg_TR);
+    log_msg(DEBUG_MSG, "SYS::clock", "TR is %Ld 0%Lo.\n", reg_TR, reg_TR);
     if (bit27_is_neg(reg_TR)) {
         if ((t = sim_is_active(&TR_clk_unit)) != 0)
-            debug_msg("SYS::clock", "TR cancelled with %d time units left.\n", t);
+            log_msg(DEBUG_MSG, "SYS::clock", "TR cancelled with %d time units left.\n", t);
         else
-            debug_msg("SYS::clock", "TR loaded with negative value, but it was alread stopped.\n", t);
+            log_msg(DEBUG_MSG, "SYS::clock", "TR loaded with negative value, but it was alread stopped.\n", t);
         sim_cancel(&TR_clk_unit);
         return 0;
     }
     if ((t = sim_is_active(&TR_clk_unit)) != 0) {
-        debug_msg("SYS::clock", "TR was still running with %d time units left.\n", t);
+        log_msg(DEBUG_MSG, "SYS::clock", "TR was still running with %d time units left.\n", t);
         sim_cancel(&TR_clk_unit);   // BUG: do we need to cancel?
     }
 
     (void) sim_rtcn_init(CLK_TR_HZ, TR_CLK);
     sim_activate(&TR_clk_unit, reg_TR);
     if ((t = sim_is_active(&TR_clk_unit)) == 0)
-        debug_msg("SYS::clock", "TR is not running\n", t);
+        log_msg(DEBUG_MSG, "SYS::clock", "TR is not running\n", t);
     else
-        debug_msg("SYS::clock", "TR is now running with %d time units left.\n", t);
+        log_msg(DEBUG_MSG, "SYS::clock", "TR is now running with %d time units left.\n", t);
     return 0;
 }
 
@@ -438,7 +440,7 @@ t_stat clk_svc(UNIT *up)
     // only valid for TR
     (void) sim_rtcn_calb (CLK_TR_HZ, TR_CLK);   // calibrate clock
     uint32 t = sim_is_active(&TR_clk_unit);
-    debug_msg("SYS::clock::service", "TR has %d time units left\n");
+    log_msg(DEBUG_MSG, "SYS::clock::service", "TR has %d time units left\n");
     return 0;
 }
 
@@ -478,13 +480,13 @@ static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
     if ((offsetp = strchr(cptr, '|')) != NULL || ((offsetp = strchr(cptr, '$')) != NULL)) {
         // accept an octal segment number
         force_seg = 1;
-        //warn_msg("parse_addr", "arg is '%s'\n", cptr);
+        //log_msg(WARN_MSG, "parse_addr", "arg is '%s'\n", cptr);
         if (cptr[0] == 'P' && cptr[1] == 'R' && is_octal_digit(cptr[2]) && cptr+3 == offsetp) {
             // handle things like pr4|2,x7
             pr = cptr[2] - '0'; // BUG: ascii only
             seg = AR_PR[pr].PR.snr;
             offset = AR_PR[pr].wordno;
-            //warn_msg("parse_addr", "PR[%d] uses 0%o|0%o\n", pr, seg, offset);
+            //log_msg(WARN_MSG, "parse_addr", "PR[%d] uses 0%o|0%o\n", pr, seg, offset);
             cptr += 4;
         } else {
             if (!is_octal_digit(*cptr))
@@ -552,5 +554,11 @@ static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr addr)
 static int vmdump(int32 arg, char *buf)
 {
     dump_vm();
+    return 0;
+}
+
+static int history(int32 arg, char *buf)
+{
+    dump_history();
     return 0;
 }

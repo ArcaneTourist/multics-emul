@@ -25,14 +25,14 @@ void mt_init()
 
 int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
 {
-    debug_msg("MT::iom_cmd", "Chan 0%o, dev-cmd 0%o, dev-code 0%o\n", chan, dev_cmd, dev_code);
+    log_msg(DEBUG_MSG, "MT::iom_cmd", "Chan 0%o, dev-cmd 0%o, dev-code 0%o\n", chan, dev_cmd, dev_code);
 
     // BUG: Should Major be added to 040? and left shifted 6? Ans: it's 4 bits
 
     if (chan < 0 || chan >= ARRAY_SIZE(iom.devices)) {
         *majorp = 05;   // Real HW could not be on bad channel
         *subp = 2;
-        complain_msg("MT::iom_cmd", "Bad channel %d\n", chan);
+        log_msg(ERR_MSG, "MT::iom_cmd", "Bad channel %d\n", chan);
         return 1;
     }
 
@@ -40,7 +40,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
     if (devp == NULL || devp->units == NULL) {
         *majorp = 05;
         *subp = 2;
-        complain_msg("MT::iom_cmd", "Internal error, no device and/or unit for channel 0%o\n", chan);
+        log_msg(ERR_MSG, "MT::iom_cmd", "Internal error, no device and/or unit for channel 0%o\n", chan);
         return 1;
     }
     UNIT* unitp = devp->units;
@@ -49,7 +49,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
         // *subp = 2;
         *majorp = 05;
         *subp = 2;
-        complain_msg("MT::iom_cmd", "Bad dev unit-num 0%o (%d decimal)\n", dev_code, dev_code);
+        log_msg(ERR_MSG, "MT::iom_cmd", "Bad dev unit-num 0%o (%d decimal)\n", dev_code, dev_code);
         return 1;
     }
     // BUG: dev_code unused
@@ -73,7 +73,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             // We read the record into the tape controllers memory; IOM can retrieve via PCW 
             if (tape_statep->bufp == NULL)
                 if ((tape_statep->bufp = malloc(bufsz)) == NULL) {
-                    complain_msg("MT::iom_cmd", "Malloc error\n");
+                    log_msg(ERR_MSG, "MT::iom_cmd", "Malloc error\n");
                     *majorp = 012;  // BUG: arbitrary error code; config switch
                     *subp = 1;
                     return 1;
@@ -82,20 +82,20 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             int ret;
             if ((ret = sim_tape_rdrecf(unitp, tape_statep->bufp, &tbc, bufsz)) != 0) {
                 if (ret == MTSE_TMK || ret == MTSE_EOM) {
-                    warn_msg("MT::iom_cmd", "EOF: %s\n", simh_tape_msg(ret));
+                    log_msg(WARN_MSG, "MT::iom_cmd", "EOF: %s\n", simh_tape_msg(ret));
                     *majorp = 044;  // EOF category
                     *subp = 023;    // EOF file mark
                     cancel_run(STOP_WARN);
                     return 0;
                 } else {
-                    complain_msg("MT::iom_cmd", "Cannot read tape: %d - %s\n", ret, simh_tape_msg(ret));
-                    complain_msg("MT::iom_cmd", "Returning arbitrary error code\n");
+                    log_msg(ERR_MSG, "MT::iom_cmd", "Cannot read tape: %d - %s\n", ret, simh_tape_msg(ret));
+                    log_msg(ERR_MSG, "MT::iom_cmd", "Returning arbitrary error code\n");
                     *majorp = 010;  // BUG: arbitrary error code; config switch
                     *subp = 1;
                     return 1;
                 }
             }
-            warn_msg("MT::iom_cmd", "Read %d bytes from simulated tape\n", (int) tbc);
+            log_msg(WARN_MSG, "MT::iom_cmd", "Read %d bytes from simulated tape\n", (int) tbc);
             tape_statep->bitsp = bitstm_new(tape_statep->bufp, tbc);
             *majorp = 0;
             *subp = 0;
@@ -113,17 +113,17 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             t_mtrlnt tbc;
             int ret;
             if ((ret = sim_tape_sprecr(unitp, &tbc)) == 0) {
-                warn_msg("MT::iom_cmd", "Backspace one record\n");
+                log_msg(WARN_MSG, "MT::iom_cmd", "Backspace one record\n");
                 *majorp = 0;
                 *subp = 0;
                 if (sim_tape_wrp(unitp)) *subp |= 1;
             } else {
-                complain_msg("MT::iom_cmd", "Cannot backspace record: %d - %s\n", ret, simh_tape_msg(ret));
+                log_msg(ERR_MSG, "MT::iom_cmd", "Cannot backspace record: %d - %s\n", ret, simh_tape_msg(ret));
                 if (ret == MTSE_BOT) {
                     *majorp = 05;
                     *subp = 010;
                 } else {
-                    complain_msg("MT::iom_cmd", "Returning arbitrary error code\n");
+                    log_msg(ERR_MSG, "MT::iom_cmd", "Returning arbitrary error code\n");
                     *majorp = 010;  // BUG: arbitrary error code; config switch
                     *subp = 1;
                 }
@@ -139,7 +139,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
         default: {
             *majorp = 05;
             *subp = 1;
-            complain_msg("MT::iom_cmd", "Unknown command 0%o\n", dev_cmd);
+            log_msg(ERR_MSG, "MT::iom_cmd", "Unknown command 0%o\n", dev_cmd);
             return 1;
         }
     }
@@ -149,12 +149,12 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
 
 int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
 {
-    // debug_msg("MT::iom_io", "Chan 0%o\n", chan);
+    // log_msg(DEBUG_MSG, "MT::iom_io", "Chan 0%o\n", chan);
 
     if (chan < 0 || chan >= ARRAY_SIZE(iom.devices)) {
         *majorp = 05;   // Real HW could not be on bad channel
         *subp = 2;
-        complain_msg("MT::iom_io", "Bad channel %d\n", chan);
+        log_msg(ERR_MSG, "MT::iom_io", "Bad channel %d\n", chan);
         return 1;
     }
 
@@ -162,7 +162,7 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
     if (devp == NULL || devp->units == NULL) {
         *majorp = 05;
         *subp = 2;
-        complain_msg("MT::iom_io", "Internal error, no device and/or unit for channel 0%o\n", chan);
+        log_msg(ERR_MSG, "MT::iom_io", "Internal error, no device and/or unit for channel 0%o\n", chan);
         return 1;
     }
     UNIT* unitp = devp->units;
@@ -174,7 +174,7 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
         // no prior read or write command
         *majorp = 013;  // MPC Device Data Alert
         *subp = 02;     // Inconsistent command
-        complain_msg("MT::iom_io", "Bad channel %d\n", chan);
+        log_msg(ERR_MSG, "MT::iom_io", "Bad channel %d\n", chan);
         return 1;
     } else if (tape_statep->io_mode == read_mode) {
         // read
@@ -188,17 +188,17 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
             *majorp = 0;
             *subp = 0;
             if (sim_tape_wrp(unitp)) *subp |= 1;
-            complain_msg("MT::iom_io", "Read buffer exhausted on channel %d\n", chan);
+            log_msg(ERR_MSG, "MT::iom_io", "Read buffer exhausted on channel %d\n", chan);
             return 1;
         }
-        // debug_msg("MT::iom_io", "Data moved from tape controller buffer to IOM\n");
+        // log_msg(DEBUG_MSG, "MT::iom_io", "Data moved from tape controller buffer to IOM\n");
         *majorp = 0;
         *subp = 0;      // BUG: do we need to detect end-of-record?
         if (sim_tape_wrp(unitp)) *subp |= 1;
         return 0;
     } else {
         // write
-        complain_msg("MT::iom_io", "Write I/O Unimplemented\n");
+        log_msg(ERR_MSG, "MT::iom_io", "Write I/O Unimplemented\n");
         *majorp = 043;  // DATA ALERT   
         *subp = 040;        // Reflective end of tape mark found while trying to write
         return 1;
@@ -207,14 +207,14 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
     /*notreached*/
     *majorp = 0;
     *subp = 0;
-    complain_msg("MT::iom_io", "Internel error.\n");
+    log_msg(ERR_MSG, "MT::iom_io", "Internel error.\n");
     cancel_run(STOP_BUG);
     return 1;
 }
 
 t_stat mt_svc(UNIT *up)
 {
-    debug_msg("MT::service", "not doing anything!\n");
+    log_msg(DEBUG_MSG, "MT::service", "not doing anything!\n");
     cancel_run(STOP_WARN);
     return 0;
 }
