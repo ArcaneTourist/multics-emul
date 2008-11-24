@@ -82,7 +82,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             int ret;
             if ((ret = sim_tape_rdrecf(unitp, tape_statep->bufp, &tbc, bufsz)) != 0) {
                 if (ret == MTSE_TMK || ret == MTSE_EOM) {
-                    log_msg(WARN_MSG, "MT::iom_cmd", "EOF: %s\n", simh_tape_msg(ret));
+                    log_msg(NOTIFY_MSG, "MT::iom_cmd", "EOF: %s\n", simh_tape_msg(ret));
                     *majorp = 044;  // EOF category
                     *subp = 023;    // EOF file mark
                     cancel_run(STOP_WARN);
@@ -95,7 +95,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
                     return 1;
                 }
             }
-            log_msg(WARN_MSG, "MT::iom_cmd", "Read %d bytes from simulated tape\n", (int) tbc);
+            log_msg(NOTIFY_MSG, "MT::iom_cmd", "Read %d bytes from simulated tape\n", (int) tbc);
             tape_statep->bitsp = bitstm_new(tape_statep->bufp, tbc);
             *majorp = 0;
             *subp = 0;
@@ -113,7 +113,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             t_mtrlnt tbc;
             int ret;
             if ((ret = sim_tape_sprecr(unitp, &tbc)) == 0) {
-                log_msg(WARN_MSG, "MT::iom_cmd", "Backspace one record\n");
+                log_msg(NOTIFY_MSG, "MT::iom_cmd", "Backspace one record\n");
                 *majorp = 0;
                 *subp = 0;
                 if (sim_tape_wrp(unitp)) *subp |= 1;

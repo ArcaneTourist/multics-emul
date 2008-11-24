@@ -307,7 +307,7 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
         log_msg(ERR_MSG, "CPU::boot", "Cannot read tape\n");
         return ret;
     }
-    log_msg(WARN_MSG, "CPU::boot", "Read %d bytes from simulated tape %s\n", (int) tbc, fname);
+    log_msg(NOTIFY_MSG, "CPU::boot", "Read %d bytes from simulated tape %s\n", (int) tbc, fname);
     tape_block(buf, tbc, 030);
     bootimage_loaded = 1;
 #else
@@ -483,7 +483,7 @@ if (opt_debug) {
     uint32 delta = sim_os_msec() - start;
     //if (delta > 2000)
     if (delta > 200)
-        log_msg(WARN_MSG, "CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
+        log_msg(NOTIFY_MSG, "CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
             (float) delta / 1000, ncycles, ncycles*1000/delta, ninstr, ninstr*1000/delta);
 
     // BUG: pack private variables into SIMH's world
@@ -829,7 +829,7 @@ static t_stat control_unit(void)
                 if (cpu.irodd_invalid) {
                     cpu.irodd_invalid = 0;
                     cycle = FETCH_cycle;
-                    log_msg(WARN_MSG, "CU", "Invalidating cached odd instruction; auto breakpoint\n");
+                    log_msg(NOTIFY_MSG, "CU", "Invalidating cached odd instruction; auto breakpoint\n");
                     reason = STOP_IBKPT;    /* stop simulation */
                     break;
                 }
@@ -1193,7 +1193,7 @@ int store_abs_word(uint addr, t_uint64 word)
 
     M[addr] = word; // absolute memory reference
     if (addr == cpu.IC_abs + 1) {
-        log_msg(WARN_MSG, "CU::store", "Flagging cached odd instruction as invalidated.\n");
+        log_msg(NOTIFY_MSG, "CU::store", "Flagging cached odd instruction as invalidated.\n");
         cpu.irodd_invalid = 1;
     }
     return 0;

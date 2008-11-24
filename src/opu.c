@@ -8,9 +8,15 @@
     Makes heavy use of the addressing functions in apu_basic.c and
     opu_eis_mw.c
 
+    BUG: Unclear if we need to sometimes set IR based on 18 bit values when
+    an 18-bit ",dl" operand is used.   This is partially implemented when
+    constant do_18bit_math is set to true.
+
 */
 
 #include "hw6180.h"
+
+const int do_18bit_math = 0;
 
 // ============================================================================
 
@@ -87,7 +93,7 @@ static int do_op(instr_t *ip)
             set_addr_mode(orig_mode);
             log_msg(DEBUG_MSG, "OPU", "Resetting addr mode for sequential instr\n");
         } else {
-            log_msg(WARN_MSG, "OPU", "Address mode has been changed with a transfer instr.  Was 0%o, now 0%o\n", orig_ic, PPR.IC);
+            log_msg(NOTIFY_MSG, "OPU", "Address mode has been changed with a transfer instr.  Was 0%o, now 0%o\n", orig_ic, PPR.IC);
             cancel_run(STOP_IBKPT);
         }
     }
@@ -562,11 +568,20 @@ static int do_an_op(instr_t *ip)
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
+                    t_uint64 a = reg_A;
                     reg_A += word;
                     if ((IR.carry = reg_A & MASK36) != 0)
                         reg_A &= MASK36;
                     IR.zero = reg_A == 0;
                     IR.neg = bit36_is_neg(reg_A);
+                    if (do_18bit_math && TPR.is_value == 7 && a == 0) {
+                        int is_neg = bit18_is_neg(reg_A);
+                        if (is_neg != IR.neg) {
+                            log_msg(WARN_MSG, "OPU::adla", "Changing IR.neg to %d for ,dl operand.\n", is_neg);
+                            IR.neg = is_neg;
+                            cancel_run(STOP_WARN);
+                        }
+                    }
                 }
                 return ret;
             }
@@ -575,6 +590,7 @@ static int do_an_op(instr_t *ip)
                 t_uint64 word1, word2;
                 int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
                 if (ret == 0) {
+                    // BUG: ignoring 18bit math
                     ret = add72(word1, word2, &reg_A, &reg_Q, 1);
                 }
                 return ret;
@@ -667,6 +683,8 @@ static int do_an_op(instr_t *ip)
                     word = negate36(word);
                     ret = add36(reg_A, word, &reg_A);
 #else
+                    // AL39, section two claims that subtraction uses 
+                    // two's complement.   However, it's not that simple.
                     // Diagnostic tape t4d_b.2.tap expects that
                     // <max negative number> minus zero will generate
                     // a carry.   So, instead of adding in the two's
@@ -684,6 +702,21 @@ static int do_an_op(instr_t *ip)
                         ret = add36(reg_A, word, &reg_A);
                         log_msg(DEBUG_MSG, "OPU::sba", "adding one yields %012Lo with carry=%c.\n", reg_A, IR.carry ? 'Y' : 'N');
                         IR.carry |= carry;
+                        if (do_18bit_math && TPR.is_value == 7 && (a>>18) == 0) {
+                            // arithmetic on "dl" constant
+                            if (opt_debug || (a>>18) != 0 || (w >> 18) != 0 || (reg_A>>18) != 0)
+                                log_msg(NOTIFY_MSG, "OPU::sba", "A = %012Lo minus %06Lo ,du operand yields %012Lo at IC %06o \n", a, w, reg_A, PPR.IC);
+                            flag_t is_neg = bit18_is_neg(reg_A);
+                            if (is_neg != IR.neg) {
+                                log_msg(WARN_MSG, "OPU::sba", "Changing IR.neg to %d for ,dl operand.\n", is_neg);
+                                IR.neg = is_neg;
+                                // cancel_run(STOP_WARN);
+                            }
+                            if ((reg_A >> 18) != 0 && ! IR.carry) {
+                                log_msg(WARN_MSG, "OPU::sba", "Carry may be wrong for ,dl operand.\n");
+                                cancel_run(STOP_WARN);
+                            }
+                        }
                     }
 #endif
                 }
@@ -693,6 +726,7 @@ static int do_an_op(instr_t *ip)
                 t_uint64 word1, word2;
                 int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
                 if (ret == 0)
+                    // BUG: Ignoring 18bit math
                     if ((ret = negate72(&word1, &word2)) == 0)
                         ret = add72(word1, word2, &reg_A, &reg_Q, 0);
                 return ret;
@@ -703,12 +737,21 @@ static int do_an_op(instr_t *ip)
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
+                    t_uint64 q = reg_Q;
                     uint sign = reg_Q >> 35;
                     reg_Q = (reg_Q - word) & MASK36;
                     uint rsign = reg_Q >> 35;
                     IR.zero = reg_Q == 0;
                     IR.neg = rsign;
                     IR.carry = sign != rsign;
+                    if (do_18bit_math && TPR.is_value == 7 && (q>>18) == 0) {
+                        int is_neg = bit18_is_neg(reg_Q);
+                        if (is_neg != IR.neg) {
+                            log_msg(WARN_MSG, "OPU::sba", "Changing IR.neg to %d for ,dl operand.\n", is_neg);
+                            IR.neg = is_neg;
+ 
+                        }
+                    }
                 }
                 return ret;
             }
@@ -738,8 +781,39 @@ static int do_an_op(instr_t *ip)
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
+#if 0
                     word = negate36(word);
                     ret = add36(reg_Q, word, &reg_Q);
+#else
+                    // See comments at opcode0_sba.
+                    t_uint64 q = reg_Q;
+                    t_uint64 w = word;
+                    word = (~ word) & MASK36;
+                    ret = add36(reg_Q, word, &reg_Q);
+                    int carry = IR.carry;
+                    log_msg(DEBUG_MSG, "OPU::sbq", "%012Lo - %012Lo ==> adding %012Lo yields %012Lo with carry=%c.\n", q, w, word, reg_Q, IR.carry ? 'Y' : 'N');
+                    if (ret == 0) {
+                        word = 1;
+                        ret = add36(reg_Q, word, &reg_Q);
+                        log_msg(DEBUG_MSG, "OPU::sbq", "adding one yields %012Lo with carry=%c.\n", reg_Q, IR.carry ? 'Y' : 'N');
+                        IR.carry |= carry;
+                        if (do_18bit_math && TPR.is_value == 7 && (q>>18) == 0) {
+                            // arithmetic on "dl" constant
+                            if (opt_debug || (q>>18) != 0 || (w >> 18) != 0 || (reg_Q>>18) != 0)
+                                log_msg(NOTIFY_MSG, "OPU::sbq", "A = %012Lo minus %06Lo ,du operand yields %012Lo at IC %06o \n", q, w, reg_Q, PPR.IC);
+                            flag_t is_neg = bit18_is_neg(reg_Q);
+                            if (is_neg != IR.neg) {
+                                log_msg(WARN_MSG, "OPU::sbq", "Changing IR.neg to %d for ,dl operand.\n", is_neg);
+                                IR.neg = is_neg;
+                                // cancel_run(STOP_WARN);
+                            }
+                            if ((reg_Q >> 18) != 0 && ! IR.carry) {
+                                log_msg(WARN_MSG, "OPU::sbq", "Carry may be wrong for ,dl operand.\n");
+                                cancel_run(STOP_WARN);
+                            }
+                        }
+                    }
+#endif
                 }
                 return ret;
             }
@@ -990,6 +1064,17 @@ static int do_an_op(instr_t *ip)
                 if (ret == 0) {
                     IR.zero = word == 0;
                     IR.neg = bit36_is_neg(word);
+                    if (do_18bit_math && TPR.is_value == 7) {
+                        // Why use szn with a constant?
+                        log_msg(WARN_MSG, "OPU::szn", "Using ,dl operand.\n");
+                        if ((word>>18) == 0) {
+                            int is_neg = bit18_is_neg(reg_Q);
+                            if (is_neg != IR.neg) {
+                                log_msg(WARN_MSG, "OPU::szn", "Changing IR.neg to %d for ,dl operand.\n", is_neg);
+                                IR.neg = is_neg;
+                            }
+                        }
+                    }
                 }
                 return ret;
             }
@@ -1001,6 +1086,16 @@ static int do_an_op(instr_t *ip)
                     if (ret == 0) {
                         IR.zero = word == 0;
                         IR.neg = bit36_is_neg(word);
+                        if (do_18bit_math && TPR.is_value == 7) {
+                            log_msg(WARN_MSG, "OPU::sznc", "Using ,dl operand.\n");
+                            if ((word>>18) == 0) {
+                                int is_neg = bit18_is_neg(reg_Q);
+                                if (is_neg != IR.neg) {
+                                    log_msg(WARN_MSG, "OPU::szn", "Changing IR.neg to %d for ,dl operand.\n", is_neg);
+                                    IR.neg = is_neg;
+                                }
+                            }
+                        }
                     }
                 }
                 return ret;
@@ -1068,7 +1163,7 @@ static int do_an_op(instr_t *ip)
                 if (ret == 0) {
                     reg_A |= word;
                     IR.zero = word == 0;
-                    IR.neg = bit36_is_neg(word);
+                    IR.neg = bit36_is_neg(reg_A);
                 }
                 return ret;
             }
@@ -1078,7 +1173,7 @@ static int do_an_op(instr_t *ip)
                 if (ret == 0) {
                     reg_A |= word1;
                     reg_Q |= word2;
-                    IR.zero = word1 == 0 && word2 == 0;
+                    IR.zero = reg_A == 0 && reg_Q == 0;
                     IR.neg = bit36_is_neg(reg_A);
                 }
                 return ret;
@@ -1089,7 +1184,7 @@ static int do_an_op(instr_t *ip)
                 if (ret == 0) {
                     reg_Q |= word;
                     IR.zero = word == 0;
-                    IR.neg = bit36_is_neg(word);
+                    IR.neg = bit36_is_neg(reg_Q);
                 }
                 return ret;
             }
@@ -1154,7 +1249,7 @@ static int do_an_op(instr_t *ip)
                 if (ret == 0) {
                     reg_X[n] |= getbits36(word, 0, 18);
                     IR.zero = reg_X[n] == 0;
-                    IR.neg = bit18_is_neg(word);
+                    IR.neg = bit18_is_neg(reg_X[n]);
                 }
                 return ret;
             }
@@ -1219,7 +1314,7 @@ static int do_an_op(instr_t *ip)
                     ret = store_word(TPR.CA, word);
                     IR.zero = upper == 0;
                     IR.neg = bit36_is_neg(word);
-                    log_msg(ERR_MSG, "OPU::opcode::ersx*", "AL39 requires us to set IR.neg oddly.\n", word);
+                    //log_msg(NOTIFY_MSG, "OPU::opcode::ersx*", "AL39 requires us to set IR.neg oddly.\n", word);
                     // cancel_run(STOP_WARN);
                 }
                 return ret;
@@ -1259,7 +1354,7 @@ static int do_an_op(instr_t *ip)
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
-                    word &= reg_X[n];       // results discarded except for IR bits
+                    word &= (reg_X[n] << 18);       // results discarded except for IR bits
                     IR.zero = word == 0;
                     IR.neg = bit36_is_neg(word);
                 }
@@ -1658,7 +1753,7 @@ static int do_an_op(instr_t *ip)
                 // Setting cu.rpt will cause the instruction to be executed
                 // until the termination is met.
                 // See cpu.c for the rest of the handling.
-                log_msg(WARN_MSG, "OPU", "RPT instruction found\n");
+                log_msg(NOTIFY_MSG, "OPU", "RPT instruction found\n");
                 return 0;
             }
 
@@ -1823,7 +1918,7 @@ static int do_an_op(instr_t *ip)
                 t_bool show_q = 1;
                 if ((TPR.CA & ~7) == ea) {
                     ; // SC mode reg
-                    log_msg(WARN_MSG, "OPU::opcode::rscr", "mode register selected\n");
+                    log_msg(NOTIFY_MSG, "OPU::opcode::rscr", "mode register selected\n");
                     log_msg(ERR_MSG, "OPU::opcode::rscr", "unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
@@ -1920,7 +2015,7 @@ static int do_an_op(instr_t *ip)
                         reg_A = setbits36(reg_A, 28, 1, 0); // gcos mode extended memory option off
                         reg_A = setbits36(reg_A, 29, 4, 016);   // 1110b=>L68 re start_cpu.pl1
                         reg_A = setbits36(reg_A, 33, 3, switches.cpu_num);
-                        log_msg(WARN_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012Lo.\n", low, reg_A);
+                        log_msg(NOTIFY_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012Lo.\n", low, reg_A);
                         break;
                     default:
                         log_msg(WARN_MSG, "OPU::opcode::rsw", "function xxx%o not implemented.\n", low);
@@ -2051,7 +2146,19 @@ static int do_an_op(instr_t *ip)
                     reg_A = (t_uint64) addr << 12;  // upper 24 bits
                 return ret;
             }
-            // dis unimplemented
+
+            case opcode0_dis:
+                // delay until interrupt set
+                if (1) {
+                    log_msg(WARN_MSG, "OPU::dis", "DIS unimplemented; simply continue when ready\n");
+                    cancel_run(STOP_IBKPT);
+                    return 1;
+                } else {
+                    log_msg(WARN_MSG, "OPU::dis", "DIS unimplemented.   Continuing after history dump.\n");
+                    dump_history();
+                    return 0;
+                }
+
 
             // limr ??
             // ldo ??
@@ -2278,7 +2385,10 @@ static int op_add(instr_t *ip, t_uint64 *dest)
     t_uint64 word;
     if ((ret = fetch_op(ip, &word)) != 0)
         return ret;
-    return add36(word, *dest, dest);
+    t_uint64 w = word;
+    t_uint64 d = *dest;
+    ret = add36(word, *dest, dest);
+    return ret;
 }
 
 // ----------------------------------------------------------------------------
@@ -2317,6 +2427,26 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
     }
 
     *dest = result;
+
+    // see comments at opcode0_sba
+    if (do_18bit_math && TPR.is_value == 7) {
+        // arithmetic on "dl" constant
+        if ((a>>18) == 0 && (b>>18) == 0) {
+            if (opt_debug || (result>>18) != 0)
+                log_msg(NOTIFY_MSG, "OPU::adder36", "%012o + %012o = %012o for ,dl modified at IC %06o\n", a, b, result, PPR.IC);
+            flag_t is_neg = bit18_is_neg(result);
+            if (is_neg != IR.neg) {
+                log_msg(WARN_MSG, "OPU::addr36", "Changing IR.neg to %d for ,dl operand.\n", is_neg);
+                IR.neg = is_neg;
+                cancel_run(STOP_WARN);
+            }
+            if ((result >> 18) != 0 && ! IR.carry) {
+                log_msg(WARN_MSG, "OPU::addr", "Carry is probably wrong for ,dl operand.\n");
+                cancel_run(STOP_WARN);
+            }
+        }
+    }
+
     return 0;
 }
 

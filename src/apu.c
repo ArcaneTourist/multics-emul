@@ -238,17 +238,19 @@ int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop, int nbit
         uint o = offset;
 #ifdef FWBUG
         // generate buggy result for historical tracking purposes
+        log_msg(ERR_MSG, "APU::get-addr", "Generating incorrect results for debugging.\n");
         if (TPR.TSR == 0401 && offset == 011)
             reg_mod(reg, offset);
         else
             reg_mod_x(reg, offset, nbits);
+        cancel_run(STOP_BUG);
 #else
         reg_mod_x(reg, offset, nbits);
 #endif
         offset = TPR.CA;
         TPR.CA = saved_CA;
         // BUG: ERROR: Apply EIS reg mod -- is this already fixed?
-        log_msg(WARN_MSG, "APU::get-addr", "Register mod 0%o: offset was 0%o, now 0%o\n", reg, o, offset);
+        log_msg(DEBUG_MSG, "APU::get-addr", "Register mod 0%o: offset was 0%o, now 0%o\n", reg, o, offset);
         //log_msg(WARN_MSG, "APU::get-addr", "Auto-breakpoint\n");
         //cancel_run(STOP_IBKPT);
     }
@@ -304,8 +306,8 @@ int addr_mod(const instr_t *ip)
     // BUG: The following check should only be done after a sequential
     // instr fetch, not after a transfer!  We're only called by do_op(),
     // so this criteria is *almost* met.   Need to detect transfers.
-    // Figure 6-10 claims we only check "PR" bit 29 if we're *not* doing a
-    // sequential instruciton fetch.
+    // Figure 6-10 claims we update the TPR.TSR segno as instructed by a "PR" bit 29
+    // only if we're *not* doing a sequential instruction fetch.
 
     ca_temp.tag = ip->mods.single.tag;
 
@@ -355,11 +357,11 @@ int addr_mod(const instr_t *ip)
         TPR.TBR = 0;
     } else {
         set_addr_mode(addr_mode = APPEND_mode);
-        // AL39: Page 341, Figure 6-7
+        // AL39: Page 341, Figure 6-7 shows 3 bit PR & 15 bit offset
         int32 offset = ip->addr & MASKBITS(15);
         ca_temp.soffset = sign15(offset);
         uint pr = ip->addr >> 15;
-        TPR.TSR = AR_PR[pr].PR.snr;
+        TPR.TSR = AR_PR[pr].PR.snr;     // BUG: see comment above re figure 6-10
         TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
         TPR.CA = (AR_PR[pr].wordno + ca_temp.soffset) & MASK18;
         TPR.TBR = AR_PR[pr].PR.bitno;
@@ -600,7 +602,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 // BUG: is ITS and ITP valid for IR
                 if (TPR.CA % 2 == 0 && (ca_tempp->tag == 041 || ca_tempp->tag == 043)) {
                         log_msg(WARN_MSG, "APU::IR", "found ITS/ITP\n");
-                        cancel_run(STOP_WARN);
+                        // cancel_run(STOP_WARN);
                         do_its_itp(ip, ca_tempp, word);
                         if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR", "post its/itp: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
                 } else {
@@ -631,8 +633,9 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                             break;
                     }
                 }
-                log_msg(WARN_MSG, "APU::RI", "Finished, but unverified.\n");
-                cancel_run(STOP_WARN);
+                //log_msg(WARN_MSG, "APU::RI", "Finished, but unverified.\n");
+                //cancel_run(STOP_WARN);
+                log_msg(DEBUG_MSG, "APU::RI", "Finished.\n");
                 return 0;
             }
 #endif
@@ -676,7 +679,7 @@ static void reg_mod_x(uint td, int off, int nbits)
             TPR.CA &= MASK18;
             break;
         case 3: // ,du
-            TPR.is_value = 1;   // BUG: Use "direct operand flag" instead
+            TPR.is_value = td;  // BUG: Use "direct operand flag" instead
             TPR.value = ((t_uint64) TPR.CA) << 18;
             if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Mod du: Value from offset 0%o is 0%Lo\n", TPR.CA, TPR.value);
             break;
@@ -698,7 +701,7 @@ static void reg_mod_x(uint td, int off, int nbits)
             TPR.CA &= MASK18;
             break;
         case 7: // ,dl
-            TPR.is_value = 1;   // BUG: Use "direct operand flag" instead
+            TPR.is_value = td;  // BUG: Use "direct operand flag" instead
             TPR.value = TPR.CA; // BUG: Should we sign?
             if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Mod dl: Value from offset 0%o is 0%Lo\n", TPR.CA, TPR.value);
             break;
@@ -764,7 +767,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         TPR.CA = AR_PR[n].wordno + i_wordno + r;
         TPR.CA &= MASK18;
         ca_tempp->more = 1;
-        log_msg(WARN_MSG, "APU", "ITP not validated\n");
+        log_msg(DEBUG_MSG, "APU", "ITP done\n");
         //cancel_run(STOP_WARN);
         return 0;
     } else if (ca_tempp->tag == 043) {
@@ -1116,10 +1119,9 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp)
         fault_gen(dir_flt0_fault + SDWp->sdw.fc);   // Directed Faults 0..4 use sequential fault numbers
         return 1;
     }
-    // BUG: what does a bounds of zero mean?
     if (offset >= 16 * (SDWp->sdw.bound + 1)) {
         cu.word1flags.oosb = 1;         // ERROR: nothing clears
-        log_msg(NOTICE_MSG, "APU::append", "SDW: Offset=0%o(%u), bound = 0%o(%u) -- OOSB fault\n", offset, offset, SDWp->sdw.bound, SDWp->sdw.bound);
+        log_msg(NOTIFY_MSG, "APU::append", "SDW: Offset=0%o(%u), bound = 0%o(%u) -- OOSB fault\n", offset, offset, SDWp->sdw.bound, SDWp->sdw.bound);
         fault_gen(acc_viol_fault);
         return 1;
     }

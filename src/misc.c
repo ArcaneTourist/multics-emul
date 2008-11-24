@@ -26,7 +26,7 @@ void log_msg(enum log_level level, const char* who, const char* format, ...)
     va_start(ap, format);
     char *tag = (level == DEBUG_MSG) ? "Debug" :
         (level == WARN_MSG) ? "WARNING" :
-        (level == NOTIFY_MSG) ? "NOTE" :
+        (level == NOTIFY_MSG) ? "Note" :
         (level == ERR_MSG) ? "ERROR" :
             "???MESSAGE";
     msg(tag, who, format, ap);

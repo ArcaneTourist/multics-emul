@@ -7,13 +7,15 @@
 #include "bits.h"
 DEVICE cpu_dev; // hack
 int opt_debug = 0;
+static int is_eis[1024];    // hack
 
 void anal36 (const char* tag, t_uint64 word);
 char *bin(t_uint64 word, int n);
+static void init_ops();
 #include <ctype.h>
 
 int bootimage_loaded;
-void tape_block(unsigned char *p, uint32 len);
+void tape_block(int n_blocks, unsigned char *p, uint32 len);
 void decode_instr(instr_t *ip, t_uint64 word);
 
 static t_uint64 gbits36(t_uint64 x, int i, int n) {
@@ -30,6 +32,7 @@ static t_uint64 gbits36(t_uint64 x, int i, int n) {
 
 int main()
 {
+    init_ops();
     t_uint64 word;
     if (sizeof(word) != 8) {
         fprintf(stderr, "t_uint64 is not 8 bytes\n");
@@ -176,7 +179,7 @@ int doit()
                 return STOP_BUG;
             }
             // use bytes
-            tape_block(bufp, n);
+            tape_block(nblocks, bufp, n);
             bootimage_loaded = 1;
             // Only read one record
             // return STOP_BUG;
@@ -220,9 +223,9 @@ int doit()
 //=============================================================================
 
 
-#define force030 1
+#define force030 0
 
-void tape_block(unsigned char *p, uint32 len)
+void tape_block(int n_blocks, unsigned char *p, uint32 len)
 {
     size_t hack = 0;
     bitstream_t *bp = bitstm_new(p, len);
@@ -240,7 +243,7 @@ void tape_block(unsigned char *p, uint32 len)
         t_uint64 word;
         bitstm_get(bp, 36, &word);
         char msg[80];
-        sprintf(msg, "WORD %lo (%ld dec)", hack, hack);
+        sprintf(msg, "Block %3d, WORD %5lo", n_blocks, hack);
         ++hack;
         anal36(msg, word);
         // bitstm_get(bp, 36, &M[hack++]);
@@ -262,43 +265,47 @@ void anal36 (const char* tag, t_uint64 word)
     nines[1] = (word >> 18) & 0777;
     nines[0] = (word >> 27) & 0777;
     // printf("%s: %012Lo octal, %Lu decimal\n", tag, word, word);
-    printf("%s: %012Lo octal", tag, word);
+    printf("%s: %012Lo", tag, word);
     if (word == magic) {
         printf(" <MAGIC>");
     }
-    printf("\n");
+    printf(" ");
+
+    int i;
+    char ascii[17];
+    char *ap = ascii;
+    for (i = 0; i < 4; ++ i) {
+        if (isprint(nines[i])) {
+            sprintf(ap, "'%c'", nines[i]);
+            ap += 3;
+        } else {
+            sprintf(ap, "\\%03o", nines[i]);
+            ap += 4;
+        }
+    }
+    printf("%-16s  ", ascii);
+
     instr_t instr;
     decode_instr(&instr, word);
     const char *opname = opcodes2text[instr.opcode];
     if (opname == NULL)
-        printf("instr: <none>\n");
+        printf("\n");
     else  {
+#if 0
         char o[80];
         if (instr.addr == 0)
             sprintf(o, "zero");
         else
             sprintf(o, "%d decimal", instr.addr);
+#endif
         if (instr.is_eis_multiword) {
-            printf("instr: %s, offset %016o (%s); inhibit %d, EIS multi-word\n",
-                opname, (unsigned) instr.addr, o, instr.inhibit);
+            printf("%5s, offset %06o; inhibit %d, EIS multi-word\n",
+                opname, (unsigned) instr.addr, instr.inhibit);
         } else {
-            printf("instr: %s, offset %016o (%s); inhibit %d, pr %d, tag %02u\n",
-                opname, (unsigned) instr.addr, o, instr.inhibit, instr.mods.single.pr_bit, instr.mods.single.tag);
+            printf("%5s, offset %06o; inhibit %d, pr %d, tag %02u\n",
+                opname, (unsigned) instr.addr, instr.inhibit, instr.mods.single.pr_bit, instr.mods.single.tag);
         }
     }
-    //printf("bin64: %s\n", bin(word, 64));
-    //printf("bin36: %s\n", bin(word, 36));
-    //printf("9bits(oct): %03o %03o %03o %03o\n", nines[0], nines[1], nines[2], nines[3]);
-    printf("9bits(ascii):");
-    int i;
-    for (i = 0; i < 4; ++ i) {
-        if (isprint(nines[i])) {
-            printf(" '%c'", nines[i]);
-        } else {
-            printf(" \\%03o", nines[i]);
-        }
-    }
-    printf("\n");
 }
 
 char *bin(t_uint64 word, int n)
@@ -315,10 +322,45 @@ char *bin(t_uint64 word, int n)
 
 void decode_instr(instr_t *ip, t_uint64 word)
 {
+    memset(ip, 0, sizeof(*ip));
     ip->addr = getbits36(word, 0, 18);
     ip->opcode = getbits36(word, 18, 10);
     ip->inhibit = getbits36(word, 28, 1);
-    ip->mods.single.pr_bit = getbits36(word, 29, 1);
-    ip->mods.single.tag = getbits36(word, 30, 6);
+    if (! (ip->is_eis_multiword = is_eis[ip->opcode])) {
+        ip->mods.single.pr_bit = getbits36(word, 29, 1);
+        ip->mods.single.tag = getbits36(word, 30, 6);
+    } else {
+        ip->mods.mf1.ar = getbits36(word, 29, 1);
+        ip->mods.mf1.rl = getbits36(word, 30, 1);
+        ip->mods.mf1.id = getbits36(word, 31, 1);
+        ip->mods.mf1.reg = getbits36(word, 32, 4);
+    }
 }
 
+
+static void init_ops()
+{
+    // hack -- todo: cleanup
+
+    memset(is_eis, 0, sizeof(is_eis));
+
+    is_eis[(opcode1_cmpc<<1)|1] = 1;
+    is_eis[(opcode1_scd<<1)|1] = 1;
+    is_eis[(opcode1_scdr<<1)|1] = 1;
+    is_eis[(opcode1_scm<<1)|1] = 1;
+    is_eis[(opcode1_scmr<<1)|1] = 1;
+    is_eis[(opcode1_tct<<1)|1] = 1;
+    is_eis[(opcode1_tctr<<1)|1] = 1;
+    is_eis[(opcode1_mlr<<1)|1] = 1;
+    is_eis[(opcode1_mrl<<1)|1] = 1;
+    is_eis[(opcode1_mve<<1)|1] = 1;
+    is_eis[(opcode1_mvt<<1)|1] = 1;
+    is_eis[(opcode1_cmpn<<1)|1] = 1;
+    is_eis[(opcode1_mvn<<1)|1] = 1;
+    is_eis[(opcode1_mvne<<1)|1] = 1;
+    is_eis[(opcode1_csl<<1)|1] = 1;
+    is_eis[(opcode1_csr<<1)|1] = 1;
+    is_eis[(opcode1_cmpb<<1)|1] = 1;
+    is_eis[(opcode1_sztl<<1)|1] = 1;
+    is_eis[(opcode1_sztr<<1)|1] = 1;
+}

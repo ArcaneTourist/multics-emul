@@ -250,7 +250,7 @@ static int handle_pcw(int chan, int addr)
     log_msg(DEBUG_MSG, moi, "PCW for chan %d, addr 0%o\n", chan, addr);
     pcw_t pcw;
     parse_pcw(&pcw, addr, 1);
-    log_msg(WARN_MSG, moi, "PCW is: %s\n", pcw2text(&pcw));
+    log_msg(NOTIFY_MSG, moi, "PCW is: %s\n", pcw2text(&pcw));
 
     if (pcw.chan < 0 || pcw.chan >= 040) {  // 040 == 32 decimal
         iom_fault(chan, __LINE__, 1, iom_ill_chan); // BUG: what about ill-ser-req? -- is iom issuing a pcw or is channel requesting svc?
@@ -481,7 +481,7 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
         if (lpw.ae) {
             int sz = lpw.size;
             if (lpw.size == 0) {
-                log_msg(WARN_MSG, "IOM::list-sevice", "LPW size is zero\n");
+                log_msg(NOTIFY_MSG, "IOM::list-sevice", "LPW size is zero\n");
                 sz = 010000;    // 4096
             }
             if (addr >= sz)     // BUG: was >
@@ -650,7 +650,7 @@ static char* pcw2text(const pcw_t *p)
 
 static int dev_send_pcw(int chan, pcw_t *p)
 {
-    log_msg(WARN_MSG, "IOM::dev-send-pcw", "Starting for channel 0%o(%d).  PCW: %s\n", chan, chan, pcw2text(p));
+    log_msg(NOTIFY_MSG, "IOM::dev-send-pcw", "Starting for channel 0%o(%d).  PCW: %s\n", chan, chan, pcw2text(p));
 
     DEVICE* devp = iom.devices[chan];
     // if (devp == NULL || devp->units == NULL)

@@ -613,10 +613,10 @@ int get_eis_indir_addr(t_uint64 word, uint* addrp)
         int32 offset = addr & MASKBITS(15);
         int32 soffset;
         soffset = sign15(offset);
-        log_msg(WARN_MSG, moi, "Indir word %012Lo: pr=0%o, offset=0%o(%d); REG(Td)=0%o\n", word, pr, offset, soffset, td); 
+        log_msg(NOTIFY_MSG, moi, "Indir word %012Lo: pr=0%o, offset=0%o(%d); REG(Td)=0%o\n", word, pr, offset, soffset, td); 
     } else {
         // use 18 bit addr in all words -- fetch_word will handle
-        log_msg(WARN_MSG, moi, "Indir word %012Lo: offset=0%o(%d); REG(Td)=0%o\n", word, addr, sign18(addr), td); 
+        log_msg(NOTIFY_MSG, moi, "Indir word %012Lo: offset=0%o(%d); REG(Td)=0%o\n", word, addr, sign18(addr), td); 
     }
 
     uint bitno;
@@ -688,7 +688,7 @@ if (AR_PR[ar].wordno == 010000005642) {
                 log_msg(WARN_MSG, "APU", "a=%d; CA is 0%o\n", a, TPR.CA);
                 log_msg(WARN_MSG, "APU", "soffset is %d\n", soffset);
                 cancel_run(STOP_BUG);
-            }
+}
             if (oops) -- opt_debug;
             return 0;
         }

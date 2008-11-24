@@ -332,9 +332,9 @@ int scu_cioc(t_uint64 addr)
     // todo: check if enabled & not masked
     {
         static int n_cioc = 0;
-        log_msg(WARN_MSG, "SCU::cioc", "CIOC # %d\n", ++ n_cioc);
+        log_msg(NOTIFY_MSG, "SCU::cioc", "CIOC # %d\n", ++ n_cioc);
     }
-    log_msg(WARN_MSG, "SCU::cioc", "Partially implemented: Connect sent to port %d => %d\n", port, scu.ports[port]);
+    log_msg(DEBUG_MSG, "SCU::cioc", "Connect sent to port %d => %d\n", port, scu.ports[port]);
 
     // we only have one IOM, so signal it
     // todo: sanity check port connections
