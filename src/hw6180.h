@@ -415,6 +415,7 @@ typedef struct {
 typedef struct {
     int unimplemented;
 } eis_bit_desc;
+
 typedef struct {
     uint addr;  // 18 bits at  0..17
     uint cn;    //  3 bits at 18..20; character position

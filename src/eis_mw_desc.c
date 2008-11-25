@@ -141,8 +141,10 @@ const char* eis_alpha_desc_to_text(const eis_alpha_desc_t* descp)
 void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* descp)
 {
     // Return absolute address for EIS operand in Alphanumeric Data Descriptor Format
-    descp->addr = getbits36(word, 0, 18);
+    descp->addr = getbits36(word, 0, 18);   // we'll check for PR usage later
     descp->base_addr = descp->addr;
+    descp->bitpos = 0;
+    descp->base_bitpos = 0;
     descp->cn = getbits36(word, 18, 3);
     descp->ta = getbits36(word, 21, 2); // data type
     //descp->n = sign12(getbits36(word, 24, 12));
@@ -155,10 +157,15 @@ int n = descp->n;
         cancel_run(STOP_BUG);
     }
     fix_mf_len(&descp->n, mfp, descp->nbits);
-if ((descp->n >> 12) != 0) {
-    log_msg(WARN_MSG, "APU", "parse_eis_alpha_desc: desc: n orig 0%o; After mod 0%o => 0%o\n", n, descp->n, descp->n & MASKBITS(12));
-    descp->n &= MASKBITS(12);
-}
+#if 1
+    if ((descp->n >> 12) != 0) {
+        // BUG: trim length to 12 bits even for register lookups
+        //log_msg(WARN_MSG, "APU", "parse_eis_alpha_desc: desc: n orig 0%o; After mod 0%o => 0%o\n", n, descp->n, descp->n & MASKBITS(12));
+        //descp->n &= MASKBITS(12);
+        // BUG FIX follows
+        log_msg(NOTIFY_MSG, "APU", "parse_eis_alpha_desc: desc: n orig 0%o; After mod 0%o; prior bug would have truncated to 0%o\n", n, descp->n, descp->n & MASKBITS(12));
+    }
+#endif
     if (descp->nbits == 9) {
         if ((descp->cn & 1) != 0) {
             log_msg(ERR_MSG, "APU::EIS", "TA of 0 (9bit) not legal with cn of %d\n", descp->cn);
@@ -518,6 +525,10 @@ int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
     if (descp->bitpos == 0)
         return 0;
 
+    if (descp->first) {
+        log_msg(WARN_MSG, moi, "Odd, descriptor is not initialized!  Desc bitpos is %d.\n", descp->bitpos);
+    }
+
     int saved_debug = opt_debug;
 
     if (descp->bitpos == 36) {
@@ -558,8 +569,11 @@ static int get_mf_an_addr(uint y, const eis_mf_t* mfp, uint *addrp, uint* bitnop
     // Return absolute address for EIS operand in Alphanumeric Data Descriptor Format
     // BUG: some callers may keep results.  This isn't valid for multi-page segments.
 
-    return get_address(y, mfp->ar, mfp->reg, addrp, bitnop, nbits);
-
+    int ret = get_address(y, mfp->ar, mfp->reg, addrp, bitnop, nbits);
+    if (mfp->ar) {
+        log_msg(NOTIFY_MSG, "EIS", "Using PR[%d] results in address %06o\n", mfp->reg, *addrp);
+    }
+    return ret;
 }
 
 
