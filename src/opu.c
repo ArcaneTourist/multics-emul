@@ -41,6 +41,7 @@ static int do_epbp(int n);
 static int do_easp(int n);
 static int do_an_op(instr_t *ip);   // todo: hack, fold into do_op
 static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p);
+static int do_spri(int n);
 static int op_mlr(const instr_t* ip);
 static int op_tct(const instr_t* ip, int fwd);
 static int op_mvt(const instr_t* ip);
@@ -1612,18 +1613,13 @@ static int do_an_op(instr_t *ip)
             }
 
             case opcode0_spri0:
+                return do_spri(0);
             case opcode0_spri2:
+                return do_spri(2);
             case opcode0_spri4:
-            case opcode0_spri6: {
-                if (get_addr_mode() == BAR_mode) {
-                    fault_gen(illproc_fault);
-                    return 1;
-                }
-                int n = op & 07;
-                t_uint64 word0, word1;
-                spri_to_words(n, &word0, &word1);
-                return store_pair(TPR.CA, word0, word1);
-            }
+                return do_spri(4);
+            case opcode0_spri6:
+                return do_spri(6);
 
             case opcode0_sprp0:
             case opcode0_sprp1:
@@ -1866,12 +1862,12 @@ static int do_an_op(instr_t *ip)
 
             case opcode0_cams: {    // Clear Associative Memory Segments
                 if (get_addr_mode() != ABSOLUTE_mode) {
-                    log_msg(ERR_MSG, "OPU", "cams executed when mode is not absolute.\n");
-                    log_msg(ERR_MSG, "OPU", "This should be a fault, but we're ignoring it...\n");
+                    log_msg(ERR_MSG, "OPU::cams", "cams executed when mode is not absolute.\n");
+                    log_msg(ERR_MSG, "OPU::cams", "This should be a fault, but we're ignoring it...\n");
                     // fault_gen(illproc_fault);
                     // return 1;
                     // cancel_run(STOP_WARN);
-                    return 0;
+                    // return 0;
                 }
                 int ret = 0;
                 int clear = (TPR.CA >> 2) & 1;  // Bit 15 of 18-bit CA
@@ -1882,6 +1878,8 @@ static int do_an_op(instr_t *ip)
                 } else if (enable == 1) {
                     cu.SD_ON = 0;
                     log_msg(NOTIFY_MSG, "OPU::cams", "Disabling SDWAM\n");
+                } else if (enable == 0) {
+                    log_msg(NOTIFY_MSG, "OPU::cams", "Neither enable nor disable requested\n");
                 } else {
                     log_msg(WARN_MSG, "OPU::cams", "Unknown enable/disable mode %06o=>0%o\n", TPR.CA, enable);
                     cancel_run(STOP_WARN);
@@ -2155,7 +2153,7 @@ static int do_an_op(instr_t *ip)
                     return 1;
                 } else {
                     log_msg(WARN_MSG, "OPU::dis", "DIS unimplemented.   Continuing after history dump.\n");
-                    dump_history();
+                    cmd_dump_history();
                     return 0;
                 }
 
@@ -2235,18 +2233,13 @@ static int do_an_op(instr_t *ip)
             // spbp0 .. spbp7 unimplemented
 
             case opcode1_spri1:
+                return do_spri(1);
             case opcode1_spri3:
+                return do_spri(3);
             case opcode1_spri5:
-            case opcode1_spri7: {
-                if (get_addr_mode() == BAR_mode) {
-                    fault_gen(illproc_fault);
-                    return 1;
-                }
-                int n = op & 07;
-                t_uint64 word0, word1;
-                spri_to_words(n, &word0, &word1);
-                return store_pair(TPR.CA, word0, word1);
-            }
+                return do_spri(5);
+            case opcode1_spri7:
+                return do_spri(7);
 
             // opcode1_sra unimplemented
             // lptp unimplemented
@@ -2305,7 +2298,19 @@ static int do_an_op(instr_t *ip)
             // arn0 .. arn7 unimplemented
             // sar0 .. sar7 unimplemented
             // sareg unimplemented
-            // spl unimplemented
+
+            case opcode1_spl: {
+                // BUG: Restart of EIS instructions not yet supported, so spl is a no-op
+                t_uint64 words[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+                log_msg(NOTIFY_MSG, "OPU::spl", "Not storing enough info to allow EIS decimal op restart.\n");
+                return store_yblock8(TPR.CA, words);
+            }
+
+            case opcode0_spri0:
+                return do_spri(0);
+            case opcode0_spri2:
+                return do_spri(2);
+            case opcode0_spri4:
 
             // a4bd unimplemented -- add 4 bit displacement to addr register
             // a6bd
@@ -2729,6 +2734,20 @@ static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p)
 
 // ============================================================================
 
+static int do_spri(int n)
+{
+    if (get_addr_mode() == BAR_mode) {
+        fault_gen(illproc_fault);
+        return 1;
+    }
+    t_uint64 word0, word1;
+    spri_to_words(n, &word0, &word1);
+    if(opt_debug) log_msg(DEBUG_MSG, "OPU::spri*", "Saving PR[%d]: snr=0%o, rnr=%o, wordno=0%o, bitno=0%o\n", n, AR_PR[n].PR.snr, AR_PR[n].PR.rnr, AR_PR[n].wordno, AR_PR[n].PR.bitno);
+    return store_pair(TPR.CA, word0, word1);
+}
+
+// ============================================================================
+
 
 static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, int nargs)
 {
@@ -2806,7 +2825,7 @@ static int op_mlr(const instr_t* ip)
                 break;
             }
         if (put_eis_an(&mf2, &desc2, nib) != 0) {   // must fetch/store when needed
-            ret = 1;
+            ret = 2;
             break;
         }
     }
@@ -2818,13 +2837,14 @@ static int op_mlr(const instr_t* ip)
         }
     }
     // write unsaved data (if any)
-    if (save_eis_an(&mf2, &desc2) != 0)
-        return 1;
+    if (ret < 2)
+        if (save_eis_an(&mf2, &desc2) != 0)
+            return 1;
 
     //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
     //cancel_run(STOP_WARN);
     log_msg(DEBUG_MSG, moi, "finished.\n");
-    return ret;
+    return ret != 0;
 }
 
 // ============================================================================

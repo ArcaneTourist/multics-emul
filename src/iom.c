@@ -81,6 +81,12 @@ typedef struct dcw_s {
             uint type;  // 2 bits at 22..23
             uint tally; // 12 bits at 24..35
         } ddcw;
+        struct {
+            uint addr;
+            flag_t ec;  // extension control
+            flag_t i;   // IDCW control
+            flag_t r;   // relative addressing control
+        } xfer;
     } fields;
 } dcw_t;
 
@@ -294,13 +300,13 @@ static int do_channel(int chan, pcw_t *p)
     int control = p->control;
     int first_list = 1;
     if (control == 0 && chan_status.major == 0) {
-#if 1
+#if 0
         // this seems to be what the boot tape wants
         log_msg(WARN_MSG, moi, "Forcing at least one list service.\n");
         control = 2;
 #else
-        // this might be what the diag tape wants
-        if (p->chan_cmd != 02) {
+        //if (p->chan_cmd != 02) { // this might be what the diag tape wants
+        if (p->chan_cmd != 02 || p->chan_data != 0) { // this might be what the boot tape wants
             log_msg(WARN_MSG, moi, "Forcing at least one list service (this PCW implies data service).\n");
             control = 2;
         } else
@@ -515,7 +521,8 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
                 // Check for T-DCW
                 int t = getbits36(M[addr], 18, 3);
                 if (t == 2) {
-                    log_msg(ERR_MSG, moi, "Transfer-DCW not implemented\n");
+                    uint next_addr = M[addr] >> 18;
+                    log_msg(ERR_MSG, moi, "Transfer-DCW not implemented; addr would be %06o; E,I,R = 0%o\n", next_addr, M[addr] & 07);
                     return 1;
                 } else
                     break;
@@ -524,7 +531,7 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
         *addrp = addr;
         // if in GCOS mode && lpw.ae) fault;    // bit 20
         // next: channel should pull DCW from core
-        log_msg(DEBUG_MSG, moi, "Expecting that channel %d will pull DCW from core\n", chan);
+        log_msg(DEBUG_MSG, moi, "Expecting that channel 0%o will pull DCW from core\n", chan);
     }
 
     int cp = getbits36(M[addr], 18, 3);
@@ -795,6 +802,7 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
 static void parse_dcw(dcw_t *p, int addr)
 {
     int cp = getbits36(M[addr], 18, 3);
+    const char* moi = "IOM::DCW-parse";
 
     if (cp == 7) {
         p->type = idcw;
@@ -812,9 +820,12 @@ static void parse_dcw(dcw_t *p, int addr)
     } else {
         int type = getbits36(M[addr], 22, 2);
         if (type == 2) {
-            p->type = tdcw;
             // transfer
-            log_msg(ERR_MSG, "IOW::DCW", "Transfer-DCW not implemented\n");
+            p->type = tdcw;
+            p->fields.xfer.addr = M[addr] >> 18;
+            p->fields.xfer.ec = (M[addr] >> 2) & 1;
+            p->fields.xfer.i = (M[addr] >> 1) & 1;
+            p->fields.xfer.r = M[addr]  & 1;
         } else {
             p->type = ddcw;
             p->fields.ddcw.daddr = getbits36(M[addr], 0, 18);
@@ -869,7 +880,8 @@ static int do_dcw(int chan, int addr, int *controlp, int *need_indir_svc)
         }
         return ret;
     } else if (dcw.type == tdcw) {
-        log_msg(ERR_MSG, "IOW::DCW", "Transfer-DCW not implemented\n");
+        uint next_addr = M[addr] >> 18;
+        log_msg(ERR_MSG, "IOW::DCW", "Transfer-DCW not implemented; addr would be %06o; E,I,R = 0%o\n", next_addr, M[addr] & 07);
         return 1;
     } else  if (dcw.type == ddcw) {
         // IOTD, IOTP, or IONTP -- i/o (non) transfer

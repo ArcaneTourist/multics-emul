@@ -1597,7 +1597,7 @@ static void ic_history_add()
     }
 }
 
-void dump_history()
+void cmd_dump_history()
 {
     if (ic_hist_wrapped) {
         for (int i = ic_hist_ptr; i < ic_hist_max; ++i)

@@ -553,12 +553,12 @@ static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr addr)
 
 static int vmdump(int32 arg, char *buf)
 {
-    dump_vm();
+    cmd_dump_vm();
     return 0;
 }
 
 static int history(int32 arg, char *buf)
 {
-    dump_history();
+    cmd_dump_history();
     return 0;
 }

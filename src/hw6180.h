@@ -417,18 +417,32 @@ typedef struct {
 } eis_bit_desc;
 
 typedef struct {
-    uint addr;  // 18 bits at  0..17
+    uint address;   // 18 bits at  0..17
     uint cn;    //  3 bits at 18..20; character position
     uint ta;    //  2 bits at 21..22; data type
     uint n;     // 12 bits at 24..35; length (0..4096 or -2048..2047 ?)
     // convenience members, not part of stored word
     int nbits;
     // tracking info for get_eis_an() and put_eis_an()
-    uint base_addr; // initial addr
-    uint base_bitpos;
-    int bitpos; // current
+    struct {
+        // Absolute memory locations -- first address pointed
+        // to by the descriptor and bounds of the relevent segment
+        // or page, if any.
+        // The addr member is initially the address of the first word
+        // pointed to by the descriptor.  On subsequent pages, the addr
+        // member matches min_addr.
+        uint addr;
+        int bitpos;
+        uint min_addr;  // segment or page base
+        uint max_addr;  // segment or page last word
+    } area;
+    struct {
+        // absolute memory locations
+        uint addr;
+        int bitpos;
+    } curr;
     flag_t first;
-    t_uint64 word;
+    t_uint64 word;      // buffers full words to/from memory
 } eis_alpha_desc_t;
 // eis_num_desc
 
@@ -465,6 +479,7 @@ extern void log_msg(enum log_level, const char* who, const char* format, ...);
     the (i)th bit. */
 #define bitset36(word,i) ( (word) | ( (uint64_t) 1 << (35 - i)) )
 #define bitclear36(word,i) ( (word) & ~ ( (uint64_t) 1 << (35 - i)) )
+
 static inline t_uint64 getbits36(t_uint64 x, int i, int n) {
     // bit 35 is right end, bit zero is 36th from the right
     int shift = 35-i-n+1;
@@ -473,6 +488,7 @@ static inline t_uint64 getbits36(t_uint64 x, int i, int n) {
     } else
         return (x >> shift) & ~ (~0 << n);
 }
+
 static inline t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
 {
     // return x with n bits starting at p set to n lowest bits of val 
@@ -492,12 +508,9 @@ static inline t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
             // 0,2 = 34 => 11000 (34 z)
             // 1,2 = 33 => 011000 (33 z)
             // 35,1 => 0 => 0001 (0 z)
-    t_uint64 temp1 = (x & ~ mask) | (val << (36 - p - n));
-    t_uint64 temp2 = (x & ~ mask) | ((val&MASKBITS(n)) << (36 - p - n));
-    if (temp1 != temp2) {
-        log_msg(ERR_MSG, "setbits36", "x=0%Lo, p=%d, n=%d, val=0%Lo: mask=0%Lo: result 0%Lo vs 0%Lo\n", x, p, n, val, mask, temp1, temp2);
-    }
-    return temp2;
+    // caller may provide val that is too big, e.g., a word with all bits set to one
+    t_uint64 result = (x & ~ mask) | ((val&MASKBITS(n)) << (36 - p - n));
+    return result;
 }
 
 
@@ -545,6 +558,9 @@ extern void log_msg(enum log_level, const char* who, const char* format, ...);
 //extern void warn_msg(const char* who, const char* format, ...);
 //extern void complain_msg(const char* who, const char* format, ...);
 extern void out_msg(const char* format, ...);
+
+extern void cmd_dump_history(void);
+
 extern void cancel_run(enum sim_stops reason);
 extern void execute_instr(void);
 extern void fault_gen(enum faults);
@@ -578,9 +594,14 @@ extern int store_yblock8(uint addr, const t_uint64 *wordsp);
 extern int fetch_yblock(uint addr, int aligned, uint n, t_uint64 *wordsp);
 extern int fetch_yblock8(uint addr, t_uint64 *wordsp);
 extern int store_yblock16(uint addr, const t_uint64 *wordsp);
+
+extern void cmd_dump_vm(void);
 extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
 extern int addr_mod(const instr_t *ip);
 extern SDW_t* get_sdw();
+extern int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp);
+extern void reg_mod(uint td, int off);          // BUG: might be performance boost if inlined
+
 extern const char* eis_alpha_desc_to_text(const eis_alpha_desc_t* descp);
 extern void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* descp);
 extern const char* mf2text(const eis_mf_t* mfp);

@@ -23,22 +23,18 @@ typedef struct {    // BUG
 
 static const int page_size = 1024;      // CPU allows [2^6 .. 2^12]; multics uses 2^10
 
-// BUG: move following to a hdr
-int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop, int nbits);
-void reg_mod(uint td, int off);         // BUG: might be performance boost if inlined
-static void reg_mod_x(uint td, int off, int nbits);
-
 static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp);
 static int addr_append(t_uint64 *wordp);
 static int do_esn_segmentation(instr_t *ip, ca_temp_t *ca_tempp);
 static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01);
-static int page_in(uint offset, uint perm_mode, uint *addrp);
+static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uint *maxaddrp);
 static void decode_PTW(t_uint64 word, PTW_t *ptwp);
 static int set_PTW_used(uint addr);
 static void decode_SDW(t_uint64 word0, t_uint64 word1, SDW_t *sdwp);
 // static SDW_t* get_sdw(void);
 static SDWAM_t* page_in_sdw(void);
-static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp);
+static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uint *maxaddrp);
+static void reg_mod_x(uint td, int off, int nbits);
 
 //=============================================================================
 
@@ -199,11 +195,12 @@ char* print_instr(t_uint64 word)
 //=============================================================================
 
 
-int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop, int nbits)
+int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp)
 {
-    // Return absolute address given an address, 'ar' flag, and 'reg' modifier. Nbits
-    // is the data size and is used only for reg modifications.
-    // Arg ar should be negative to use current TPR or non-negative to use a pointer/address register.
+    // Return absolute address given an address, 'ar' flag, 'reg' modifier, and
+    // nbits.  Nbits is the data size and is used only for reg modifications.
+    // Arg ar should be negative to use current TPR or non-negative to use a
+    // pointer/address register.
     // BUG: some callers may keep results.  This isn't valid for multi-page segments.
     
     // BUG: handle BAR mode and abs mode as described in EIS indir doc
@@ -256,7 +253,7 @@ int get_address(uint y, flag_t ar, uint reg, uint *addrp, uint* bitnop, int nbit
     }
 
     uint perm = 0;  // BUG: need to have caller specify
-    int ret = page_in(offset, perm, addrp);
+    int ret = page_in(offset, perm, addrp, minaddrp, maxaddrp);
     if (ret != 0) {
         if (opt_debug>0) log_msg(DEBUG_MSG, "APU::get-addr", "page-in faulted\n");
     }
@@ -601,7 +598,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 ca_tempp->tag = word & MASKBITS(6);
                 // BUG: is ITS and ITP valid for IR
                 if (TPR.CA % 2 == 0 && (ca_tempp->tag == 041 || ca_tempp->tag == 043)) {
-                        log_msg(WARN_MSG, "APU::IR", "found ITS/ITP\n");
+                        log_msg(NOTIFY_MSG, "APU::IR", "found ITS/ITP\n");
                         // cancel_run(STOP_WARN);
                         do_its_itp(ip, ca_tempp, word);
                         if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR", "post its/itp: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
@@ -865,7 +862,8 @@ int fetch_appended(uint offset, t_uint64 *wordp)
     }
 
     uint addr;
-    int ret = page_in(offset, 0, &addr);
+    uint minaddr, maxaddr;  // results unneeded
+    int ret = page_in(offset, 0, &addr, &minaddr, &maxaddr);
     if (ret == 0) {
         if(opt_debug>0) log_msg(DEBUG_MSG, "APU::fetch_append", "Using addr 0%o\n", addr);
         ret = fetch_abs_word(addr, wordp);
@@ -886,7 +884,8 @@ int store_appended(uint offset, t_uint64 word)
     }
 
     uint addr;
-    int ret = page_in(offset, 0, &addr);
+    uint minaddr, maxaddr;  // results unneeded
+    int ret = page_in(offset, 0, &addr, &minaddr, &maxaddr);
     if (ret == 0) {
         if(opt_debug>0) log_msg(DEBUG_MSG, "APU::store-append", "Using addr 0%o\n", addr);
         ret = store_abs_word(addr, word);
@@ -897,7 +896,7 @@ int store_appended(uint offset, t_uint64 word)
 
 //=============================================================================
 
-void dump_vm()
+void cmd_dump_vm()
 {
     // Dump VM info -- However, we only know about what's in the cache registers
 
@@ -925,8 +924,10 @@ void dump_vm()
         SDW_t *sdwp = &SDWAM[i].sdw;
         printf("\tSDW for seg %d: addr = 0%08o, r1=%o r2=%o r3=%o, f=%c, fc=0%o.\n",
             SDWAM[i].assoc.ptr, sdwp->addr, sdwp->r1, sdwp->r2, sdwp->r3, sdwp->f ? 'Y' : 'N', sdwp->fc);
-        printf("\tbound = 0%05o(%d), r=%c e=%c w=%c, priv=%c, unpaged=%c, g=%c, c=%c, cl=%05o\n",
-            sdwp->bound, sdwp->bound, sdwp->r ? 'Y' : 'N', sdwp->e ? 'Y' : 'N', sdwp->w ? 'Y' : 'N',
+        printf("\tbound = 0%05o(%d) => %06o(%u)\n",
+            sdwp->bound, sdwp->bound, sdwp->bound * 16 + 16, sdwp->bound * 16 + 16);
+        printf("\tr=%c e=%c w=%c, priv=%c, unpaged=%c, g=%c, c=%c, cl=%05o\n",
+            sdwp->r ? 'Y' : 'N', sdwp->e ? 'Y' : 'N', sdwp->w ? 'Y' : 'N',
             sdwp->priv ? 'Y' : 'N', sdwp->u ? 'Y' : 'N', sdwp->g ? 'Y' : 'N',
             sdwp->c ? 'Y' : 'N', sdwp->cl);
     }
@@ -948,13 +949,14 @@ SDW_t* get_sdw()
 int get_seg_addr(uint offset, uint perm_mode, uint *addrp)
 {
     // BUG: causes faults
-    int ret = page_in(offset, perm_mode, addrp);
+    uint minaddr, maxaddr;  // results unneeded
+    int ret = page_in(offset, perm_mode, addrp, &minaddr, &maxaddr);
     if (ret)
         log_msg(WARN_MSG, "APU::get_seg_addr", "page-in faulted\n");
     return ret;
 }
 
-static int page_in(uint offset, uint perm_mode, uint *addrp)
+static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uint *maxaddrp)
 {
     // Implements AL39, figure 5-4
     // Returns non-zero if a fault in groups 1-6 detected
@@ -972,7 +974,7 @@ static int page_in(uint offset, uint perm_mode, uint *addrp)
         log_msg(WARN_MSG, moi, "SDW not loaded\n");
         return 1;
     }
-    int ret = page_in_page(SDWp, offset, perm_mode, addrp);
+    int ret = page_in_page(SDWp, offset, perm_mode, addrp, minaddrp, maxaddrp);
     if (ret != 0) {
         log_msg(WARN_MSG, moi, "page_in_page returned non zero.  Segno 0%o, offset 0%o(%d)\n", segno, offset);
     }
@@ -1108,7 +1110,7 @@ static SDWAM_t* page_in_sdw()
 }
 
 
-static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp)
+static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uint *maxaddrp)
 {
     // Second part of page_in()
     uint segno = TPR.TSR;   // Should be been loaded with PPR.PSR if this is an instr fetch...
@@ -1119,7 +1121,8 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp)
         fault_gen(dir_flt0_fault + SDWp->sdw.fc);   // Directed Faults 0..4 use sequential fault numbers
         return 1;
     }
-    if (offset >= 16 * (SDWp->sdw.bound + 1)) {
+    uint bound = 16 * (SDWp->sdw.bound + 1);
+    if (offset >= bound) {
         cu.word1flags.oosb = 1;         // ERROR: nothing clears
         log_msg(NOTIFY_MSG, "APU::append", "SDW: Offset=0%o(%u), bound = 0%o(%u) -- OOSB fault\n", offset, offset, SDWp->sdw.bound, SDWp->sdw.bound);
         fault_gen(acc_viol_fault);
@@ -1135,6 +1138,8 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp)
     if (SDWp->sdw.u) {
         // Segment is unpaged (it is contiguous) -- FANP cycle
         *addrp = SDWp->sdw.addr + offset;
+        *minaddrp = SDWp->sdw.addr;
+        *maxaddrp = SDWp->sdw.addr + bound - 1;
         // log_msg(DEBUG_MSG, "APU::append", "Resulting addr is 0%o (0%o+0%o)\n", *addrp,  SDWp->sdw.addr, offset);
     } else {
         // Segment is paged -- find appropriate page
@@ -1198,11 +1203,13 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp)
                 return 1;
             }
         }
-        *addrp = (PTWp->ptw.addr << 6) + y2;
+        *minaddrp = (PTWp->ptw.addr << 6);
+        *addrp = *minaddrp + y2;
+        *maxaddrp = *minaddrp + page_size - 1;
         // log_msg(DEBUG_MSG, "APU::append", "Resulting addr is 0%o (0%o<<6+0%o)\n", *addrp,  PTWp->ptw.addr, y2);
     }
 
-    if(opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "Resulting addr for 0%o$0%o is 0%o\n", segno, offset, *addrp);
+    if(opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "Resulting addr for %s 0%o|0%o is 0%o; range is 0%o to 0%o\n", SDWp->sdw.u ? "unpaged" : "paged", segno, offset, *addrp, *minaddrp, *maxaddrp);
 
     return 0;
 }
