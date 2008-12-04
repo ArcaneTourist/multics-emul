@@ -587,7 +587,6 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
             case opcode0_adlaq: {   // Add logical to AQ
-                int n = op & 07;
                 t_uint64 word1, word2;
                 int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
                 if (ret == 0) {
@@ -2727,7 +2726,7 @@ static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p)
     word0 |= 043;
 
     word1 = setbits36(0, 0, 18, AR_PR[reg].wordno);
-    word1 = setbits36(0, 0, 21, AR_PR[reg].PR.bitno); // 36-(72-57)
+    word1 = setbits36(word1, 21, 6, AR_PR[reg].PR.bitno); // 36-(72-57)
     *word0p = word0;
     *word1p = word1;
 }
@@ -2743,6 +2742,7 @@ static int do_spri(int n)
     t_uint64 word0, word1;
     spri_to_words(n, &word0, &word1);
     if(opt_debug) log_msg(DEBUG_MSG, "OPU::spri*", "Saving PR[%d]: snr=0%o, rnr=%o, wordno=0%o, bitno=0%o\n", n, AR_PR[n].PR.snr, AR_PR[n].PR.rnr, AR_PR[n].wordno, AR_PR[n].PR.bitno);
+    // log_msg(NOTIFY_MSG, "OPU::spri*", "Saving PR[%d]: { snr=0%o, rnr=%o, wordno=0%o, bitno=0%o} as {%012Lo, %012Lo}\n", n, AR_PR[n].PR.snr, AR_PR[n].PR.rnr, AR_PR[n].wordno, AR_PR[n].PR.bitno, word0, word1);
     return store_pair(TPR.CA, word0, word1);
 }
 

@@ -172,7 +172,7 @@ UNIT mt_unit = {
 };
 
 DEVICE tape_dev = {
-    "tape", &mt_unit, NULL, NULL,
+    "TAPE", &mt_unit, NULL, NULL,
     // 1, 10, 31, 1, 8, 8,
     1, 10, 31, 1, 8, 9,
     NULL, NULL, NULL,
@@ -270,7 +270,7 @@ static int32 sign15(uint x)
 {
     if (bit_is_neg(x,15)) {
         int32 r = - ((1<<15) - (x&MASKBITS(15)));
-        // log_msg(DEBUG_MSG, "sign15", "0%Lo => 0%o (%+d decimal)\n", x, r, r);
+        // log_msg(DEBUG_MSG, "sign15", "%#Lo => %#o (%+d decimal)\n", x, r, r);
         return r;
     }
     else
@@ -286,6 +286,7 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
 
     char *fname = "boot.tape";
     int ret;
+#if 0
     uint32 old_switches = sim_switches;
     sim_switches |= SWMASK ('R');   // Read-only -- don't create an empty boot tape
     log_msg(DEBUG_MSG, "CPU::boot", "Attaching file %s to tape drive\n", fname);
@@ -295,6 +296,7 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
         log_msg(ERR_MSG, "CPU::boot", "Cannot attach file '%s' to tape unit.\n", fname);
         return ret;
     }
+#endif
 
 #if 0
     // When using an IOM, we can get away with reading the tape with no involvement
@@ -313,9 +315,9 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
 #else
     // When using an IOX, the bootload_tape_label.alm code will check the result in the
     // status mailbox.   So, we might as well run the IOX to do the I/O.
-    ++ opt_debug; ++ cpu_dev.dctrl;
+    // ++ opt_debug; ++ cpu_dev.dctrl;
     iom_interrupt();
-    -- opt_debug; -- cpu_dev.dctrl;
+    // -- opt_debug; -- cpu_dev.dctrl;
     bootimage_loaded = 1;
 #endif
 
@@ -411,7 +413,7 @@ t_stat sim_instr(void)
     if (! bootimage_loaded) {
         // We probably should not do this
         // See AL70, section 8
-        log_msg(ERR_MSG, "MAIN", "Memory is empty, no bootimage loaded yet\n");
+        log_msg(WARN_MSG, "MAIN", "Memory is empty, no bootimage loaded yet\n");
         // return STOP_MEMCLEAR;
     }
 
@@ -447,7 +449,7 @@ ninstr = 0;
 if (opt_debug) {
     // fflush(stdout); printf("\n\r"); fflush(stdout);
     // fflush(stdout); printf("\n"); fflush(stdout);
-    printf("\n");
+    out_msg("\n");
     // log_msg(DEBUG_MSG, "MAIN", "IC: %o\n", PPR.IC);
     if (source) {
         if (source->addr_lo <= PPR.IC && PPR.IC <= source->addr_hi)
@@ -775,7 +777,7 @@ static t_stat control_unit(void)
                     break;
             if (intr == 32)
                 log_msg(ERR_MSG, "CU", "Interrupt cycle with no pending interrupt.\n");
-            log_msg(WARN_MSG, "CU", "Interrupts 0%o (%d) found.\n", intr, intr);
+            log_msg(WARN_MSG, "CU", "Interrupt %#o (%d) found.\n", intr, intr);
             events.interrupts[intr] = 0;
             uint addr = 0 + 2 * intr; // ABSOLUTE mode
             // Force computed addr and xed opcode into the instruction
@@ -881,7 +883,7 @@ static t_stat control_unit(void)
                         // entry after the one found.
                         int n = cu.tag & 07;
                         reg_X[n] += cu.delta;
-                        if (opt_debug) log_msg(DEBUG_MSG, "CU", "Incrementing X[%d] by 0%o to 0%o.\n", n, cu.delta, reg_X[n]);
+                        if (opt_debug) log_msg(DEBUG_MSG, "CU", "Incrementing X[%d] by %#o to %#o.\n", n, cu.delta, reg_X[n]);
                         if (t == 0) {
                             IR.tally_runout = 1;
                             cu.rpt = 0;
@@ -1033,7 +1035,7 @@ int fetch_instr(uint IC, instr_t *ip)
 
     if (get_addr_mode() == ABSOLUTE_mode) {
         if (IC >= ARRAY_SIZE(M)) {
-            log_msg(ERR_MSG, "CU::fetch-instr", "Addr 0%o (%d decimal) is too large\n", IC, IC);
+            log_msg(ERR_MSG, "CU::fetch-instr", "Addr %#o (%d decimal) is too large\n", IC, IC);
             (void) cancel_run(STOP_BUG);
         }
         if (ip) {
@@ -1080,11 +1082,11 @@ int fetch_word(uint addr, t_uint64 *wordp)
     } else if (mode == ABSOLUTE_mode) {
         return fetch_abs_word(addr, wordp);
     } else if (mode == BAR_mode) {
-        log_msg(ERR_MSG, "CU::fetch", "Addr=0%o:  BAR mode unimplemented.\n", addr);
+        log_msg(ERR_MSG, "CU::fetch", "Addr=%#o:  BAR mode unimplemented.\n", addr);
         cancel_run(STOP_BUG);
         return fetch_abs_word(addr, wordp);
     } else {
-        log_msg(ERR_MSG, "CU::fetch", "Addr=0%o:  Unknown addr mode %d.\n", addr, mode);
+        log_msg(ERR_MSG, "CU::fetch", "Addr=%#o:  Unknown addr mode %d.\n", addr, mode);
         cancel_run(STOP_BUG);
         return fetch_abs_word(addr, wordp);
     }
@@ -1101,32 +1103,32 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
 
     // todo: efficiency: combine into a single min/max with sub-tests
     if (addr >= IOM_MBX_LOW && addr < IOM_MBX_LOW + IOM_MBX_LEN) {
-        log_msg(DEBUG_MSG, "CU::fetch", "Fetch from IOM mailbox area for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::fetch", "Fetch from IOM mailbox area for addr %#o\n", addr);
         //cancel_run(STOP_WARN);
     }
     if (addr >= DN355_MBX_LOW && addr < DN355_MBX_LOW + DN355_MBX_LEN) {
-        log_msg(DEBUG_MSG, "CU::fetch", "Fetch from DN355 mailbox area for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::fetch", "Fetch from DN355 mailbox area for addr %#o\n", addr);
         //cancel_run(STOP_WARN);
     }
 #define CONFIG_DECK_LOW 012000
 #define CONFIG_DECK_LEN 010000
     if (addr >= CONFIG_DECK_LOW && addr < CONFIG_DECK_LOW + CONFIG_DECK_LEN) {
-        log_msg(DEBUG_MSG, "CU::fetch", "Fetch from CONFIG DECK area for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::fetch", "Fetch from CONFIG DECK area for addr %#o\n", addr);
         //cancel_run(STOP_WARN);
     }
     if (addr <= 030) {
-        log_msg(DEBUG_MSG, "CU::fetch", "Fetch from 0..030 for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::fetch", "Fetch from 0..030 for addr %#o\n", addr);
     }
 
     if (addr >= ARRAY_SIZE(M)) {
-            log_msg(ERR_MSG, "CU::fetch", "Addr 0%o (%d decimal) is too large\n", addr, addr);
+            log_msg(ERR_MSG, "CU::fetch", "Addr %#o (%d decimal) is too large\n", addr, addr);
             (void) cancel_run(STOP_BUG);
             return 0;
     }
 
     if (sim_brk_summ)
         if (sim_brk_test (addr, SWMASK ('M'))) {
-            log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address 0%o\n", addr);
+            log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address %#o\n", addr);
             (void) cancel_run(STOP_IBKPT);
         }
 
@@ -1149,11 +1151,11 @@ int store_word(uint addr, t_uint64 word)
     } else if (mode == ABSOLUTE_mode) {
         return store_abs_word(addr, word);
     } else if (mode == BAR_mode) {
-        log_msg(ERR_MSG, "CU::store", "Addr=0%o:  BAR mode unimplemented.\n", addr);
+        log_msg(ERR_MSG, "CU::store", "Addr=%#o:  BAR mode unimplemented.\n", addr);
         cancel_run(STOP_BUG);
         return store_abs_word(addr, word);
     } else {
-        log_msg(ERR_MSG, "CU::store", "Addr=0%o:  Unknown addr mode %d.\n", addr, mode);
+        log_msg(ERR_MSG, "CU::store", "Addr=%#o:  Unknown addr mode %d.\n", addr, mode);
         cancel_run(STOP_BUG);
         return 1;   // BUG: gen fault
     }
@@ -1166,28 +1168,28 @@ int store_abs_word(uint addr, t_uint64 word)
 
     // todo: efficiency: combine into a single min/max with sub-tests
     if (addr >= IOM_MBX_LOW && addr < IOM_MBX_LOW + IOM_MBX_LEN) {
-        log_msg(DEBUG_MSG, "CU::store", "Store to IOM mailbox area for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::store", "Store to IOM mailbox area for addr %#o\n", addr);
         //cancel_run(STOP_WARN);
     }
     if (addr >= DN355_MBX_LOW && addr < DN355_MBX_LOW + DN355_MBX_LEN) {
-        log_msg(DEBUG_MSG, "CU::store", "Store to DN355 mailbox area for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::store", "Store to DN355 mailbox area for addr %#o\n", addr);
         //cancel_run(STOP_WARN);
     }
     if (addr >= CONFIG_DECK_LOW && addr < CONFIG_DECK_LOW + CONFIG_DECK_LEN) {
-        log_msg(DEBUG_MSG, "CU::store", "Store to CONFIG DECK area for addr 0%o\n", addr);
+        log_msg(DEBUG_MSG, "CU::store", "Store to CONFIG DECK area for addr %#o\n", addr);
         //cancel_run(STOP_WARN);
     }
     if (addr <= 030) {
-        //log_msg(DEBUG_MSG, "CU::store", "Fetch from 0..030 for addr 0%o\n", addr);
+        //log_msg(DEBUG_MSG, "CU::store", "Fetch from 0..030 for addr %#o\n", addr);
     }
     if (addr >= ARRAY_SIZE(M)) {
-            log_msg(ERR_MSG, "CU::store", "Addr 0%o (%d decimal) is too large\n");
+            log_msg(ERR_MSG, "CU::store", "Addr %#o (%d decimal) is too large\n");
             (void) cancel_run(STOP_BUG);
             return 0;
     }
     if (sim_brk_summ)
         if (sim_brk_test (addr, SWMASK ('M'))) {
-            log_msg(WARN_MSG, "CU::store", "Memory Breakpoint, address 0%o\n", addr);
+            log_msg(WARN_MSG, "CU::store", "Memory Breakpoint, address %#o\n", addr);
             (void) cancel_run(STOP_IBKPT);
         }
 
@@ -1502,17 +1504,17 @@ static void hist_dump()
 {
 
     if (reg_A != hist.reg_A)
-        log_msg(DEBUG_MSG, "HIST", "Reg A: 0%012Lo\n", reg_A);
+        log_msg(DEBUG_MSG, "HIST", "Reg A: %012Lo\n", reg_A);
     if (reg_Q != hist.reg_Q)
         if (reg_Q == calendar_q)
             log_msg(DEBUG_MSG, "HIST", "Reg Q: <calendar>\n");
         else
-            log_msg(DEBUG_MSG, "HIST", "Reg Q: 0%012Lo\n", reg_Q);
+            log_msg(DEBUG_MSG, "HIST", "Reg Q: %012Lo\n", reg_Q);
     if (reg_E != hist.reg_E)
-        log_msg(DEBUG_MSG, "HIST", "Reg E: 0%012Lo\n", reg_E);
+        log_msg(DEBUG_MSG, "HIST", "Reg E: %012Lo\n", reg_E);
     for (int i = 0; i < ARRAY_SIZE(reg_X); ++i)
         if (reg_X[i] != hist.reg_X[i])
-            log_msg(DEBUG_MSG, "HIST", "Reg X[%d]: 0%06o\n", i, reg_X[i]);
+            log_msg(DEBUG_MSG, "HIST", "Reg X[%d]: %06o\n", i, reg_X[i]);
     if (memcmp(&hist.IR, &IR, sizeof(hist.IR)) != 0) {
         t_uint64 ir;
         save_IR(&ir);
@@ -1521,51 +1523,59 @@ static void hist_dump()
     if (memcmp(hist.AR_PR, AR_PR, sizeof(hist.AR_PR)) != 0) {
         for (int i = 0; i < ARRAY_SIZE(AR_PR); ++i)
             if (memcmp(hist.AR_PR + i, AR_PR + i, sizeof(*hist.AR_PR)) != 0) {
-                log_msg(DEBUG_MSG, "HIST", "PR[%d]: rnr=%o, snr=%o, wordno=%0o, bitno=0%o; AR: bitno=0%o, charno=0%o\n",
+                log_msg(DEBUG_MSG, "HIST", "PR[%d]: rnr=%o, snr=%o, wordno=%0o, bitno=%#o; AR: bitno=%#o, charno=%#o\n",
                     i, AR_PR[i].PR.rnr, AR_PR[i].PR.snr, AR_PR[i].wordno, AR_PR[i].PR.bitno,
                     AR_PR[i].AR.bitno, AR_PR[i].AR.charno);
             }
     }
     if (memcmp(&hist.PPR, &PPR, sizeof(hist.PPR)) != 0)
-        log_msg(DEBUG_MSG, "HIST", "PPR: PRR=0%o, PSR=0%o, P=0%o, IC=0%o\n", PPR.PRR, PPR.PSR, PPR.P, PPR.IC);
+        log_msg(DEBUG_MSG, "HIST", "PPR: PRR=%#o, PSR=%#o, P=%#o, IC=%#o\n", PPR.PRR, PPR.PSR, PPR.P, PPR.IC);
     if (memcmp(&hist.TPR, &TPR, sizeof(hist.TPR)) != 0)
         if (TPR.is_value)
-            log_msg(DEBUG_MSG, "HIST", "TPR: TRR=0%o, TSR=0%o, TBR=0%o, CA=0%o, is_value=Y, value=0%Lo\n",
+            log_msg(DEBUG_MSG, "HIST", "TPR: TRR=%#o, TSR=%#o, TBR=%#o, CA=%#o, is_value=Y, value=%#Lo\n",
                 TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA, TPR.value);
         else
-            log_msg(DEBUG_MSG, "HIST", "TPR: TRR=0%o, TSR=0%o, TBR=0%o, CA=0%o, is_value=N\n",
+            log_msg(DEBUG_MSG, "HIST", "TPR: TRR=%#o, TSR=%#o, TBR=%#o, CA=%#o, is_value=N\n",
                 TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA);
     if (memcmp(&hist.DSBR, &DSBR, sizeof(hist.DSBR)) != 0)
-        log_msg(DEBUG_MSG, "HIST", "DSBR: addr=0%o, bound=0%o(%d), unpaged=%c, stack=0%o\n",
+        log_msg(DEBUG_MSG, "HIST", "DSBR: addr=%#o, bound=%#o(%d), unpaged=%c, stack=%#o\n",
             DSBR.addr, DSBR.bound, DSBR.bound, DSBR.u ? 'Y' : 'N', DSBR.stack);
     if (hist.cu.PT_ON != cu.PT_ON)
         log_msg(DEBUG_MSG, "HIST", "PTWAM %s enabled\n", cu.PT_ON ? "is" : "is NOT");
     if (memcmp(hist.PTWAM, PTWAM, sizeof(hist.PTWAM)) != 0) {
-        for (int i = 0; i < ARRAY_SIZE(PTWAM); ++i)
+        for (int i = 0; i < ARRAY_SIZE(PTWAM); ++i) {
+            uint tmp = hist.PTWAM[i].assoc.use;     // compare all members except "use" counter
+            hist.PTWAM[i].assoc.use = PTWAM[i].assoc.use;
             if (memcmp(hist.PTWAM + i, PTWAM + i, sizeof(*hist.PTWAM)) != 0) {
-                log_msg(DEBUG_MSG, "HIST", "PTWAM[%d]: ptr/seg = 0%o, pageno=0%o, is_full/used=%c, use=%02o\n",
+                log_msg(DEBUG_MSG, "HIST", "PTWAM[%d]: ptr/seg = %#o, pageno=%#o, is_full/used=%c, use=%02o\n",
                     i, PTWAM[i].assoc.ptr, PTWAM[i].assoc.pageno, PTWAM[i].assoc.is_full ? 'Y' : 'N', PTWAM[i].assoc.use);
-                log_msg(DEBUG_MSG, "HIST", "PTWAM[%d]: PTW: addr=0%06oxx, used=%c, mod=%c, fault=%c, fc=0%o\n",
+                log_msg(DEBUG_MSG, "HIST", "PTWAM[%d]: PTW: addr=%06oxx, used=%c, mod=%c, fault=%c, fc=%#o\n",
                     i, PTWAM[i].ptw.addr, PTWAM[i].ptw.u ? 'Y' : 'N', PTWAM[i].ptw.m ? 'Y' : 'N',
                     PTWAM[i].ptw.f ? 'Y' : 'N', PTWAM[i].ptw.fc);
             }
+            hist.PTWAM[i].assoc.use = tmp;
+        }
     }
     if (hist.cu.SD_ON != cu.SD_ON)
         log_msg(DEBUG_MSG, "HIST", "SDWAM %s enabled\n", cu.SD_ON ? "is" : "is NOT");
     if (memcmp(hist.SDWAM, SDWAM, sizeof(hist.SDWAM)) != 0) {
-        for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i)
+        for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i) {
+            uint tmp = hist.SDWAM[i].assoc.use;     // compare all members except "use" counter
+            hist.SDWAM[i].assoc.use = SDWAM[i].assoc.use;
             if (memcmp(hist.SDWAM + i, SDWAM + i, sizeof(*hist.SDWAM)) != 0) {
                 log_msg(DEBUG_MSG, "HIST", "SDWAM[%d]: ptr(segno)=0%05o, is-full=%c, use=0%02o(%02d).\n",
                     i, SDWAM[i].assoc.ptr, SDWAM[i].assoc.is_full ? 'Y' : 'N',
                     SDWAM[i].assoc.use, SDWAM[i].assoc.use);
                 SDW_t *sdwp = &SDWAM[i].sdw;
-                log_msg(DEBUG_MSG, "HIST", "\tSDW for seg %d: addr = 0%08o, r1=%o r2=%o r3=%o, f=%c, fc=0%o.\n",
+                log_msg(DEBUG_MSG, "HIST", "\tSDW for seg %d: addr = %#08o, r1=%o r2=%o r3=%o, f=%c, fc=%#o.\n",
                     SDWAM[i].assoc.ptr, sdwp->addr, sdwp->r1, sdwp->r2, sdwp->r3, sdwp->f ? 'Y' : 'N', sdwp->fc);
-                log_msg(DEBUG_MSG, "HIST", "\tbound = 0%05o(%d), r=%c e=%c w=%c, priv=%c, unpaged=%c, g=%c, c=%c, cl=%05o\n",
+                log_msg(DEBUG_MSG, "HIST", "\tbound = %05o(%d), r=%c e=%c w=%c, priv=%c, unpaged=%c, g=%c, c=%c, cl=%05o\n",
                     sdwp->bound, sdwp->bound, sdwp->r ? 'Y' : 'N', sdwp->e ? 'Y' : 'N', sdwp->w ? 'Y' : 'N',
                     sdwp->priv ? 'Y' : 'N', sdwp->u ? 'Y' : 'N', sdwp->g ? 'Y' : 'N',
                     sdwp->c ? 'Y' : 'N', sdwp->cl);
             }
+            hist.SDWAM[i].assoc.use = tmp;
+        }
     }
 }
 

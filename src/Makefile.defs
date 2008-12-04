@@ -18,7 +18,7 @@ LDFLAGS=-lm -lrt
 else
 # linux needs librt
 #CC = gcc -std=c99 -O3 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I .
-CC = gcc -std=c99 -O3 -DUSE_INT64 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I ..
+CC = gcc -std=c99 -O3 -march=native -pipe -DUSE_INT64 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I ..
 #CC = gcc -std=c99 -O3 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I ..
 LDFLAGS=-lm -lrt -lgmp
 endif

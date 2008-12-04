@@ -5,7 +5,12 @@
 
 #include "hw6180.h"
 #include "bits.h"
-DEVICE cpu_dev; // hack
+
+//hacks
+DEVICE cpu_dev;
+FILE *sim_log, *sim_deb;
+PPR_t PPR;
+
 int opt_debug = 0;
 static int is_eis[1024];    // hack
 

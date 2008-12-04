@@ -120,8 +120,8 @@ static void hw6180_init(void)
     console_init();
 
     // todo: set debug flags for all devices
-    cpu_dev.dctrl = 1;  // todo: don't default debug to on
-    tape_dev.dctrl = 1;
+    // cpu_dev.dctrl = 1;
+    // tape_dev.dctrl = 1;
 
     sim_brk_types = SWMASK('E') | SWMASK('M');  // M memory (absolute address)
     sim_brk_dflt = SWMASK('E');
@@ -498,7 +498,7 @@ static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
             ++cptr;
         }
     } else
-        if (*cptr == '#') {     // SIMH won't let us use '='
+        if (*cptr == '#' || *cptr == '=') {     // SIMH won't let us use '=', so we provide '#'
             force_abs = 1;  // ignore TPR.TRS, interpret as absolute mode reference
             ++ cptr;
         }
@@ -520,29 +520,45 @@ static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
         offset += mod_x;
         cptr += 3;
     }
+#if 0
+    int is_indir;
+    if ((is_indir = cptr[0] == ',' && cptr[1] == '*'))
+        cptr += 2;
+#endif
     
+    uint addr;
     if (force_abs || (seg == -1 && get_addr_mode() == ABSOLUTE_mode)) {
         *optr = cptr;
-        return offset;
-    }
-    uint addr;
-    uint saved_seg = -1;
-    if (seg != -1) {
-        saved_seg = TPR.TSR;
-        TPR.TSR = seg;
-    }
-    fault_gen_no_fault = 1;
-    if (get_seg_addr(offset, 0, &addr) != 0) {
+        addr = offset;
+    } else {
+        uint saved_seg = -1;
+        if (seg != -1) {
+            saved_seg = TPR.TSR;
+            TPR.TSR = seg;
+        }
+        fault_gen_no_fault = 1;
+        if (get_seg_addr(offset, 0, &addr) != 0) {
+            if (saved_seg != -1)
+                TPR.TSR = saved_seg;
+            fault_gen_no_fault = 0;
+            *optr = cptr;
+            return 0;
+        }
+        fault_gen_no_fault = 0;
         if (saved_seg != -1)
             TPR.TSR = saved_seg;
-        fault_gen_no_fault = 0;
         *optr = cptr;
-        return 0;
     }
-    fault_gen_no_fault = 0;
-    if (saved_seg != -1)
-        TPR.TSR = saved_seg;
-    *optr = cptr;
+
+#if 0
+    // This is too simple -- need to handle ITS/ITP tag fields, etc
+    if (is_indir) {
+        t_uint64 word;
+        if (fetch_abs_word(addr, &word) != 0)
+            return 0;
+        addr = word & MASKBITS(24);
+    }
+#endif
     return addr;
 }
 
