@@ -255,6 +255,7 @@ void tape_block(unsigned char *p, uint32 len, uint32 addr);
 
 //=============================================================================
 
+#if 0
 static int32 sign18(t_uint64 x)
 {
     if (bit18_is_neg(x)) {
@@ -264,8 +265,9 @@ static int32 sign18(t_uint64 x)
     else
         return x;
 }
+#endif
 
-
+#if 0
 static int32 sign15(uint x)
 {
     if (bit_is_neg(x,15)) {
@@ -276,6 +278,7 @@ static int32 sign15(uint x)
     else
         return x;
 }
+#endif
 
 //=============================================================================
 
@@ -284,9 +287,10 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
     // Boot -- Copy bootstrap loader into memory & set PC (actually send startup fault)
     // todo: Issue: have to specify boot tape or file out-of-band
 
+
+#if 0
     char *fname = "boot.tape";
     int ret;
-#if 0
     uint32 old_switches = sim_switches;
     sim_switches |= SWMASK ('R');   // Read-only -- don't create an empty boot tape
     log_msg(DEBUG_MSG, "CPU::boot", "Attaching file %s to tape drive\n", fname);
@@ -650,7 +654,7 @@ static t_stat control_unit(void)
             // BUG: low_group not used/maintained
             {
             log_msg(DEBUG_MSG, "CU", "Cycle = FAULT\n");
-            addr_modes_t saved_addr_mode = get_addr_mode();
+            // addr_modes_t saved_addr_mode = get_addr_mode();
             set_addr_mode(ABSOLUTE_mode); // until execution of a transfer instr whose operand is obtained via explicit use of the appending HW mechanism -- AL39, 1-3
 
             // find highest fault
@@ -884,45 +888,47 @@ static t_stat control_unit(void)
                         int n = cu.tag & 07;
                         reg_X[n] += cu.delta;
                         if (opt_debug) log_msg(DEBUG_MSG, "CU", "Incrementing X[%d] by %#o to %#o.\n", n, cu.delta, reg_X[n]);
+                        // Note that the code in bootload_tape.alm expects that the tally                                       // runout *not* be set when both the termination condition is met
+                        // and bits 0..7 of reg X[0] hits zero.
                         if (t == 0) {
                             IR.tally_runout = 1;
                             cu.rpt = 0;
                             if (opt_debug) log_msg(DEBUG_MSG, "CU", "Repeated instruction hits tally runout; halting rpt.\n");
+                        }
+                        // Check for termination conditions -- even if we hit tally runout
+                        // Note that register X[0] is 18 bits
+                        int terminate = 0;
+                        if (getbit18(reg_X[0], 11))
+                            terminate |= IR.zero;
+                        if (getbit18(reg_X[0], 12))
+                            terminate |= ! IR.zero;
+                        if (getbit18(reg_X[0], 13))
+                            terminate |= IR.neg;
+                        if (getbit18(reg_X[0], 14))
+                            terminate |= ! IR.neg;
+                        if (getbit18(reg_X[0], 15))
+                            terminate |= IR.carry;
+                        if (getbit18(reg_X[0], 16))
+                            terminate |= ! IR.carry;
+                        if (getbit18(reg_X[0], 17)) {
+                            log_msg(DEBUG_MSG, "CU", "Checking termination conditions for overflows.\n");
+                            // Process overflows -- BUG: what are all the overflows?
+                            if (IR.overflow /* || IR.exp_overflow */ ) {
+                                if (IR.overflow_mask)
+                                    IR.overflow = 1;
+                                else
+                                    fault_gen(overflow_fault);
+                                terminate = 1;
+                            }
+                        }
+                        if (terminate) {
+                            cu.rpt = 0;
+                            log_msg(DEBUG_MSG, "CU", "Repeated instruction meets termination condition.\n");
+                            IR.tally_runout = 0;
+                            // BUG: need IC incr, etc
                         } else {
-                            // Check for termination conditions
-                            // Note that register X[0] is 18 bits
-                            int terminate = 0;
-                            if (getbit18(reg_X[0], 11))
-                                terminate |= IR.zero;
-                            if (getbit18(reg_X[0], 12))
-                                terminate |= ! IR.zero;
-                            if (getbit18(reg_X[0], 13))
-                                terminate |= IR.neg;
-                            if (getbit18(reg_X[0], 14))
-                                terminate |= ! IR.neg;
-                            if (getbit18(reg_X[0], 15))
-                                terminate |= IR.carry;
-                            if (getbit18(reg_X[0], 16))
-                                terminate |= ! IR.carry;
-                            if (getbit18(reg_X[0], 17)) {
-                                log_msg(DEBUG_MSG, "CU", "Checking termination conditions for overflows.\n");
-                                // Process overflows -- BUG: what are all the overflows?
-                                if (IR.overflow /* || IR.exp_overflow */ ) {
-                                    if (IR.overflow_mask)
-                                        IR.overflow = 1;
-                                    else
-                                        fault_gen(overflow_fault);
-                                    terminate = 1;
-                                }
-                            }
-                            if (terminate) {
-                                cu.rpt = 0;
-                                log_msg(DEBUG_MSG, "CU", "Repeated instruction meets termination condition.\n");
-                                IR.tally_runout = 0;
-                                // BUG: need IC incr, etc
-                            } else {
+                            if (! IR.tally_runout)
                                 if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Repeated instruction will continue.\n");
-                            }
                         }
                     }
                     // TODO: if rpt double incr PPR.IC with wrap
@@ -1278,7 +1284,7 @@ int fetch_yblock(uint addr, int aligned, uint n, t_uint64 *wordsp)
     // BUG: Is it the offset that must be zero mod n or the final addr that must be zero mod n?  (Or both?)
 
     int ret;
-    uint Y = (aligned) ? (addr / n) * n : Y;
+    uint Y = (aligned) ? (addr / n) * n : addr;
 
     for (int i = 0; i < n; ++i)
         if ((ret = fetch_word(Y++, wordsp++)) != 0)
@@ -1300,7 +1306,7 @@ static int store_yblock(uint addr, int aligned, int n, const t_uint64 *wordsp)
     // BUG: Is it the offset that must be zero mod n or the final addr that must be zero mod n?  (Or both?)
 
     int ret;
-    uint Y = (aligned) ? (addr / n) * n : Y;
+    uint Y = (aligned) ? (addr / n) * n : addr;
 
     for (int i = 0; i < n; ++i)
         if ((ret = store_word(Y++, *wordsp++)) != 0)
@@ -1505,11 +1511,12 @@ static void hist_dump()
 
     if (reg_A != hist.reg_A)
         log_msg(DEBUG_MSG, "HIST", "Reg A: %012Lo\n", reg_A);
-    if (reg_Q != hist.reg_Q)
+    if (reg_Q != hist.reg_Q) {
         if (reg_Q == calendar_q)
             log_msg(DEBUG_MSG, "HIST", "Reg Q: <calendar>\n");
         else
             log_msg(DEBUG_MSG, "HIST", "Reg Q: %012Lo\n", reg_Q);
+    }
     if (reg_E != hist.reg_E)
         log_msg(DEBUG_MSG, "HIST", "Reg E: %012Lo\n", reg_E);
     for (int i = 0; i < ARRAY_SIZE(reg_X); ++i)
@@ -1530,13 +1537,14 @@ static void hist_dump()
     }
     if (memcmp(&hist.PPR, &PPR, sizeof(hist.PPR)) != 0)
         log_msg(DEBUG_MSG, "HIST", "PPR: PRR=%#o, PSR=%#o, P=%#o, IC=%#o\n", PPR.PRR, PPR.PSR, PPR.P, PPR.IC);
-    if (memcmp(&hist.TPR, &TPR, sizeof(hist.TPR)) != 0)
+    if (memcmp(&hist.TPR, &TPR, sizeof(hist.TPR)) != 0) {
         if (TPR.is_value)
             log_msg(DEBUG_MSG, "HIST", "TPR: TRR=%#o, TSR=%#o, TBR=%#o, CA=%#o, is_value=Y, value=%#Lo\n",
                 TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA, TPR.value);
         else
             log_msg(DEBUG_MSG, "HIST", "TPR: TRR=%#o, TSR=%#o, TBR=%#o, CA=%#o, is_value=N\n",
                 TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA);
+    }
     if (memcmp(&hist.DSBR, &DSBR, sizeof(hist.DSBR)) != 0)
         log_msg(DEBUG_MSG, "HIST", "DSBR: addr=%#o, bound=%#o(%d), unpaged=%c, stack=%#o\n",
             DSBR.addr, DSBR.bound, DSBR.bound, DSBR.u ? 'Y' : 'N', DSBR.stack);

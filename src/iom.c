@@ -126,8 +126,8 @@ typedef struct {
 static chan_status_t chan_status;
 
 
-static void dump_iom(void);
-static void dump_iom_mbx(int base, int i);
+//static void dump_iom(void);
+//static void dump_iom_mbx(int base, int i);
 static void iom_fault(int chan, int src_line, int is_sys, int signal);
 static int list_service(int chan, int first_list, int *ptro, int *addr);
 static int handle_pcw(int chan, int addr);
@@ -138,14 +138,15 @@ static int do_conn_chan(void);
 static char* lpw2text(const lpw_t *p, int conn);
 static char* pcw2text(const pcw_t *p);
 static char* dcw2text(const dcw_t *p);
-static int parse_lpw(lpw_t *p, int addr, int is_conn);
+static void parse_lpw(lpw_t *p, int addr, int is_conn);
 static void parse_pcw(pcw_t *p, int addr, int ext);
 static void parse_dcw(dcw_t *p, int addr);
 static int dev_send_pcw(int chan, pcw_t *p);
 static int status_service(int chan);
 static int send_chan_flags();
-static int list_service_whatif(int chan, int first_list, int *ptro, int *addrp);
+// static int list_service_whatif(int chan, int first_list, int *ptro, int *addrp);
 
+#if 0
 static void dump_cioc()
 {
     int chan = 2;
@@ -187,6 +188,7 @@ static void dump_cioc()
     }
 
 }
+#endif
 
 void iom_interrupt()
 {
@@ -230,9 +232,10 @@ static int do_conn_chan()
 
     int ptro = 0;   // pre-tally-run-out, e.g. end of list
     int addr;
+    int ret = 0;
     while (ptro == 0) {
         log_msg(DEBUG_MSG, moi, "Doing list service for Connect Channel\n");
-        int ret = list_service(IOM_CONNECT_CHAN, 1, &ptro, &addr);
+        ret = list_service(IOM_CONNECT_CHAN, 1, &ptro, &addr);
         if (ret == 0) {
             log_msg(DEBUG_MSG, moi, "Return code zero from Connect Channel list service, doing dcw\n");
             // Do next PCW  (0720201 at loc zero for bootload_tape_label.alm)
@@ -244,6 +247,7 @@ static int do_conn_chan()
         // BUG: update LPW for chan 2 in core -- unless list service does it
         // BUG: Stop if tro system fault occured
     }
+    return ret;
 }
 
 
@@ -399,6 +403,7 @@ while (ret == 0 && control != 0) {
 }
 
 
+#if 0
 static int list_service_orig(int chan, int first_list, int *ptro)
 {
 
@@ -414,8 +419,10 @@ static int list_service_orig(int chan, int first_list, int *ptro)
     // paged: all acc either paged or extneded gcos, not relative moe
 
 }
+#endif
 
  
+#if 0
 static int list_service_whatif(int chan, int first_list, int *ptro, int *addrp)
 {
     lpw_t lpw;
@@ -426,6 +433,7 @@ static int list_service_whatif(int chan, int first_list, int *ptro, int *addrp)
     log_msg(DEBUG_MSG, moi, "LPW: %s\n", lpw2text(&lpw, chan == IOM_CONNECT_CHAN));
     return 0;
 }
+#endif
 
 static int list_service(int chan, int first_list, int *ptro, int *addrp)
 {
@@ -568,23 +576,25 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
     int write_lpw_ext = 0;
     int write_any = 1;
     if (lpw.nc == 0) {
-        if (lpw.trunout == 1)
-            if (lpw.tally == 1)
+        if (lpw.trunout == 1) {
+            if (lpw.tally == 1) {
                 if (ptro != NULL)
                     *ptro = 1;
-            else if (lpw.tally == 0) {
+            } else if (lpw.tally == 0) {
                 write_any = 0;
                 if (chan == IOM_CONNECT_CHAN)
                     iom_fault(chan, __LINE__, 1, iom_lpw_tro_conn);
                 else
                     iom_fault(chan, __LINE__, 0, iom_bndy_vio); // BUG: might be wrong
             }
-        if (write_any)
+        }
+        if (write_any) {
             -- lpw.tally;
             if (chan == IOM_CONNECT_CHAN)
                 lpw.dcw += 2;   // pcw is two words
             else
                 ++ lpw.dcw;     // dcw is one word
+        }
     } else  {
         // note: ptro forced earlier
         write_any = 0;
@@ -914,7 +924,7 @@ static char* lpw2text(const lpw_t *p, int conn)
     return buf;
 }
 
-static int parse_lpw(lpw_t *p, int addr, int is_conn)
+static void parse_lpw(lpw_t *p, int addr, int is_conn)
 {
     p->dcw = M[addr] >> 18;
     p->ires = getbits36(M[addr], 18, 1);
@@ -974,6 +984,7 @@ int lpw_write(int chan, int chanloc, const lpw_t* p)
 static int send_chan_flags()
 {
     log_msg(WARN_MSG, "IOM", "send_chan_flags() unimplemented\n");
+    return 0;
 }
 
 
@@ -1062,6 +1073,7 @@ static int status_service(int chan)
         tally = 0;
     }
     // BUG: update SCW in core
+    return 0;
 }
 
 static void iom_fault(int chan, int src_line, int is_sys, int signal)

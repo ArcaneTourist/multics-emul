@@ -164,11 +164,11 @@ typedef struct {
     struct {
         int snr;    // segment #, 15 bits
         uint rnr;   // effective ring number
-        int bitno;  // index into wordno
+        uint bitno; // index into wordno
     } PR;   // located in APU in physical hardware
     struct {
-        int charno; // index into wordno
-        int bitno;  // index into charno
+        uint charno;    // index into wordno
+        uint bitno; // index into charno
     } AR;   // located in Decimal Unit in physical hardware
 } AR_PR_t;
 
@@ -232,8 +232,8 @@ typedef struct {
     uint PPR_PRR;       /* Procedure ring register; 3 bits @ 0[0..2] */
     uint PPR_PSR;       /* Procedure segment register; 15 bits @ 0[3..17] */
     uint PPR_P;         /* Privileged bit; 1 bit @ 0[18] */
-    /* uint64 word0bits; /* Word 0, bits 18..32 (all for the APU) */
-    uint FCT;           /* Fault counter; 3 bits at 0[33..35];
+    // uint64 word0bits; /* Word 0, bits 18..32 (all for the APU) */
+    uint FCT;           /* Fault counter; 3 bits at 0[33..35]; */
 
     /* word 1 */
     //uint64 word1bits; /* Word1, bits [0..19] and [35] */
@@ -485,6 +485,7 @@ static inline t_uint64 getbits36(t_uint64 x, int i, int n) {
     int shift = 35-i-n+1;
     if (shift < 0 || shift > 35) {
         log_msg(ERR_MSG, "getbits36", "bad args (%Lo,i=%d,n=%d)\n", x, i, n);
+        return 0;
     } else
         return (x >> shift) & ~ (~0 << n);
 }
@@ -599,7 +600,7 @@ extern void cmd_dump_vm(void);
 extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
 extern int addr_mod(const instr_t *ip);
 extern SDW_t* get_sdw();
-extern int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp);
+extern int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, int* bitnop, uint *minaddrp, uint* maxaddrp);
 extern void reg_mod(uint td, int off);          // BUG: might be performance boost if inlined
 
 extern const char* eis_alpha_desc_to_text(const eis_alpha_desc_t* descp);
@@ -610,7 +611,7 @@ extern int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib);
 extern int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp);
 extern int addr_mod_eis_addr_reg(instr_t *ip);
 extern int get_eis_indir_addr(t_uint64 word, uint* addrp);
-extern int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int *nib);
+extern int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib);
 extern void load_IR(t_uint64 word);
 
 

@@ -25,7 +25,7 @@ static const int page_size = 1024;      // CPU allows [2^6 .. 2^12]; multics use
 
 static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp);
 static int addr_append(t_uint64 *wordp);
-static int do_esn_segmentation(instr_t *ip, ca_temp_t *ca_tempp);
+//static int do_esn_segmentation(instr_t *ip, ca_temp_t *ca_tempp);
 static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01);
 static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uint *maxaddrp);
 static void decode_PTW(t_uint64 word, PTW_t *ptwp);
@@ -38,10 +38,12 @@ static void reg_mod_x(uint td, int off, int nbits);
 
 //=============================================================================
 
+#if 0
 static t_bool is_transfer_op(int op)
 {
     return 0;   // BUG
 }
+#endif
 
 //=============================================================================
 
@@ -65,6 +67,7 @@ static int32 sign15(uint x)
         return x;
 }
 
+#if 0
 static int32 sign12(uint x)
 {
     if (bit_is_neg(x,12)) {
@@ -74,6 +77,7 @@ static int32 sign12(uint x)
     else
         return x;
 }
+#endif
 
 static inline uint max3(uint a, uint b, uint c)
 {
@@ -195,7 +199,7 @@ char* print_instr(t_uint64 word)
 //=============================================================================
 
 
-int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp)
+int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, int* bitnop, uint *minaddrp, uint* maxaddrp)
 {
     // Return absolute address given an address, 'ar' flag, 'reg' modifier, and
     // nbits.  Nbits is the data size and is used only for reg modifications.
@@ -207,7 +211,7 @@ int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitno
     addr_modes_t addr_mode = get_addr_mode();
 
     uint offset;
-    uint saved_PSR, saved_PRR, saved_CA, saved_bitno;
+    uint saved_PSR = 0, saved_PRR = 0, saved_CA = 0, saved_bitno = 0;
     if (ar) {
         saved_PSR = TPR.TSR;
         saved_PRR = TPR.TRR ;
@@ -222,7 +226,7 @@ int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitno
         TPR.TBR = AR_PR[pr].PR.bitno;
         if(opt_debug>0) log_msg(DEBUG_MSG, "APU::get-addr", "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o(0%o+0%o), bitno=0%o\n",
             pr, TPR.TSR, TPR.TRR, offset, AR_PR[pr].wordno, soffset, TPR.TBR);
-        *bitnop = TPR.TBR;
+        *(uint*)bitnop = TPR.TBR;
     } else {
         offset = y;
         // sofset = sign18(y);
@@ -310,7 +314,6 @@ int addr_mod(const instr_t *ip)
 
     if (cu.rpt) {
         TPR.TBR = 0;
-#if 1
         cu.tag = ca_temp.tag;
         uint td = ca_temp.tag & 017;
         int n = td & 07;
@@ -329,23 +332,6 @@ int addr_mod(const instr_t *ip)
             ca_temp.soffset = 0;
             if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "RPT: X[%d] is 0%o(%d).\n", n, reg_X[n], reg_X[n]);
         }
-#else
-        uint td = ca_temp.tag & 017;
-        int n = td & 07;
-        if (cu.repeat_first) {
-            log_msg(DEBUG_MSG, "APU", "RPT: X[%d] was 0%o(%d).  First repetition, adding 0%o(%d); result 0%o(%d).\n", n, reg_X[n], reg_X[n], ip->addr, ip->addr, reg_X[n] + ip->addr, reg_X[n] + ip->addr);
-
-            reg_X[n] += ip->addr;   // BUG: do we need to sign-extend to allow for negative "addresses"?
-        } else {
-            // Note that we don't increment X[n] here.   Instead the CPU does it after every instruction.
-            // So, for instructions like cmpaq, the index register points to the entry after the one found.
-            // reg_X[n] += cu.delta;
-            // log_msg(DEBUG_MSG, "APU", "RPT: X[%d] was 0%o(%d).  Non-first repetition, adding delta 0%o(%d); result 0%o(%d).\n", n, reg_X[n], reg_X[n], cu.delta, cu.delta, reg_X[n] + cu.delta, reg_X[n] + cu.delta);
-            log_msg(DEBUG_MSG, "APU", "RPT: X[%d] is 0%o(%d).\n", n, reg_X[n]);
-        }
-        ca_temp.soffset = reg_X[n];
-        TPR.CA = reg_X[n];
-#endif
     } else if (ptr_reg_flag == 0) {
         ca_temp.soffset = sign18(ip->addr);
         // TPR.TSR = PPR.PSR;   -- done prior to fetch_instr()
@@ -362,8 +348,9 @@ int addr_mod(const instr_t *ip)
         TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
         TPR.CA = (AR_PR[pr].wordno + ca_temp.soffset) & MASK18;
         TPR.TBR = AR_PR[pr].PR.bitno;
-        if(opt_debug>0)log_msg(DEBUG_MSG, "APU", "Using PR[%d]: TSR=0%o, TRR=0%o, CA=0%o(0%o+0%o<=>%d+%d), bitno=0%o\n",
+        if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Using PR[%d]: TSR=0%o, TRR=0%o, CA=0%o(0%o+0%o<=>%d+%d), bitno=0%o\n",
             pr, TPR.TSR, TPR.TRR, TPR.CA, AR_PR[pr].wordno, ca_temp.soffset, AR_PR[pr].wordno, ca_temp.soffset, TPR.TBR);
+        ca_temp.soffset = sign18(TPR.CA);
 
         // BUG: Enter append mode & stay if execute a transfer
     }
@@ -911,7 +898,7 @@ void cmd_dump_vm()
     else
         printf("PTWAM is NOT enabled.\n");
     if (DSBR.u)
-        printf("DSBR: SDW for segment 'segno' is at 0%08 + 2 * segno.\n", DSBR.addr);
+        printf("DSBR: SDW for segment 'segno' is at %08o + 2 * segno.\n", DSBR.addr);
     else {
         printf("DSBR: Offset (y1) in page table for segment 'segno' is at (2 * segno)%%%d;\n", page_size);
         printf("DSBR: PTW for segment 'segno' is at 0%08o + (2 * segno - y1)/%d.\n", DSBR.addr, page_size);

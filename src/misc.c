@@ -117,6 +117,7 @@ void out_msg(const char* format, ...)
     fflush(stream);
 }
 
+#if 0
 static void sim_hmsg(const char* tag, const char *who, const char* format, va_list ap)
 {
     // This version uses SIMH facilities -- not tested
@@ -128,6 +129,7 @@ static void sim_hmsg(const char* tag, const char *who, const char* format, va_li
     // TODO: setup every device with sim_debtab entries to reflect different debug levels
     sim_debug(~0, &cpu_dev, "%s", buf);
 }
+#endif
 
 static void msg(enum log_level level, const char *who, const char* format, va_list ap)
 {

@@ -105,6 +105,7 @@ static int symtab_add(int first, int last, enum symtab_type type, const char *fn
     if ((symtab[i].name = strdup(fname)) == NULL)
         return 1;
     ++ n_sym;
+    return 0;
 }
 
 static int cmp_symtab(const t_symtab_ent *a, const t_symtab_ent *b)

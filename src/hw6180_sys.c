@@ -104,7 +104,7 @@ t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
     abort();
 }
 
-static void init_memory_iox(void);
+// static void init_memory_iox(void);
 static void init_memory_iom(void);
 
 static void hw6180_init(void)
@@ -276,7 +276,7 @@ static void init_memory_iom()
     
 }
 
-#if 1
+#if 0
 
 static void init_memory_iox()
 {
