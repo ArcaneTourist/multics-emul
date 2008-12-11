@@ -274,7 +274,19 @@ int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, int* bitnop
 
 //=============================================================================
 
+static int temp_addr_mod(const instr_t *ip);
+extern DEVICE cpu_dev;
 int addr_mod(const instr_t *ip)
+{
+    int saved_debug = opt_debug;
+    int saved_dctrl = cpu_dev.dctrl;
+    int ret = temp_addr_mod(ip);
+    opt_debug = saved_debug;
+    cpu_dev.dctrl = saved_dctrl;
+    return ret;
+}
+
+static int temp_addr_mod(const instr_t *ip)
 {
     // Called by OPU for most instructions
     // Generate 18bit computed address TPR.CA
@@ -374,8 +386,10 @@ int addr_mod(const instr_t *ip)
     int mult = 0;
     while (ca_temp.more) {
         if (compute_addr(ip, &ca_temp) != 0) {
-            if(opt_debug>0)log_msg(DEBUG_MSG, "APU", "Final (incomplete) CA: 0%0o\n", TPR.CA);
-            return 1;
+            // if (ca_temp.more) log_msg(NOTIFY_MSG, "APU", "Final (incomplete) CA: 0%0o\n", TPR.CA);
+            if (ca_temp.more) log_msg(NOTIFY_MSG, "APU", "Not-Final (not-incomplete) CA: 0%0o\n", TPR.CA);
+            ca_temp.soffset = sign18(TPR.CA);
+            // return 1;
         }
         if (ca_temp.more)
             mult = 1;
@@ -434,7 +448,6 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
 
     // BUG: Need to do ESN special handling if loop is continued
 
-    // uint tm = (ca_tempp->mods.single.tag >> 4) & 03; // the and is a hint to the compiler for the following switch...
     enum atag_tm tm = (ca_tempp->tag >> 4) & 03;    // the and is a hint to the compiler for the following switch...
 
     uint td = ca_tempp->tag & 017;
@@ -452,7 +465,8 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
 
     switch(tm) {
         case atag_r: {  // Tm=0 -- register (r)
-            reg_mod(td, ca_tempp->soffset);
+            if (td != 0)
+                reg_mod(td, ca_tempp->soffset);
             if (cu.rpt) {
                 int n = td & 07;
                 reg_X[n] = TPR.CA;
@@ -491,8 +505,16 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
             }
             ca_tempp->tag = word & MASKBITS(6);
             if (TPR.CA % 2 == 0 && (ca_tempp->tag == 041 || ca_tempp->tag == 043)) {
-                    do_its_itp(ip, ca_tempp, word);
+                    // ++ opt_debug; ++ cpu_dev.dctrl;
+                    int ret = do_its_itp(ip, ca_tempp, word);
                     if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "RI: post its/itp: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
+                    if (ret != 0) {
+                        if (ca_tempp->tag != 0) {
+                            log_msg(WARN_MSG, "APU", "RI: post its/itp: canceling remaining APU cycles.\n");
+                            cancel_run(STOP_WARN);
+                        }
+                        return ret;
+                    }
             } else {
                 TPR.CA = word >> 18;
                 if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "RI: post-fetch: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
@@ -508,6 +530,10 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 case 0:
                     log_msg(WARN_MSG, "APU", "IT with Td zero not valid in instr word.\n");
                     fault_gen(f1_fault);    // This mode not ok in instr word
+                    break;
+                case 6:     
+                    log_msg(WARN_MSG, "APU", "IT with Td six is a fault.\n");
+                    fault_gen(fault_tag_2_fault);   // This mode not ok in instr word
                     break;
                 case 014: {
                     t_uint64 iword;
@@ -572,7 +598,10 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
             cancel_run(STOP_BUG);
             return 1;
 #else
+            int nloops = 0;
             while(tm == atag_ir || tm == atag_ri) {
+                if (++nloops > 1)
+                    log_msg(NOTIFY_MSG, "APU::IR", "loop # %d\n", nloops);
                 if (tm == atag_ir)
                     cu.CT_HOLD = td;
                 // BUG: Maybe handle special tag (41 itp, 43 its).  Or post handle?
@@ -583,16 +612,23 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR", "fetched:  word at TPR.CA=0%o is 0%Lo:\n",
                     TPR.CA, word);
                 ca_tempp->tag = word & MASKBITS(6);
-                // BUG: is ITS and ITP valid for IR
                 if (TPR.CA % 2 == 0 && (ca_tempp->tag == 041 || ca_tempp->tag == 043)) {
-                        log_msg(NOTIFY_MSG, "APU::IR", "found ITS/ITP\n");
-                        // cancel_run(STOP_WARN);
-                        do_its_itp(ip, ca_tempp, word);
+                        // ++ opt_debug; ++ cpu_dev.dctrl;
+                        log_msg(NOTIFY_MSG, "APU::IR", "found ITS/ITP\n");  // BUG: remove this msg
+                        int ret = do_its_itp(ip, ca_tempp, word);
                         if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR", "post its/itp: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
+                        if (ret != 0) {
+                            if (ca_tempp->tag != 0) {
+                                log_msg(WARN_MSG, "APU", "IR: post its/itp: canceling remaining APU cycles.\n");
+                                cancel_run(STOP_WARN);
+                            }
+                            return ret;
+                        }
                 } else {
                     TPR.CA = word >> 18;
                     tm = (ca_tempp->tag >> 4) & 03;
-                    if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR", "post-fetch: TPR.CA=0%o, tag=0%o, new tm=0%o\n", TPR.CA, ca_tempp->tag, tm);
+                    td = ca_tempp->tag & 017;
+                    if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR", "post-fetch: TPR.CA=0%o, tag=0%o, new tm=0%o; td = %o\n", TPR.CA, ca_tempp->tag, tm, td);
                     if (td == 0) {
                         // BUG: Disallow a reg_mod() with td equal to NULL (AL39)
                         // Disallow always or maybe ok for ir?
@@ -601,11 +637,11 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                     }
                     switch(tm) {
                         case atag_ri:
+                            log_msg(WARN_MSG, "APU::IR", "IR followed by RI.  Not tested\n");
                             reg_mod(td, ca_tempp->soffset);
-                            // cotinue looping
-                            break;
+                            break;      // continue looping
                         case atag_r:
-                            reg_mod(td, ca_tempp->soffset);
+                            reg_mod(cu.CT_HOLD, ca_tempp->soffset);
                             return 0;
                         case atag_it:
                             //reg_mod(td, ca_tempp->soffset);
@@ -613,13 +649,14 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                             cancel_run(STOP_BUG);
                             return 0;
                         case atag_ir:
-                            // do nothing -- keep looping
-                            break;
+                            log_msg(WARN_MSG, "APU::IR", "IR followed by IR, continuing to loop.  Not tested\n");
+                            cu.CT_HOLD = ca_tempp->tag & MASKBITS(4);
+                            break;      // keep looping
                     }
                 }
-                //log_msg(WARN_MSG, "APU::RI", "Finished, but unverified.\n");
+                //log_msg(WARN_MSG, "APU::IR", "Finished, but unverified.\n");
                 //cancel_run(STOP_WARN);
-                log_msg(DEBUG_MSG, "APU::RI", "Finished.\n");
+                log_msg(DEBUG_MSG, "APU::IR", "Finished.\n");
                 return 0;
             }
 #endif
@@ -722,6 +759,10 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         int ret = fetch_pair(TPR.CA, &word1, &word2);   // bug: refetching word1
         if (ret != 0)
             return ret;
+        if (word01 != word1) {
+            log_msg(WARN_MSG, "APU:ITS/ITP", "Refetched word at %#o has changed.   Was %012Lo, now %012Lo.\n", word01, word1);
+            cancel_run(STOP_BUG);
+        }
         set_addr_mode(APPEND_mode);
         uint n = getbits36(word1, 0, 3);
         TPR.TSR = AR_PR[n].PR.snr;
@@ -737,19 +778,26 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         ca_tempp->tag = word2 & MASKBITS(6);
         uint i_mod_tm = ca_tempp->tag >> 4;
         uint r;
-        if (ca_tempp->special == atag_ir)
+        if (ca_tempp->special == atag_ir) {
+            log_msg(DEBUG_MSG, "APU", "ITS: temp special is IR; Will use r from cu.CT_HOLD\n");
             r = cu.CT_HOLD;
-        else if (ca_tempp->special == atag_ri && (i_mod_tm == atag_r || i_mod_tm == atag_ri)) {
+        } else if (ca_tempp->special == atag_ri && (i_mod_tm == atag_r || i_mod_tm == atag_ri)) {
             uint i_mod_td = ca_tempp->tag & MASKBITS(4);
-            r = i_mod_td;
+            // r = i_mod_td;
+            r = 0;  // the tag will be used during the next cycle
         } else {
             log_msg(ERR_MSG, "APU", "ITP addr mod with undefined r-value (tm=0%o,new-tm=0%o)\n", ca_tempp->special, i_mod_tm);
             cancel_run(STOP_BUG);
             r = 0;
         }
         uint i_wordno = getbits36(word2, 0, 18);
-        TPR.CA = AR_PR[n].wordno + i_wordno + r;
+        // TPR.CA = AR_PR[n].wordno + i_wordno + r;
+        TPR.CA = AR_PR[n].wordno + i_wordno;
         TPR.CA &= MASK18;
+        uint r_temp = TPR.CA;
+        reg_mod(r, 0);
+        r_temp = TPR.CA - r_temp;
+        if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "ITP: CA = PR[%d].wordno=%#o + wordno=%#o + r=%#o => %#o\n", n, AR_PR[n].wordno, i_wordno, r_temp, TPR.CA);
         ca_tempp->more = 1;
         log_msg(DEBUG_MSG, "APU", "ITP done\n");
         //cancel_run(STOP_WARN);
@@ -766,12 +814,16 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         TPR.TSR =  getbits36(word1, 3, 15);
         uint its_rn = getbits36(word1, 18, 3);
         SDW_t *SDWp = get_sdw();    // Get SDW for TPR.TSR
+        uint sdw_r1;
         if (SDWp == NULL) {
+            // BUG 12/05/2008 -- bootload_1.alm, instr 17 triggers this via an epp instr
+            // BUG: it seems odd that we should ignore this fault
             log_msg(WARN_MSG, "APU:ITS/ITP", "Segment is missing.\n");
             cancel_run(STOP_BUG);
-            return 1;
-        }
-        uint sdw_r1 = SDWp->r1;
+            sdw_r1 = 7;
+            ret = 1;
+        } else
+            sdw_r1 = SDWp->r1;
         TPR.TRR = max3(its_rn, sdw_r1, TPR.TRR);
         TPR.TBR = getbits36(word2, 21, 6);
         ca_tempp->tag = word2 & MASKBITS(6);
@@ -780,22 +832,29 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "ITS: TPR.TSR = 0%o, rn=0%o, sdw.r1=0%o, TPR.TRR=0%o, TPR.TBR=0%o, tag=0%o(tm=0%o)\n",
             TPR.TSR, its_rn, sdw_r1, TPR.TRR, TPR.TBR, ca_tempp->tag, i_mod_tm);
         uint r;
-        if (ca_tempp->special == atag_ir)
+        if (ca_tempp->special == atag_ir) {
+            log_msg(DEBUG_MSG, "APU", "ITS: temp special is IR; Will use r from cu.CT_HOLD\n");
             r = cu.CT_HOLD;
-        else if (ca_tempp->special == atag_ri && (i_mod_tm == atag_r || i_mod_tm == atag_ri)) {
+        } else if (ca_tempp->special == atag_ri && (i_mod_tm == atag_r || i_mod_tm == atag_ri)) {
             uint i_mod_td = ca_tempp->tag & MASKBITS(4);
-            r = i_mod_td;
+            // r = i_mod_td;
+            r = 0;  // the tag will be used during the next cycle
+            log_msg(DEBUG_MSG, "APU", "ITS: temp special is RI; temp tag is r or ri; Will use r from special tag's td\n");
         } else {
             log_msg(ERR_MSG, "APU", "ITS addr mod with undefined r-value (tm=0%o,new-tm=0%o)\n", ca_tempp->special, i_mod_tm);
             cancel_run(STOP_BUG);
             r = 0;
         }
         uint i_wordno = getbits36(word2, 0, 18);
-        TPR.CA = i_wordno + r;
+        // TPR.CA = i_wordno + r;
+        TPR.CA = i_wordno;
         TPR.CA &= MASK18;
-        if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "ITS: CA = wordno=0%o + r=0%o => 0%o\n", i_wordno, r, TPR.CA);
+        uint r_temp = TPR.CA;
+        reg_mod(r, 0);
+        r_temp = TPR.CA - r_temp;
+        if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "ITS: CA = wordno=0%o + r=0%o => 0%o\n", i_wordno, r_temp, TPR.CA);
         ca_tempp->more = 1;
-        return 0;
+        return ret;
     }
 
 #if 0
@@ -1015,79 +1074,80 @@ static SDWAM_t* page_in_sdw()
             }
             SDWp->assoc.use = 15;
         }
-    } else {
-        // Fetch SDW and place into SDWAM
-        if(opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "SDW for segno 0%o is not in SDWAM.  DSBR addr is 0%o\n", segno, DSBR.addr);
-        t_uint64 sdw_word0, sdw_word1;
-        if (DSBR.u) {
-            // Descriptor table is unpaged
-            // Do a NDSW cycle
-            if (segno * 2 >= 16 * (DSBR.bound + 1)) {
-                cu.word1flags.oosb = 1;         // ERROR: nothing clears
-                log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault\n", DSBR.bound, DSBR.bound);
-                fault_gen(acc_viol_fault);
-                return NULL;
-            }
-            if(1) log_msg(DEBUG_MSG, "APU::append", "Fetching SDW for unpaged descriptor table from 0%o\n", DSBR.addr + 2 * segno);
-            if (fetch_abs_pair(DSBR.addr + 2 * segno, &sdw_word0, &sdw_word1) != 0)
-                return NULL;
-        } else {
-            // Descriptor table is paged
-#if 0
-            if (segno * 2 >= 16 * (DSBR.bound + 1)) {
-                log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault -- not sure if this check is appropriate though.\n", DSBR.bound, DSBR.bound);
-                //cu.word1flags.oosb = 1;           // ERROR: nothing clears
-                // fault_gen(acc_viol_fault);
-                // return NULL;
-                cancel_run(STOP_WARN);
-            }
-#endif
+        return SDWp;
+    }
 
-            // First, the DSPTW fetch cycle (PTWAM doesn't cache the DS?)
-            uint y1 = (2 * segno) % page_size;          // offset within page table
-            uint x1 = (2 * segno - y1) / page_size;     // offset within DS page
-            PTW_t DSPTW;
-            t_uint64 word;
-            if(1) log_msg(DEBUG_MSG, "APU::append", "Fetching DS-PTW for paged descriptor table from 0%o\n", DSBR.addr + x1);
-            if (fetch_abs_word(DSBR.addr + x1, &word) != 0) // We assume DS is 1024 words (bound=077->16*64=1024)
-                return NULL;
-            decode_PTW(word, &DSPTW);   // TODO: cache this
-            if (DSPTW.f == 0) {
-                if (opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "DSPTW directed fault\n");
-                fault_gen(dir_flt0_fault + DSPTW.fc);   // Directed Faults 0..4 use sequential fault numbers
-                return NULL;
-            }
-            if (! DSPTW.u) {
-                // MDSPTW cycle
-                DSPTW.u = 1;
-                if (set_PTW_used(DSBR.addr + x1) != 0) {
-                    // impossible -- we just read this absolute addresed word
-                    return NULL;
-                }
-            }
-            // PSDW cycle (Step 5 for case when Descriptor Segment is paged)
-            // log_msg(DEBUG_MSG, "APU::append", "Fetching SDW from 0%o<<6+0%o => 0%o\n", DSPTW.addr, y1, (DSPTW.addr<<6) + y1);
-            if (fetch_abs_pair((DSPTW.addr<<6) + y1, &sdw_word0, &sdw_word1) != 0)
-                return NULL;
-        }
-        // Allocate a SDWAM entry
-        if (oldest_sdwam == -1) {
-            log_msg(ERR_MSG, "APU::append", "SDWAM had no oldest entry\n");
-            cancel_run(STOP_BUG);
+    // Fetch SDW and place into SDWAM
+    if(opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "SDW for segno 0%o is not in SDWAM.  DSBR addr is 0%o\n", segno, DSBR.addr);
+    t_uint64 sdw_word0, sdw_word1;
+    if (DSBR.u) {
+        // Descriptor table is unpaged
+        // Do a NDSW cycle
+        if (segno * 2 >= 16 * (DSBR.bound + 1)) {
+            cu.word1flags.oosb = 1;         // ERROR: nothing clears
+            log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault\n", DSBR.bound, DSBR.bound);
+            fault_gen(acc_viol_fault);
             return NULL;
         }
-        for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i) {
-            -- SDWAM[i].assoc.use;
+        if(1) log_msg(DEBUG_MSG, "APU::append", "Fetching SDW for unpaged descriptor table from 0%o\n", DSBR.addr + 2 * segno);
+        if (fetch_abs_pair(DSBR.addr + 2 * segno, &sdw_word0, &sdw_word1) != 0)
+            return NULL;
+    } else {
+        // Descriptor table is paged
+        if (segno * 2 >= 16 * (DSBR.bound + 1)) {
+            // BUG 12/05/2008 -- bootload_1.alm, instr 17 triggers this
+            log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside paged DSBR bound of 0%o(%u) -- OOSB fault\n", DSBR.bound, DSBR.bound);
+            cu.word1flags.oosb = 1;         // ERROR: nothing clears
+            fault_gen(acc_viol_fault);
+            cancel_run(STOP_WARN);
+            return NULL;
         }
-        SDWp = SDWAM + oldest_sdwam;
-        decode_SDW(sdw_word0, sdw_word1, &SDWp->sdw);
-        SDWp->assoc.ptr = segno;
-        SDWp->assoc.use = 15;
-        SDWp->assoc.is_full = 1;
-        if (opt_debug) {
-            log_msg(DEBUG_MSG, "APU::append", "Allocated SDWAM # %o for seg 0%o: addr - 0%o, bound = 0%o(%d), f=%d\n",
-                oldest_sdwam, segno, SDWp->sdw.addr, SDWp->sdw.bound, SDWp->sdw.bound, SDWp->sdw.f);
+
+        // First, the DSPTW fetch cycle (PTWAM doesn't cache the DS?)
+        uint y1 = (2 * segno) % page_size;          // offset within page table
+        uint x1 = (2 * segno - y1) / page_size;     // offset within DS page
+        PTW_t DSPTW;
+        t_uint64 word;
+        if(1) log_msg(DEBUG_MSG, "APU::append", "Fetching DS-PTW for paged descriptor table from 0%o\n", DSBR.addr + x1);
+        if (fetch_abs_word(DSBR.addr + x1, &word) != 0) // We assume DS is 1024 words (bound=077->16*64=1024)
+            return NULL;
+        decode_PTW(word, &DSPTW);   // TODO: cache this
+        if (DSPTW.f == 0) {
+            if (opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "DSPTW directed fault\n");
+            fault_gen(dir_flt0_fault + DSPTW.fc);   // Directed Faults 0..4 use sequential fault numbers
+            return NULL;
         }
+        if (! DSPTW.u) {
+            // MDSPTW cycle
+            DSPTW.u = 1;
+            if (set_PTW_used(DSBR.addr + x1) != 0) {
+                // impossible -- we just read this absolute addresed word
+                return NULL;
+            }
+        }
+        // PSDW cycle (Step 5 for case when Descriptor Segment is paged)
+        // log_msg(DEBUG_MSG, "APU::append", "Fetching SDW from 0%o<<6+0%o => 0%o\n", DSPTW.addr, y1, (DSPTW.addr<<6) + y1);
+        if (fetch_abs_pair((DSPTW.addr<<6) + y1, &sdw_word0, &sdw_word1) != 0)
+            return NULL;
+    }
+
+    // Allocate a SDWAM entry
+    if (oldest_sdwam == -1) {
+        log_msg(ERR_MSG, "APU::append", "SDWAM had no oldest entry\n");
+        cancel_run(STOP_BUG);
+        return NULL;
+    }
+    for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i) {
+        -- SDWAM[i].assoc.use;
+    }
+    SDWp = SDWAM + oldest_sdwam;
+    decode_SDW(sdw_word0, sdw_word1, &SDWp->sdw);
+    SDWp->assoc.ptr = segno;
+    SDWp->assoc.use = 15;
+    SDWp->assoc.is_full = 1;
+    if (opt_debug) {
+        log_msg(DEBUG_MSG, "APU::append", "Allocated SDWAM # %o for seg 0%o: addr - 0%o, bound = 0%o(%d), f=%d\n",
+            oldest_sdwam, segno, SDWp->sdw.addr, SDWp->sdw.bound, SDWp->sdw.bound, SDWp->sdw.f);
     }
 
     //log_msg(DEBUG_MSG, "APU::append", "SDW: addr - 0%o, bound = 0%o(%d), f=%d\n",

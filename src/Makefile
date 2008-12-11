@@ -32,7 +32,7 @@ tst: tst.o misc.o
 
 clean:
 	rm -f *.o multics.a
-	rm -f bits bit-test tst test-op scan-tape
+	rm -f bits bit-test tst test-op scan-tape a.out
 
 opcodes.h: opcodes0.txt opcodes1.txt
 	./opcodes2c.pl | sed -ne '/^#ifndef/q' -e p > .tmpf && mv .tmpf $@
