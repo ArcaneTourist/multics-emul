@@ -26,6 +26,8 @@ static inline void lrotate72(t_uint64* ap, t_uint64* bp, unsigned n);
 static inline int32 negate18(t_uint64 x);
 static inline t_int64 negate36(t_uint64 x);
 static inline int negate72(t_uint64* a, t_uint64* b);
+// static int32 sign18(t_uint64 x);
+static t_int64 sign36(t_uint64 x);
 static inline uint min(uint a, uint b);
 static inline uint max3(uint a, uint b, uint c);
 
@@ -35,8 +37,6 @@ static int op_and(instr_t *ip, t_uint64 *op, t_uint64 *op2, t_uint64 *dest1, t_u
 static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest);
 static int add18(t_uint64 a, t_uint64 b, t_uint64 *dest);
 static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2, int is_unsigned);
-// static int32 sign18(t_uint64 x);
-static t_int64 sign36(t_uint64 x);
 static int do_epp(int epp);
 static int do_eawp(int n);
 static int do_epbp(int n);
@@ -47,6 +47,7 @@ static int do_spri(int n);
 static int op_mlr(const instr_t* ip);
 static int op_tct(const instr_t* ip, int fwd);
 static int op_mvt(const instr_t* ip);
+static int op_cmpc(const instr_t* ip);
 
 static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, int nargs);   // BUG: temp
 
@@ -891,12 +892,14 @@ static int do_an_op(instr_t *ip)
                 int ret;
                 t_uint64 word;
                 if ((ret = fetch_op(ip, &word)) == 0) {
-                    t_int64 q = bit36_is_neg(reg_Q) ? negate36(reg_Q) : reg_Q;
-                    t_int64 w = bit36_is_neg(word) ? negate36(word) : word;
-                    if (w == 0 || (q == ((t_uint64)1<<35) && w == -1)) {    // (1<<35) signed is -2**36
+                    // t_int64 q = bit36_is_neg(reg_Q) ? negate36(reg_Q) : reg_Q;
+                    // t_int64 w = bit36_is_neg(word) ? negate36(word) : word;
+                    t_int64 q = sign36(reg_Q);
+                    t_int64 w = sign36(word);
+                    if (w == 0 || (reg_Q == ((t_uint64)1<<35) && w == -1)) {    // (1<<35) signed is -2**36
                         fault_gen(div_fault);
                         IR.neg = bit36_is_neg(reg_Q);
-                        reg_Q = (IR.neg) ? - q  : reg_Q;    // magnitude, absolute value
+                        reg_Q = (IR.neg) ? negate36(reg_Q) : reg_Q; // magnitude, absolute value
                         IR.zero = w == 0;
                         ret = 1;
                     } else {
@@ -2459,9 +2462,9 @@ static int do_an_op(instr_t *ip)
             // sbd unimplemented
             // swd unimplemented
 
-            case opcode1_cmpc: {
-                return op_unimplemented_mw(ip, op, opname, 2);
-            }
+            case opcode1_cmpc:
+                return op_cmpc(ip);
+
             // opcode1_scd unimplemented -- scan characters double
             // opcode1_scdr unimplemented -- scan characters double in reverse
             // opcode1_scm unimplemented -- scan with mask
@@ -2938,6 +2941,8 @@ static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, in
 
     PPR.IC += nargs + 1;
     cpu.irodd_invalid = 1;
+    log_msg(WARN_MSG, moi, "EIS multi-word opcode %s unimplemented.\n", opname);
+    cancel_run(STOP_BUG);
     return 1;
 }
 
@@ -3161,6 +3166,73 @@ static int op_mvt(const instr_t* ip)
     // write unsaved data (if any)
     if (save_eis_an(&mf2, &desc2) != 0)
         return 1;
+
+    //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
+    //cancel_run(STOP_WARN);
+    log_msg(DEBUG_MSG, moi, "finished.\n");
+    return ret;
+}
+
+// ============================================================================
+
+static int op_cmpc(const instr_t* ip)
+{
+    const char* moi = "OPU::cmpc";
+
+    uint fill = ip->addr >> 9;
+    uint mf2bits = ip->addr & MASKBITS(7);
+    eis_mf_t mf2;
+    (void) parse_mf(mf2bits, &mf2);
+    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+
+    t_uint64 word1, word2;
+    if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
+        return 1;
+
+    PPR.IC += 3;
+    cpu.irodd_invalid = 1;
+
+    eis_alpha_desc_t desc1;
+    parse_eis_alpha_desc(word1, &ip->mods.mf1, &desc1);
+    eis_alpha_desc_t desc2;
+    word2 = setbits36(word2, 21, 2, desc1.ta);  // force (ignored) type of mf2 to match mf1
+    parse_eis_alpha_desc(word2, &mf2, &desc2);
+
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&desc1));
+    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&desc2));
+
+    int ret = 0;
+
+    uint nib1, nib2;
+    while (desc1.n > 0 || desc2.n > 0) {
+        if (desc1.n == 0)
+            nib1 = fill & MASKBITS(desc1.nbits);
+        else
+            if (get_eis_an(&ip->mods.mf1, &desc1, &nib1) != 0) {    // must fetch when needed
+                ret = 1;
+                break;
+            }
+        if (desc2.n == 0)
+            nib2 = fill & MASKBITS(desc2.nbits);
+        else
+            if (get_eis_an(&mf2, &desc2, &nib2) != 0) { // must fetch when needed
+                ret = 1;
+                break;
+            }
+        if (nib1 < nib2) {
+            IR.zero = 0;
+            IR.carry = 0;
+            break;
+        } else if (nib1 > nib2) {
+            IR.zero = 0;
+            IR.carry = 1;
+            break;
+        }
+    }
+    if (ret == 0 && nib1 == nib2) {
+        IR.zero = 1;
+        IR.carry = 1;
+    }
 
     //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
     //cancel_run(STOP_WARN);

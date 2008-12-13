@@ -251,8 +251,8 @@ static int get_mf_an_addr(const eis_mf_t* mfp, uint y, int nbits, uint *addrp, i
     // BUG: some callers may keep results.  This isn't valid for multi-page segments.
 
     int ret = get_address(y, mfp->ar, mfp->reg, nbits, addrp, bitnop, minaddrp, maxaddrp);
-    if (mfp->ar) {
-        log_msg(NOTIFY_MSG, "EIS", "Using PR results in address %06o\n", mfp->reg, *addrp);
+    if (opt_debug && mfp->ar) {
+        log_msg(DEBUG_MSG, "EIS", "Using PR results in address %06o\n", mfp->reg, *addrp);
     }
     return ret;
 }

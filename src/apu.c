@@ -779,7 +779,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         uint i_mod_tm = ca_tempp->tag >> 4;
         uint r;
         if (ca_tempp->special == atag_ir) {
-            log_msg(DEBUG_MSG, "APU", "ITS: temp special is IR; Will use r from cu.CT_HOLD\n");
+            log_msg(DEBUG_MSG, "APU", "ITP: temp special is IR; Will use r from cu.CT_HOLD\n");
             r = cu.CT_HOLD;
         } else if (ca_tempp->special == atag_ri && (i_mod_tm == atag_r || i_mod_tm == atag_ri)) {
             uint i_mod_td = ca_tempp->tag & MASKBITS(4);
@@ -792,10 +792,9 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         }
         uint i_wordno = getbits36(word2, 0, 18);
         // TPR.CA = AR_PR[n].wordno + i_wordno + r;
-        TPR.CA = AR_PR[n].wordno + i_wordno;
-        TPR.CA &= MASK18;
+        TPR.CA = (AR_PR[n].wordno + i_wordno) & MASK18;
         uint r_temp = TPR.CA;
-        reg_mod(r, 0);
+        reg_mod(r, r_temp);
         r_temp = TPR.CA - r_temp;
         if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "ITP: CA = PR[%d].wordno=%#o + wordno=%#o + r=%#o => %#o\n", n, AR_PR[n].wordno, i_wordno, r_temp, TPR.CA);
         ca_tempp->more = 1;
@@ -848,9 +847,8 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         uint i_wordno = getbits36(word2, 0, 18);
         // TPR.CA = i_wordno + r;
         TPR.CA = i_wordno;
-        TPR.CA &= MASK18;
         uint r_temp = TPR.CA;
-        reg_mod(r, 0);
+        reg_mod(r, r_temp);
         r_temp = TPR.CA - r_temp;
         if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "ITS: CA = wordno=0%o + r=0%o => 0%o\n", i_wordno, r_temp, TPR.CA);
         ca_tempp->more = 1;
