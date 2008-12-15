@@ -250,6 +250,7 @@ static void init_ops(void);
 static void ic_history_init(void);
 static void ic_history_add(void);
 static void check_events(void);
+static void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic);
 
 void tape_block(unsigned char *p, uint32 len, uint32 addr);
 
@@ -438,11 +439,11 @@ ninstr = 0;
     uint32 start = sim_os_msec();
     static t_symtab_ent *source = 0;        // WARNING: re-init this is (re)init() is ever implemented for symtab pkg
 
+    if (opt_debug && sim_interval > 128) {
+        // debug mode is slow, so be more responsive to keyboard interrupt
+        sim_interval = 128;
+    }
     while (reason == 0) {   /* loop until halted */
-        if (opt_debug && ncycles % 128 == 0) {
-            // debug mode is slow, so be more responsive to keyboard interrupt
-            sim_interval = 2;
-        }
         if (sim_interval <= 0) { /* check clock queue */
             // process any SIMH timed events including keyboard halt
             if ((reason = sim_process_event()) != 0) break;
@@ -457,26 +458,25 @@ ninstr = 0;
         }
 #endif
 if (opt_debug) {
-    // fflush(stdout); printf("\n\r"); fflush(stdout);
-    // fflush(stdout); printf("\n"); fflush(stdout);
-    out_msg("\n");
-    // log_msg(DEBUG_MSG, "MAIN", "IC: %o\n", PPR.IC);
+    log_msg(DEBUG_MSG, NULL, "\n", NULL);
+    char icbuf[80];
+    ic2text(icbuf, get_addr_mode(), PPR.PSR, PPR.IC);
     if (source) {
         if (source->addr_lo <= PPR.IC && PPR.IC <= source->addr_hi)
-            log_msg(DEBUG_MSG, "MAIN", "IC: %o\n", PPR.IC); // source unchanged
+            log_msg(DEBUG_MSG, "MAIN", "IC: %s\n", icbuf);  // source unchanged
         else {
             char *old = source->name;
             source = symtab_find(PPR.IC);
             if (source)
-                log_msg(DEBUG_MSG, "MAIN", "IC: %o\tSource: %s\n", PPR.IC, source->name);
+                log_msg(DEBUG_MSG, "MAIN", "IC: %s\tSource: %s\n", icbuf, source->name);
             else
-                log_msg(DEBUG_MSG, "MAIN", "IC: %o\tSource: Unknown (leaving %s)\n", PPR.IC, old);
+                log_msg(DEBUG_MSG, "MAIN", "IC: %s\tSource: Unknown (leaving %s)\n", icbuf, old);
         } 
     } else {
         if ((source = symtab_find(PPR.IC)) != NULL)
-            log_msg(DEBUG_MSG, "MAIN", "IC: %o\tSource: %s\n", PPR.IC, source->name);
+            log_msg(DEBUG_MSG, "MAIN", "IC: %s\tSource: %s\n", icbuf, source->name);
         else
-            log_msg(DEBUG_MSG, "MAIN", "IC: %o\n", PPR.IC); // still unknown
+            log_msg(DEBUG_MSG, "MAIN", "IC: %s\n", icbuf);  // still unknown
     }
 }
         reason = control_unit();
@@ -490,6 +490,12 @@ if (opt_debug) {
             if (reason == 0)
                 reason = cancel;
         }
+#if 0
+        if (reason == 0 && PPR.IC == 014256 && reg_A == (t_uint64) 0777771000000) {
+            log_msg(NOTIFY_MSG, "MAIN", "AutoBreakpoint for debug tape\n");
+            reason = STOP_IBKPT;
+        }
+#endif
     }
 
     uint32 delta = sim_os_msec() - start;
@@ -623,28 +629,25 @@ static t_stat control_unit(void)
                 }
             }
             // fetch a pair of words
-            // todo:  Is cpu.ic_odd unnecessary?  Can we just look at
-            // the IC to determine which to execute?
             // AL39, 1-13: for fetches, procedure pointer reg (PPR) is ignored. [PPR IC is a dup of IC]
             cpu.ic_odd = PPR.IC % 2;    // won't exec even if fetch from odd
-            // BUG: Fetch both words because if we fault on fetch of even word, we'll
-            // handle the fault at the even word and then an EXEC cycle will want to
-            // later execute junk from cu.IRODD.   Actually, perhaps fault should always lead to
-            // a fetch rather than an EXEC.  On the other hand, our fetch_instr and fetch_word
-            // can never fault anyway.  BUG: Update -- Not true -- appending mode can fault
             cycle = EXEC_cycle;
             TPR.TSR = PPR.PSR;
             TPR.TRR = PPR.PRR;
-            if (fetch_instr(PPR.IC - PPR.IC % 2, &cu.IR) != 0)
-                cycle = FAULT_cycle;
-            cpu.IC_abs = cpu.read_addr;
-            if (fetch_word(PPR.IC - PPR.IC % 2 + 1, &cu.IRODD) != 0) {
+            if (fetch_instr(PPR.IC - PPR.IC % 2, &cu.IR) != 0) {
                 cycle = FAULT_cycle;
                 cpu.irodd_invalid = 1;
-            } else
-                cpu.irodd_invalid = 0;
-            if (opt_debug && get_addr_mode() != ABSOLUTE_mode)
-                log_msg(DEBUG_MSG, "CU", "Fetched odd half of instruction pair\n");
+            } else {
+                if (fetch_word(PPR.IC - PPR.IC % 2 + 1, &cu.IRODD) != 0) {
+                    cycle = FAULT_cycle;
+                    cpu.irodd_invalid = 1;
+                } else {
+                    cpu.irodd_invalid = 0;
+                    if (opt_debug && get_addr_mode() != ABSOLUTE_mode)
+                        log_msg(DEBUG_MSG, "CU", "Fetched odd half of instruction pair from %06o\n", PPR.IC - PPR.IC % 2 + 1);
+                }
+            }
+            cpu.IC_abs = cpu.read_addr;
             break;
 
 #if 0
@@ -783,8 +786,8 @@ static t_stat control_unit(void)
                     cycle = FETCH_cycle;    // BUG: is this right?
                 } else
                     events.any = 1;
-                // BUG: kill cpu.xfr
-                if (!cpu.xfr && PPR.IC == IC_temp) {
+                // BUG: kill cpu.trgo or IC_temp
+                if (!cpu.trgo && PPR.IC == IC_temp) {
                     log_msg(WARN_MSG, "CU", "no re-fault, no transfer -- incrementing IC\n");
                     // BUG: Faulted instr doesn't get re-invoked?
                             (void) cancel_run(STOP_IBKPT);
@@ -1020,7 +1023,7 @@ static t_stat control_unit(void)
                     // Don't do anything
                 } else if (cu.xde) {
                     cu.xde = 0;
-                    if (cpu.xfr) {
+                    if (cpu.trgo) {
                         log_msg(NOTIFY_MSG, "CU", "XED even instruction was a transfer\n");
                         check_events();
                         cu.xdo = 0;
@@ -1041,7 +1044,7 @@ static t_stat control_unit(void)
                         }
                     }
                     cycle = FETCH_cycle;
-                    if (!cpu.xfr) {
+                    if (!cpu.trgo) {
                         if (PPR.IC != IC_temp)
                             log_msg(NOTIFY_MSG, "CU", "No transfer instruction in XED, but IC changed from %#o to %#o\n", IC_temp, PPR.IC);
                         ++ PPR.IC;
@@ -1049,7 +1052,7 @@ static t_stat control_unit(void)
                 } else if (! cpu.ic_odd) {
                     // Performed non-repeat instr at even loc (or finished last repetition)
                     if (cycle == EXEC_cycle) {
-                            if (!cpu.xfr) {
+                            if (!cpu.trgo) {
                                 if (PPR.IC == IC_temp) {
                                     cpu.ic_odd = 1; // execute odd instr of current pair
                                     ++ PPR.IC;
@@ -1067,7 +1070,7 @@ static t_stat control_unit(void)
                 } else {
                     // Performed non-repeat instr at odd loc (or finished last repetition)
                     if (cycle == EXEC_cycle) {
-                        if (!cpu.xfr) {
+                        if (!cpu.trgo) {
                             if (PPR.IC == IC_temp) {
                                 cpu.ic_odd = 0; // finished with odd half; BUG: restart issues?
                                 ++ PPR.IC;
@@ -1096,7 +1099,7 @@ void execute_ir(void)
 {
     // execute whatever instruction is in the IR (not whatever the IC points at)
 
-    cpu.xfr = 0;
+    cpu.trgo = 0;
     execute_instr();    // located in opu.c
     ++ ninstr;  // BUG: exec instructions should increase this
 }
@@ -1162,34 +1165,47 @@ void fault_gen(enum faults f)
 
 //=============================================================================
 
+int fault_check(enum faults f)
+{
+    if (f < 1 || f > 32) {
+        log_msg(ERR_MSG, "CU::fault-check", "Bad fault # %d\n", f);
+        cancel_run(STOP_BUG);
+        return 1;
+    }
+
+    if (! events.any)
+        return 0;
+    int group = fault2group[f];
+    if (group == 7)
+        return events.group7 & (1 << f);
+    else
+        return events.fault[group] == f;
+}
+
+int fault_check_group(int group)
+{
+    if (group < 1 || group > 7) {
+        log_msg(ERR_MSG, "CU::fault-check-group", "Bad group # %d\n", group);
+        cancel_run(STOP_BUG);
+        return 1;
+    }
+
+    if (! events.any)
+        return 0;
+    return events.low_group <= group;
+}
+
+//=============================================================================
+
 int fetch_instr(uint IC, instr_t *ip)
 {
     // Returns non-zero if a fault in groups 1-6 is detected
-    // todo: check for read breakpoints
-
-    if (get_addr_mode() == ABSOLUTE_mode) {
-        if (IC >= ARRAY_SIZE(M)) {
-            log_msg(ERR_MSG, "CU::fetch-instr", "Addr %#o (%d decimal) is too large\n", IC, IC);
-            (void) cancel_run(STOP_BUG);
-        }
-        if (ip) {
-#if 0
-            decode_instr(ip, M[IC]);        // WARNING: skips fetch_word (but we're in absolute mode)
-#else
-            t_uint64 word;
-            int ret = fetch_abs_word(IC, &word);
-            if (ret != 0)
-                return ret;
-            decode_instr(ip, word);
-#endif
-        }
-        return 0;
-    }
 
     t_uint64 word;
     int ret = fetch_word(IC, &word);
     if (ip)
         decode_instr(ip, word);
+#if 0
     if (opt_debug) {
         instr_t i;
         if (ip == NULL) {
@@ -1198,6 +1214,7 @@ int fetch_instr(uint IC, instr_t *ip)
         }
         if (opt_debug>0) log_msg(DEBUG_MSG, "CU::fetch-instr", "Fetched word %012Lo => %s\n", word, instr2text(ip));
     }
+#endif
     return ret;
 }
 
@@ -1328,8 +1345,8 @@ int store_abs_word(uint addr, t_uint64 word)
         }
 
     M[addr] = word; // absolute memory reference
-    if (addr == cpu.IC_abs + 1) {
-        log_msg(NOTIFY_MSG, "CU::store", "Flagging cached odd instruction as invalidated.\n");
+    if (addr == cpu.IC_abs) {
+        log_msg(NOTIFY_MSG, "CU::store", "Flagging cached odd instruction from %o as invalidated.\n", addr);
         cpu.irodd_invalid = 1;
     }
     return 0;
@@ -1717,10 +1734,24 @@ static void hist_dump()
 
 //=============================================================================
 
+static void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic)
+{
+    if (addr_mode == ABSOLUTE_mode)
+        sprintf(icbuf, "%06o", ic);
+    else if (addr_mode == BAR_mode)
+        sprintf(icbuf, "BAR %06o", ic);
+    else
+        sprintf(icbuf, "%o|%06o", seg, ic);
+}
+
+//=============================================================================
+
 #define ic_hist_max 40
 static int ic_hist_ptr;
 static int ic_hist_wrapped;
 static struct {
+    addr_modes_t addr_mode;
+    uint seg;
     uint ic;
     instr_t instr;
 } ic_hist[ic_hist_max];
@@ -1733,9 +1764,12 @@ static void ic_history_init()
 
 static void ic_history_add()
 {
-    // Caller should make sure IR is already set
+    // Caller should make sure IR and PPR are already set
 
+    ic_hist[ic_hist_ptr].addr_mode = get_addr_mode();
+    ic_hist[ic_hist_ptr].seg = PPR.PSR;
     ic_hist[ic_hist_ptr].ic = PPR.IC;
+
     memcpy(&ic_hist[ic_hist_ptr].instr, &cu.IR, sizeof(ic_hist[ic_hist_ptr].instr));
     if (++ic_hist_ptr == ic_hist_max) {
         ic_hist_wrapped = 1;
@@ -1746,11 +1780,17 @@ static void ic_history_add()
 void cmd_dump_history()
 {
     if (ic_hist_wrapped) {
-        for (int i = ic_hist_ptr; i < ic_hist_max; ++i)
-            out_msg("IC: %06o: %s\n", ic_hist[i].ic, instr2text(&ic_hist[i].instr));
+        for (int i = ic_hist_ptr; i < ic_hist_max; ++i) {
+            char icbuf[80];
+            ic2text(icbuf, ic_hist[i].addr_mode, ic_hist[i].seg, ic_hist[i].ic);
+            out_msg("IC: %s: %s\n", icbuf, instr2text(&ic_hist[i].instr));
+        }
     }
-    for (int i = 0; i < ic_hist_ptr; ++i)
-        out_msg("IC: %06o: %s\n", ic_hist[i].ic, instr2text(&ic_hist[i].instr));
+    for (int i = 0; i < ic_hist_ptr; ++i) {
+        char icbuf[80];
+        ic2text(icbuf, ic_hist[i].addr_mode, ic_hist[i].seg, ic_hist[i].ic);
+        out_msg("IC: %s: %s\n", icbuf, instr2text(&ic_hist[i].instr));
+    }
 }
 
 
@@ -1873,8 +1913,8 @@ static void check_events()
                     cycle = FETCH_cycle;    // BUG: is this right?
                 } else
                     events.any = 1;
-                // BUG: kill cpu.xfr
-                if (!cpu.xfr && PPR.IC == IC_temp) {
+                // BUG: kill cpu.trgo or IC_temp
+                if (!cpu.trgo && PPR.IC == IC_temp) {
                     log_msg(WARN_MSG, "CU", "no re-fault, no transfer -- incrementing IC\n");
                     // BUG: Faulted instr doesn't get re-invoked?
                             (void) cancel_run(STOP_IBKPT);

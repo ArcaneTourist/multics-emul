@@ -123,13 +123,16 @@ typedef struct {
 
 
 // more simulator state variables for the cpu
-// these probably belong elsewhere, perhaps control unit data...
+// these probably belong elsewhere, perhaps control unit data or the cu-history regs...
 typedef struct {
-    flag_t ic_odd;  // executing odd pair?
-    flag_t xfr;     // most recent instruction was a transfer instr?
-    uint IC_abs;    // translation of even IC to an absolute address; see ADDRESS of cu history
+    uint IC_abs;    // translation of odd IC to an absolute address; see ADDRESS of cu history
     flag_t irodd_invalid;   // cached odd instr invalid due to memory write by even instr
     uint read_addr; // last absolute read; might be same as CA for our purposes...; see APU RMA
+    // from the control unit history register:
+        flag_t trgo;    // most recent instruction caused a transfer?
+        flag_t ic_odd;  // executing odd pair?
+        flag_t poa;     // prepare operand address
+        uint opcode;    // currently executing opcode
 } cpu_state_t;
 
 
@@ -209,6 +212,11 @@ typedef struct {
 
 /* Control unit data (288 bits) */
 typedef struct {
+    /*
+            NB: Some of the data normally stored here is represented
+        elsewhere -- e.g.,the PPR is a variable outside of this
+        struct.   Other data is live and only stored here.
+    */
     /*      This is a collection of flags and registers from the
         appending unit and the control unit.  The scu and rcu
         instructions store and load these values to an 8 word
@@ -276,6 +284,9 @@ typedef struct {
     /* word 1, continued  */
     struct {
         unsigned oosb:1;    // out of segment bounds
+        unsigned ocall:1;   // outward call
+        // unsigned boc:1;      // bad outward call
+        // unsigned ocb:1;      // out of call brackets
     } word1flags;
 
     /* word 2, continued */

@@ -14,6 +14,7 @@ extern FILE *sim_deb, *sim_log;
 
 static void msg(enum log_level level, const char *who, const char* format, va_list ap);
 uint last_IC;
+uint last_IC_seg;
 
 void log_msg(enum log_level level, const char* who, const char* format, ...)
 {
@@ -25,13 +26,26 @@ void log_msg(enum log_level level, const char* who, const char* format, ...)
     }
 
     // Make sure all messages have a prior display of the IC
-    if (PPR.IC != last_IC) {
+    if (PPR.IC != last_IC || PPR.PSR != last_IC_seg) {
         last_IC = PPR.IC;
+        last_IC_seg = PPR.PSR;
         char *tag = "Debug";
         // char *who = "IC";
-        // out_msg("\n%s: %*s %s  %*sIC: %o\n", tag, 7-strlen(tag), "", who, 18-strlen(who), "", PPR.IC);
-        out_msg("\n");
-        out_msg("%s: %*s IC: %o\n", tag, 7-strlen(tag), "", PPR.IC);
+            // out_msg("\n%s: %*s %s  %*sIC: %o\n", tag, 7-strlen(tag), "", who, 18-strlen(who), "", PPR.IC);
+        char icbuf[80];
+        addr_modes_t addr_mode = get_addr_mode();
+        if (addr_mode == ABSOLUTE_mode)
+            sprintf(icbuf, "%o", PPR.IC);
+        else if (addr_mode == BAR_mode)
+            sprintf(icbuf, "BAR %o", PPR.IC);
+        else
+            sprintf(icbuf, "%o|%o", PPR.PSR, PPR.IC);
+        // out_msg("\n");
+        // out_msg("%s: %*s IC: %s\n", tag, 7-strlen(tag), "", icbuf);
+        msg(DEBUG_MSG, NULL, "\n", NULL);
+        char buf[80];
+        sprintf(buf, "%s: %*s IC: %s\n", tag, 7-strlen(tag), "", icbuf);
+        msg(DEBUG_MSG, NULL, buf, NULL);
     }
 
     va_list ap;
@@ -161,8 +175,10 @@ static void msg(enum log_level level, const char *who, const char* format, va_li
         FILE *stream = streams[s];
         if (stream == NULL)
             continue;
-        fprintf(stream, "%s: %*s %s: %*s", tag, 7-strlen(tag), "", who, 18-strlen(who), "");
-        fflush(stream);
+        if (who != NULL) {
+            fprintf(stream, "%s: %*s %s: %*s", tag, 7-strlen(tag), "", who, 18-strlen(who), "");
+            fflush(stream);
+        }
     
         crnl_out(stream, format, ap);
         fflush(stream);

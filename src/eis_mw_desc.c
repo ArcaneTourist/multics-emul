@@ -152,7 +152,7 @@ void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* 
 
 int n = descp->n;
     fix_mf_len(&descp->n, mfp, descp->nbits);
-#if 1
+#if 0
     if ((descp->n >> 12) != 0) {
         // BUG: trim length to 12 bits even for register lookups
         //log_msg(WARN_MSG, "APU", "parse_eis_alpha_desc: desc: n orig %#o; After mod %#o => %#o\n", n, descp->n, descp->n & MASKBITS(12));
@@ -285,11 +285,11 @@ static int get_eis_an_base(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
         return 1;
     }
 
-    // Debug msg
-    if (descp->area.bitpos == 0) {
-        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Base address is %#o (with no bit offset); range is %#o .. %#o\n", descp->area.addr, descp->area.min_addr, descp->area.max_addr);
-    } else {
-        log_msg(NOTIFY_MSG, moi, "Base address is %#o with bit offset %d; range is %#o .. %#o\n", descp->area.addr, descp->area.bitpos, descp->area.min_addr, descp->area.max_addr);
+    if (opt_debug) {
+        if (descp->area.bitpos == 0)
+            log_msg(DEBUG_MSG, moi, "Base address is %#o (with no bit offset); range is %#o .. %#o\n", descp->area.addr, descp->area.min_addr, descp->area.max_addr);
+        else
+            log_msg(DEBUG_MSG, moi, "Base address is %#o with bit offset %d; range is %#o .. %#o\n", descp->area.addr, descp->area.bitpos, descp->area.min_addr, descp->area.max_addr);
     }
 
     descp->curr.addr = descp->area.addr;
@@ -324,7 +324,7 @@ static int get_eis_an_next_page(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
     int offset = descp->curr.addr - descp->area.addr;   // possibly negative
     uint addr = descp->address + offset;
 
-    log_msg(NOTIFY_MSG, moi, "Determining next address.  Offset from prior translation is %04o(%+d)\n", offset, offset);
+    log_msg(DEBUG_MSG, moi, "Determining next address.  Offset from prior translation is %04o(%+d)\n", offset, offset);
 
     if (get_mf_an_addr(mfp, addr, descp->nbits, &descp->area.addr, &descp->area.bitpos, &descp->area.min_addr, &descp->area.max_addr) != 0) {
         log_msg(WARN_MSG, moi, "Failed: get_mf_an_addr\n");
@@ -342,7 +342,7 @@ static int get_eis_an_next_page(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
             cancel_run(STOP_WARN);
         }
 
-    log_msg(NOTIFY_MSG, moi, "Next page is %06o .. %06o\n", descp->area.min_addr, descp->area.max_addr);
+    if (opt_debug) log_msg(DEBUG_MSG, moi, "Next page is %06o .. %06o\n", descp->area.min_addr, descp->area.max_addr);
 
     descp->curr.addr = descp->area.addr;
 
@@ -408,8 +408,7 @@ static int get_eis_an_fwd(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *ni
         // above -- if we're sure that the addr>max_addr test will
         // never initially fail.
         if (descp->curr.addr > descp->area.max_addr) {
-            // BUG: need to determine current page
-            log_msg(NOTIFY_MSG, moi, "Address %o is past segment or page range of %#o .. %#o\n", descp->curr.addr, descp->area.min_addr, descp->area.max_addr);
+            if (opt_debug) log_msg(DEBUG_MSG, moi, "Address %o is past segment or page range of %#o .. %#o\n", descp->curr.addr, descp->area.min_addr, descp->area.max_addr);
             if (get_eis_an_next_page(mfp, descp) != 0) {
                 log_msg(ERR_MSG, moi, "Cannot access next page\n");
                 cancel_run(STOP_BUG);
@@ -446,8 +445,10 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
     const char* moi = "APU::eis-an-get-r";
 
     int saved_debug = opt_debug;
+#if 0
     if (descp->curr.addr >= descp->area.max_addr || descp->first)
         if (opt_debug == 0) ++ opt_debug;
+#endif
 
     if (descp->first)
         if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Starting\n");
@@ -481,14 +482,8 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
         int ndx = descp->n + descp->area.bitpos / descp->nbits;
         ndx += descp->cn;
         -- ndx; // zero based index, not length
-        // BUG: why the following?
-        //ndx -= descp->cn; // BUG: We assume CN doesn't mean string is shorter than N
         if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Base at %#o.  Using offset of %d (len=%d - 1 + b=%dc - cn=%d) %dbit chars\n",
             descp->area.addr, ndx, descp->n, descp->area.bitpos / descp->nbits, descp->cn, descp->nbits);
-        // BUG: How can reducing n possibly be correct?  Does a MF with
-        // non-zero cn mean less than 'n' bytes are processed?  We aren't
-        // doing this for get-fwd...
-        //descp->n -= descp->cn;    // will hit zero at cn instead of base
         
         // Note that ndx includes offset due to cn and initial bitpos
         descp->curr.addr = descp->area.addr + ndx / nparts;
@@ -506,7 +501,7 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
         // fetch a new src word
 
         if (descp->curr.addr < descp->area.min_addr || descp->curr.addr > descp->area.max_addr) {
-            log_msg(NOTIFY_MSG, moi, "Address %o outside segment or page range of %#o .. %#o\n", descp->curr.addr, descp->area.min_addr, descp->area.max_addr);
+            log_msg(DEBUG_MSG, moi, "Address %o outside segment or page range of %#o .. %#o\n", descp->curr.addr, descp->area.min_addr, descp->area.max_addr);
             if (get_eis_an_next_page(mfp, descp) != 0) {
                 log_msg(ERR_MSG, moi, "Cannot access next page\n");
                 cancel_run(STOP_BUG);
@@ -612,7 +607,7 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
         // Note: Bitno is irrelevent -- if necessary, we folded in the first word
         if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Storing %012Lo to addr=%#o\n", descp->word, descp->curr.addr);
         if (descp->curr.addr > descp->area.max_addr) {
-            log_msg(NOTIFY_MSG, moi, "Address %o is past segment or page range of %#o .. %#o\n", descp->curr.addr, descp->area.min_addr, descp->area.max_addr);
+            log_msg(DEBUG_MSG, moi, "Address %o is past segment or page range of %#o .. %#o\n", descp->curr.addr, descp->area.min_addr, descp->area.max_addr);
             if (get_eis_an_next_page(mfp, descp) != 0) {
                 log_msg(ERR_MSG, moi, "Cannot access next page\n");
                 cancel_run(STOP_BUG);
@@ -748,10 +743,10 @@ int get_eis_indir_addr(t_uint64 word, uint* addrp)
         int32 offset = addr & MASKBITS(15);
         int32 soffset;
         soffset = sign15(offset);
-        log_msg(NOTIFY_MSG, moi, "Indir word %012Lo: pr=%#o, offset=%#o(%d); REG(Td)=%#o\n", word, pr, offset, soffset, td); 
+        if (opt_debug) log_msg(DEBUG_MSG, moi, "Indir word %012Lo: pr=%#o, offset=%#o(%d); REG(Td)=%#o\n", word, pr, offset, soffset, td); 
     } else {
         // use 18 bit addr in all words -- fetch_word will handle
-        log_msg(NOTIFY_MSG, moi, "Indir word %012Lo: offset=%#o(%d); REG(Td)=%#o\n", word, addr, sign18(addr), td); 
+        if (opt_debug) log_msg(DEBUG_MSG, moi, "Indir word %012Lo: offset=%#o(%d); REG(Td)=%#o\n", word, addr, sign18(addr), td); 
     }
 
     int bitno;

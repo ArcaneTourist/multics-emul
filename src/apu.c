@@ -98,9 +98,14 @@ void set_addr_mode(addr_modes_t mode)
         IR.not_bar_mode = 1;
         if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Setting absolute mode.\n");
     } else if (mode == APPEND_mode) {       // BUG: is this correct?
+        if (opt_debug>0) {
+            if (! IR.abs_mode && IR.not_bar_mode)
+                log_msg(DEBUG_MSG, "APU", "Keeping append mode.\n");
+            else
+                log_msg(DEBUG_MSG, "APU", "Setting append mode.\n");
+        }
         IR.abs_mode = 0;
         IR.not_bar_mode = 1;
-        if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Setting append mode.\n");
     } else if (mode == BAR_mode) {
         IR.abs_mode = 0;    // BUG: is this correct?
         IR.not_bar_mode = 0;
@@ -614,7 +619,6 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 ca_tempp->tag = word & MASKBITS(6);
                 if (TPR.CA % 2 == 0 && (ca_tempp->tag == 041 || ca_tempp->tag == 043)) {
                         // ++ opt_debug; ++ cpu_dev.dctrl;
-                        log_msg(NOTIFY_MSG, "APU::IR", "found ITS/ITP\n");  // BUG: remove this msg
                         int ret = do_its_itp(ip, ca_tempp, word);
                         if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR", "post its/itp: TPR.CA=0%o, tag=0%o\n", TPR.CA, ca_tempp->tag);
                         if (ret != 0) {
@@ -944,33 +948,33 @@ void cmd_dump_vm()
 {
     // Dump VM info -- However, we only know about what's in the cache registers
 
-    printf("DSBR: addr=0%08o, bound=0%o(%d), unpaged=%c\n",
+    out_msg("DSBR: addr=0%08o, bound=0%o(%d), unpaged=%c\n",
         DSBR.addr, DSBR.bound, DSBR.bound, DSBR.u ? 'Y' : 'N');
     if (cu.SD_ON)
-        printf("SDWAM is enabled.\n");
+        out_msg("SDWAM is enabled.\n");
     else
-        printf("SDWAM is NOT enabled.\n");
+        out_msg("SDWAM is NOT enabled.\n");
     if (cu.PT_ON)
-        printf("PTWAM is enabled.\n");
+        out_msg("PTWAM is enabled.\n");
     else
-        printf("PTWAM is NOT enabled.\n");
+        out_msg("PTWAM is NOT enabled.\n");
     if (DSBR.u)
-        printf("DSBR: SDW for segment 'segno' is at %08o + 2 * segno.\n", DSBR.addr);
+        out_msg("DSBR: SDW for segment 'segno' is at %08o + 2 * segno.\n", DSBR.addr);
     else {
-        printf("DSBR: Offset (y1) in page table for segment 'segno' is at (2 * segno)%%%d;\n", page_size);
-        printf("DSBR: PTW for segment 'segno' is at 0%08o + (2 * segno - y1)/%d.\n", DSBR.addr, page_size);
-        printf("DSBR: SDW for segment 'segno' is at PTW.addr<<6 + y1.\n");
+        out_msg("DSBR: Offset (y1) in page table for segment 'segno' is at (2 * segno)%%%d;\n", page_size);
+        out_msg("DSBR: PTW for segment 'segno' is at 0%08o + (2 * segno - y1)/%d.\n", DSBR.addr, page_size);
+        out_msg("DSBR: SDW for segment 'segno' is at PTW.addr<<6 + y1.\n");
     }
     for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i) {
-        printf("SDWAM[%d]: ptr(segno)=0%05o, is-full=%c, use=0%02o(%02d)\n",
+        out_msg("SDWAM[%d]: ptr(segno)=0%05o, is-full=%c, use=0%02o(%02d)\n",
             i, SDWAM[i].assoc.ptr, SDWAM[i].assoc.is_full ? 'Y' : 'N',
             SDWAM[i].assoc.use, SDWAM[i].assoc.use);
         SDW_t *sdwp = &SDWAM[i].sdw;
-        printf("\tSDW for seg %d: addr = 0%08o, r1=%o r2=%o r3=%o, f=%c, fc=0%o.\n",
+        out_msg("\tSDW for seg %d: addr = 0%08o, r1=%o r2=%o r3=%o, f=%c, fc=0%o.\n",
             SDWAM[i].assoc.ptr, sdwp->addr, sdwp->r1, sdwp->r2, sdwp->r3, sdwp->f ? 'Y' : 'N', sdwp->fc);
-        printf("\tbound = 0%05o(%d) => %06o(%u)\n",
+        out_msg("\tbound = 0%05o(%d) => %06o(%u)\n",
             sdwp->bound, sdwp->bound, sdwp->bound * 16 + 16, sdwp->bound * 16 + 16);
-        printf("\tr=%c e=%c w=%c, priv=%c, unpaged=%c, g=%c, c=%c, cl=%05o\n",
+        out_msg("\tr=%c e=%c w=%c, priv=%c, unpaged=%c, g=%c, c=%c, cl=%05o\n",
             sdwp->r ? 'Y' : 'N', sdwp->e ? 'Y' : 'N', sdwp->w ? 'Y' : 'N',
             sdwp->priv ? 'Y' : 'N', sdwp->u ? 'Y' : 'N', sdwp->g ? 'Y' : 'N',
             sdwp->c ? 'Y' : 'N', sdwp->cl);
