@@ -10,6 +10,9 @@ wc:
 opcode-count:
 	@echo `grep -n 'case opcode._' opu.c | grep -cv ' + 0:'` of `grep -c 'opcode._.*=' opcodes.h`
 
+t: t.c
+	gcc -o t t.c
+
 hw6180_cpu.o: *.h
 hw6180_sys.o: *.h
 opcode_text.o: *.h

@@ -35,6 +35,7 @@ static void decode_SDW(t_uint64 word0, t_uint64 word1, SDW_t *sdwp);
 static SDWAM_t* page_in_sdw(void);
 static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uint *maxaddrp);
 static void reg_mod_x(uint td, int off, int nbits);
+static void register_mod(uint td, uint off, uint *bitnop, int nbits);
 
 //=============================================================================
 
@@ -158,6 +159,86 @@ int is_priv_mode()
 
 //=============================================================================
 
+void reg2text(char* buf, uint r)
+{
+    switch(r) {
+        case 0: *buf = 0; return;
+        case 1: strcpy(buf, "au"); return;
+        case 2: strcpy(buf, "qu"); return;
+        case 3: strcpy(buf, "du"); return;
+        case 4: strcpy(buf, "ic"); return;
+        case 5: strcpy(buf, "al"); return;
+        case 6: strcpy(buf, "ql"); return;
+        case 7: strcpy(buf, "dl"); return;
+        case 010: strcpy(buf, "x0"); return;
+        case 011: strcpy(buf, "x1"); return;
+        case 012: strcpy(buf, "x2"); return;
+        case 013: strcpy(buf, "x3"); return;
+        case 014: strcpy(buf, "x4"); return;
+        case 015: strcpy(buf, "x5"); return;
+        case 016: strcpy(buf, "x6"); return;
+        case 017: strcpy(buf, "x7"); return;
+        default:
+            sprintf(buf, "<illegal reg mod td=%#o>", r);
+    }
+}
+
+void mod2text(char *buf, uint tm, uint td)
+{
+    if (buf == NULL)
+        return;
+    switch(tm) {
+        case 0: // R
+            if (td == 0)
+                *buf = 0;
+            else {
+                *buf = ',';
+                reg2text(buf+1, td);
+            }
+            return;
+        case 1: // RI
+            *buf = ',';
+            if (td == 3 || td == 7)
+                sprintf(buf, "<illegal RI mod td=%#o>", td);
+            else {
+                reg2text(buf+1, td);
+                strcpy(buf+strlen(buf), "*");
+            }
+            return;
+        case 2:
+            switch(td) {
+                case 0: strcpy(buf, ",fl"); return;
+                case 1: sprintf(buf, "<illegal IT mod td=%#o>", td); return;
+                case 2: sprintf(buf, "<illegal IT mod td=%#o>", td); return;
+                case 3: sprintf(buf, "<illegal IT mod td=%#o>", td); return;
+                case 4: strcpy(buf, ",sd"); return;
+                case 5: strcpy(buf, ",scr"); return;
+                case 6: strcpy(buf, ",f2"); return;
+                case 7: strcpy(buf, ",f3"); return;
+                case 010: strcpy(buf, ",ci"); return;
+                case 011: strcpy(buf, ",i"); return;
+                case 012: strcpy(buf, ",sc"); return;
+                case 013: strcpy(buf, ",ad"); return;
+                case 014: strcpy(buf, ",di"); return;
+                case 015: strcpy(buf, ",dic"); return;
+                case 016: strcpy(buf, ",id"); return;
+                case 017: strcpy(buf, ",idc"); return;
+                default: sprintf(buf, "<illegal IT tag td=%#o>", td);
+            }
+            return;
+        case 3: // IR
+            buf[0] = ',';
+            buf[1] = '*';
+            reg2text(buf+2, td);
+            return;
+        default:
+            sprintf(buf, "<illegal tag tm=%#o td=%#o>", tm, td);
+            return;
+    }
+}
+
+//=============================================================================
+
 char* instr2text(const instr_t* ip)
 {
     static char buf[100];
@@ -173,21 +254,26 @@ char* instr2text(const instr_t* ip)
             offset, ip->inhibit,
             ip->mods.mf1.ar, ip->mods.mf1.rl, ip->mods.mf1.id, ip->mods.mf1.reg);
     } else {
+        char mod[40];
+        if (ip->mods.single.tag == 0)
+            strcpy(mod, "\"\"");
+        else
+            mod2text(mod, ip->mods.single.tag >> 4, ip->mods.single.tag & 017);
         if (ip->mods.single.pr_bit == 0) {
             uint32 offset = ip->addr;
             int32 soffset = sign18(ip->addr);
-            sprintf(buf, "%s, offset 0%06o(%+d), inhibit %u, pr=N, tag 0%03o(Tm=%u,Td=0%02o)",
+            sprintf(buf, "%s, offset 0%06o(%+d), inhibit %u, tag %s",
                 opname, 
                 offset, soffset, 
-                ip->inhibit, ip->mods.single.tag, ip->mods.single.tag >> 4, ip->mods.single.tag & 017);
+                ip->inhibit, mod);
         } else {
             uint pr = ip->addr >> 15;
             int32 offset = ip->addr & MASKBITS(15);
             int32 soffset = sign15(offset);
-            sprintf(buf, "%s, PR %d, offset 0%06o(%+d), inhibit %u, pr=Y, tag 0%03o(Tm=%u,Td=0%02o)",
+            sprintf(buf, "%s, PR %d, offset 0%06o(%+d), inhibit %u, tag %s",
                 opname, 
                 pr, offset, soffset, 
-                ip->inhibit, ip->mods.single.tag, ip->mods.single.tag >> 4, ip->mods.single.tag & 017);
+                ip->inhibit, mod);
         }
     }
     return buf;
@@ -206,6 +292,9 @@ char* print_instr(t_uint64 word)
 
 int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, int* bitnop, uint *minaddrp, uint* maxaddrp)
 {
+    // Called only by the EIS multi-word instruction routines:
+    //      get_eis_indir_ptr(t_uint64 word, uint *addrp)
+    //      int get_mf_an_addr(const eis_mf_t* mfp, uint y, int nbits, uint *addrp, int* bitnop, uint *minaddrp, uint *maxaddrp)
     // Return absolute address given an address, 'ar' flag, 'reg' modifier, and
     // nbits.  Nbits is the data size and is used only for reg modifications.
     // Arg ar should be negative to use current TPR or non-negative to use a
@@ -242,17 +331,8 @@ int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, int* bitnop
         saved_CA = TPR.CA;
         TPR.CA = 0;
         uint o = offset;
-#ifdef FWBUG
-        // generate buggy result for historical tracking purposes
-        log_msg(ERR_MSG, "APU::get-addr", "Generating incorrect results for debugging.\n");
-        if (TPR.TSR == 0401 && offset == 011)
-            reg_mod(reg, offset);
-        else
-            reg_mod_x(reg, offset, nbits);
-        cancel_run(STOP_BUG);
-#else
-        reg_mod_x(reg, offset, nbits);
-#endif
+        // reg_mod_x(reg, offset, nbits);
+        register_mod(reg, offset, bitnop, nbits);
         offset = TPR.CA;
         TPR.CA = saved_CA;
         // BUG: ERROR: Apply EIS reg mod -- is this already fixed?
@@ -682,15 +762,116 @@ void reg_mod(uint td, int off)
 
 static int32 nbits2words(int x, int nbits)
 {
+    if (x == 0)
+        return 0;
     int div = 36 / nbits;
     if (x % div != 0) {
-        log_msg(ERR_MSG, "APU", "Reg mod for %d-bit data: Value %d isn't evenly divisible by %d\n", nbits, x, div);
-        cancel_run(STOP_BUG);
+        if (nbits == 1)
+            log_msg(NOTIFY_MSG, "APU", "Reg mod for one-bit data: Value %#o(%d)\n", x, x);
+        else {
+            log_msg(ERR_MSG, "APU", "Reg mod for %d-bit data: Value %d isn't evenly divisible by %d\n", nbits, x, div);
+            cancel_run(STOP_BUG);
+            return 0;
+        }
+    } else {
+        if (nbits != 36) {
+            log_msg(DEBUG_MSG, "APU", "Reg mod for %d-bit data: Value %d/%d yields %d\n", nbits, x, div, x/div);
+        }
     }
     return x / div;
 }
 
-static void reg_mod_x(uint td, int off, int nbits)
+
+static void chars_to_words(int n, uint nbits, uint *offp, uint *bitnop)
+{
+    const char *moi = "APU::reg-mod";
+    if (n == 0)
+        return;
+
+    int chars_per_word = 36 / nbits;
+    *offp +=  n / chars_per_word;
+
+    uint nchars = n % chars_per_word;
+    if (nchars != 0) {
+        log_msg(NOTIFY_MSG, moi, "Reg mod for %d-bit data: Value %d isn't evenly divisible by %d; result will contain a bit offset.\n", nbits, n, chars_per_word);
+        *bitnop += nchars * nbits;
+        if (*bitnop > 36) {
+            log_msg(WARN_MSG, "APU", "Reg mod for %d-bit data: Result is over 36 bits.  Wrapping.\n", nbits);
+            *offp += *bitnop / 36;
+            *bitnop = *bitnop % 36;
+        }
+    } else {
+        if (nbits != 36) {
+            log_msg(DEBUG_MSG, "APU", "Reg mod for %d-bit data: Value %d/%d yields %d words\n", nbits, n, chars_per_word, n/chars_per_word);
+        }
+    }
+}
+
+
+static void register_mod(uint td, uint off, uint *bitnop, int nbits)
+{
+    char *moi = "APU::reg-mod";
+    switch(td) {
+        case 0:
+            break;  // no mod
+        case 1: // ,au
+            chars_to_words(sign18(getbits36(reg_A, 0, 18)), nbits, &off, bitnop);
+            TPR.CA = off;
+            TPR.CA &= MASK18;
+            break;
+        case 2: // ,qu
+            chars_to_words(sign18(getbits36(reg_Q, 0, 18)), nbits, &off, bitnop);
+            TPR.CA = off;
+            TPR.CA &= MASK18;
+            break;
+        case 3: // ,du
+            TPR.is_value = td;  // BUG: Use "direct operand flag" instead
+            TPR.value = ((t_uint64) TPR.CA) << 18;
+            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Mod du: Value from offset 0%o is 0%Lo\n", TPR.CA, TPR.value);
+            break;
+        case 4: // PPR.IC
+            TPR.CA = off + PPR.IC;  // BUG: IC assumed to be unsigned
+            TPR.CA &= MASK18;
+            break;
+        case 5:
+            chars_to_words(sign18(getbits36(reg_A, 18, 18)), nbits, &off, bitnop);
+            TPR.CA = off;
+            TPR.CA &= MASK18;
+            if (opt_debug) {
+                uint a = getbits36(reg_A, 18, 18);
+                log_msg(DEBUG_MSG, "APU", "Tm=REG,Td=%02o: offset 0%o(%d) + A=0%Lo=>0%o(%+d decimal) ==> 0%o=>0%o(%+d)\n",
+                    td, off, off, reg_A, a, sign18(a), TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
+            }
+            break;
+        case 6:
+            chars_to_words(sign18(getbits36(reg_Q, 18, 18)), nbits, &off, bitnop);
+            TPR.CA = off;
+            TPR.CA &= MASK18;
+            break;
+        case 7: // ,dl
+            TPR.is_value = td;  // BUG: Use "direct operand flag" instead
+            TPR.value = TPR.CA; // BUG: Should we sign?
+            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Mod dl: Value from offset 0%o is 0%Lo\n", TPR.CA, TPR.value);
+            break;
+        case 010:
+        case 011:
+        case 012:
+        case 013:
+        case 014:
+        case 015:
+        case 016:
+        case 017:
+            chars_to_words(sign18(reg_X[td&07]), nbits, &off, bitnop);
+            TPR.CA = off;
+            TPR.CA &= MASK18;
+            if (opt_debug)
+                log_msg(DEBUG_MSG, "APU", "Tm=REG,Td=%02o: offset 0%o + X[%d]=0%o(%+d decimal)==>0%o(+%d) yields 0%o (%+d decimal)\n",
+                    td, off, td&7, reg_X[td&7], reg_X[td&7], sign18(reg_X[td&7]), sign18(reg_X[td&7]), TPR.CA, TPR.CA);
+            break;
+    }
+}
+
+static void old_reg_mod_x(uint td, int off, int nbits)
 {
     switch(td) {
         case 0:
@@ -745,6 +926,48 @@ static void reg_mod_x(uint td, int off, int nbits)
                     td, off, td&7, reg_X[td&7], reg_X[td&7], sign18(reg_X[td&7]), sign18(reg_X[td&7]), TPR.CA, TPR.CA);
             break;
     }
+}
+
+static void reg_mod_x(uint td, int off, int nbits)
+{
+    char *moi = "APU::reg-mod";
+
+#if 0
+    uint t_ca = TPR.CA;
+    t_uint64 t_v = TPR.value;
+    uint t_iv = TPR.is_value;
+
+    old_reg_mod_x(td, off, nbits);
+    uint o_ca = TPR.CA;
+    t_uint64 o_v = TPR.value;
+    uint o_iv = TPR.is_value;
+
+    TPR.CA = t_ca;
+    TPR.value = t_v;
+    TPR.is_value = t_iv;
+#endif
+
+    uint bitno = 0;
+    register_mod(td, off, &bitno, nbits);
+    if (bitno != 0) {
+        log_msg(ERR_MSG, moi, "Unable to handle result with bit offset.\n");
+        cancel_run(STOP_BUG);
+    }
+
+#if 0
+    int err = 0;
+    if (TPR.CA != o_ca) {
+        err = 1;  log_msg(ERR_MSG, moi, "old/new CA mismatch; old %#o, new %#o\n", o_ca, TPR.CA);
+    }
+    if (TPR.is_value != o_iv) {
+        err = 1;  log_msg(ERR_MSG, moi, "old/new is-value mismatch; old %o, new %o\n", o_iv, TPR.is_value);
+    }
+    if (TPR.value != o_v) {
+        err = 1;  log_msg(ERR_MSG, moi, "old/new CA mismatch old %Lo, new %Lo\n", o_v, TPR.value);
+    }
+    if (err)
+        cancel_run(STOP_BUG);
+#endif
 }
 
 //=============================================================================

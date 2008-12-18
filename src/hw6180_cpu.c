@@ -638,10 +638,18 @@ static t_stat control_unit(void)
                 cycle = FAULT_cycle;
                 cpu.irodd_invalid = 1;
             } else {
+                if (sim_brk_summ && sim_brk_test (cpu.read_addr, SWMASK ('E'))) {
+                    log_msg(WARN_MSG, "CU", "Execution Breakpoint\n");
+                    reason = STOP_IBKPT;    /* stop simulation */
+                }
                 if (fetch_word(PPR.IC - PPR.IC % 2 + 1, &cu.IRODD) != 0) {
                     cycle = FAULT_cycle;
                     cpu.irodd_invalid = 1;
                 } else {
+                    if (sim_brk_summ && sim_brk_test (cpu.read_addr, SWMASK ('E'))) {
+                        log_msg(WARN_MSG, "CU", "Execution Breakpoint\n");
+                        reason = STOP_IBKPT;    /* stop simulation */
+                    }
                     cpu.irodd_invalid = 0;
                     if (opt_debug && get_addr_mode() != ABSOLUTE_mode)
                         log_msg(DEBUG_MSG, "CU", "Fetched odd half of instruction pair from %06o\n", PPR.IC - PPR.IC % 2 + 1);
@@ -1277,11 +1285,12 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
             return 0;
     }
 
-    if (sim_brk_summ)
+    if (sim_brk_summ) {
         if (sim_brk_test (addr, SWMASK ('M'))) {
             log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address %#o\n", addr);
             (void) cancel_run(STOP_IBKPT);
         }
+    }
 
     cpu.read_addr = addr;
     *wordp = M[addr];   // absolute memory reference

@@ -15,6 +15,7 @@
 */
 
 #include "hw6180.h"
+#include <ctype.h>  // for isprint
 
 const int do_18bit_math = 0;    // diag tape seems to want this, proably inappropriately
 #define XED_NEW 1
@@ -51,6 +52,8 @@ static int op_mvt(const instr_t* ip);
 static int op_cmpc(const instr_t* ip);
 // static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, int nargs);    // BUG: temp
 static int do_spbp(int n);
+static int op_csl(const instr_t* ip);
+static int op_scm(const instr_t* ip);
 
 static uint saved_tro;
 
@@ -213,9 +216,32 @@ static int do_an_op(instr_t *ip)
                 return 0;
             }
 
-            // opcode0_lca unimplemented
+            case opcode0_lca: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    reg_A = negate36(word);
+                    IR.zero = reg_A == 0;
+                    IR.neg = bit36_is_neg(reg_A);
+                    IR.overflow = reg_A == ((t_uint64)1<<35);
+                }
+                return ret;
+            }
+
             // opcode0_lcaq unimplemented
-            // opcode0_lcq unimplemented
+
+            case opcode0_lcq: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    reg_Q = negate36(word);
+                    IR.zero = reg_Q == 0;
+                    IR.neg = bit36_is_neg(reg_Q);
+                    IR.overflow = reg_Q == ((t_uint64)1<<35);
+                }
+                return ret;
+            }
+
             // opcode0_lcx0 .. lcx7 unimplemented
 
             case opcode0_lda: {
@@ -417,7 +443,19 @@ static int do_an_op(instr_t *ip)
                 ret = store_word(TPR.CA, word);
                 return ret;
             }
-            // opcode0_stcq unimplemented
+            case opcode0_stcq: {
+                t_uint64 word;
+                int ret = fetch_word(TPR.CA, &word);
+                t_uint64 orig = word;
+                if (ret == 0) {
+                    for (int i = 0; i < 6; ++i)
+                        if ((ip->mods.single.tag & (1 << (5-i))) != 0)
+                            word = setbits36(word, i * 6, 6, getbits36(reg_Q, i * 6, 6));
+                    ret = store_word(TPR.CA, word);
+                }
+                return ret;
+            }
+
             // opcode0_stcd unimplemented
             case opcode0_sti: {
                 t_uint64 word;
@@ -547,8 +585,11 @@ static int do_an_op(instr_t *ip)
                     if (n <= 36) {
                         reg_A = ((reg_A << n) & MASK36) | (reg_Q >> (36 - n));
                         reg_Q <<= n;
-                    } else
-                        reg_Q = setbits36(0, 0, 72-n, reg_A);
+                    } else {
+                        // reg_Q = setbits36(0, 0, 72-n, reg_A);
+                        reg_A = (reg_Q << (n - 36)) & MASK36;
+                        reg_Q = 0;
+                    }
                 }
                 if (reg_A != a || reg_Q != q) {
                     log_msg(NOTIFY_MSG, "OPU::lls", "BUG Fix: Shift of %012Lo,%012Lo by %d bits\n", asv, qsv, n);
@@ -561,7 +602,35 @@ static int do_an_op(instr_t *ip)
                 IR.carry = init_neg != IR.neg;
                 return 0;
             }
-            // _lrl unimplemented // long right logical
+
+            case opcode0_lrl: {     // long right logical
+                unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
+                int init_neg = bit36_is_neg(reg_A);
+                log_msg(NOTIFY_MSG, "OPU::lrl", "Debug: Shift AQ %012Lo,%012Lo of %d bits.\n", reg_A, reg_Q, n);    // BUG: temp
+                if (n >= 72) {
+                    log_msg(NOTIFY_MSG, "OPU::lrl", "Shift of %d bits.\n", n);
+                    if (init_neg) {
+                        reg_A = MASK36;
+                        reg_Q = MASK36;
+                    } else {
+                        reg_A = 0;
+                        reg_Q = 0;
+                    }
+                } else if (n != 0) {
+                    if (n <= 36) {
+                        reg_Q >>= n;
+                        reg_Q = setbits36(reg_Q, 0, n, reg_A);
+                    } else {
+                        reg_Q = reg_A >> (n - 36);
+                    }
+                    reg_A >>= n;
+                }
+                IR.zero = reg_A == 0 && reg_Q == 0;
+                IR.neg = init_neg;
+                log_msg(NOTIFY_MSG, "OPU::lrl", "Debug: Result:  %012Lo,%012Lo\n", reg_A, reg_Q);   // BUG: temp
+                return 0;
+            }
+
             case opcode0_lrs: {     // Long right shift
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 int init_neg = bit36_is_neg(reg_A);
@@ -576,23 +645,24 @@ static int do_an_op(instr_t *ip)
                         reg_Q = 0;
                     }
                 } else if (n != 0) {
-                    reg_Q >>= n;
-                    if (n <= 36)
+                    if (n <= 36) {
+                        reg_Q >>= n;
                         reg_Q = setbits36(reg_Q, 0, n, reg_A);
-                    else {
-                        if (init_neg)
+                    } else {
+                        reg_Q = reg_A >> (n - 36);
+                        if (init_neg && n != 36)
                             reg_Q = setbits36(reg_Q, 0, n-36, ~0);
-                        reg_Q = setbits36(reg_Q, n-36, 72-n, reg_A);
                     }
                     reg_A >>= n;
                     if (init_neg)
-                        reg_A = setbits36(reg_A, 0, max(n, 36), ~0);
+                        reg_A = setbits36(reg_A, 0, min(n, 36), ~0);
                 }
                 IR.zero = reg_A == 0 && reg_Q == 0;
                 IR.neg = init_neg;
                 log_msg(NOTIFY_MSG, "OPU::lrs", "Debug: Result:  %012Lo,%012Lo\n", reg_A, reg_Q);   // BUG: temp
                 return 0;
             }
+
             case opcode0_qlr: {
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 reg_Q = lrotate36(reg_Q, n);
@@ -616,18 +686,6 @@ static int do_an_op(instr_t *ip)
                 IR.zero = reg_Q == 0;
                 IR.neg = bit36_is_neg(reg_Q);
                 return 0;
-#if 0
-                // BUG: ERROR: Why isn't this appropriate?
-                t_uint64 word;
-                int ret = fetch_op(ip, &word);
-                if (ret == 0) {
-                    int n = getbits36(word, 11, 7);
-                    reg_Q >>= n;
-                    IR.zero = reg_Q == 0;
-                    IR.neg = bit36_is_neg(reg_Q);
-                }
-                return ret;
-#endif
             }
             case opcode0_qrs: { // Q Right Shift (with sign fill)
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
@@ -677,6 +735,29 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
+
+            case opcode0_adlq: {    // Add logical to Q
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    t_uint64 q = reg_Q;
+                    reg_Q += word;
+                    if ((IR.carry = reg_Q & MASK36) != 0)
+                        reg_Q &= MASK36;
+                    IR.zero = reg_Q == 0;
+                    IR.neg = bit36_is_neg(reg_Q);
+                    if (do_18bit_math && TPR.is_value == 7 && q == 0) {
+                        int is_neg = bit18_is_neg(reg_Q);
+                        if (is_neg != IR.neg) {
+                            log_msg(WARN_MSG, "OPU::adlq", "Changing IR.neg to %d for ,dl operand.\n", is_neg);
+                            IR.neg = is_neg;
+                            cancel_run(STOP_WARN);
+                        }
+                    }
+                }
+                return ret;
+            }
+
             case opcode0_adlx0:     // Add logical to X[n]
             case opcode0_adlx1:
             case opcode0_adlx2:
@@ -731,7 +812,14 @@ static int do_an_op(instr_t *ip)
                     ret = store_word(TPR.CA, word);
                 return ret;
             }
-            // case opcode0_asq unimplemented
+            case opcode0_asq: { // Add Stored to Q
+                t_uint64 word = reg_Q;
+                int ret = op_add(ip, &word);
+                if (ret == 0)
+                    ret = store_word(TPR.CA, word);
+                return ret;
+            }
+
 
             case opcode0_asx0:
             case opcode0_asx1:
@@ -1701,7 +1789,15 @@ static int do_an_op(instr_t *ip)
                 cpu.trgo = 1;
                 return 0;
             }
-            // ttf unimplemented
+
+            case opcode0_ttf:
+                if (! IR.tally_runout) {
+                    PPR.IC = TPR.CA;
+                    PPR.PSR = TPR.TSR;
+                    cpu.trgo = 1;
+                }
+                return 0;
+
             case opcode0_tze:
                 if (IR.zero) {
                     PPR.IC = TPR.CA;
@@ -1874,7 +1970,24 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
 
-            // adwp0 .. adwp7 unimplemented
+            case opcode0_adwp0:
+            case opcode0_adwp1:
+            case opcode0_adwp2:
+            case opcode0_adwp3:
+            case opcode0_adwp4:
+            case opcode0_adwp6:
+            case opcode0_adwp7: {
+                int n = (op & 03) + (op >= opcode0_adwp4) ? 4 : 0;
+                int ret;
+                t_uint64 word;
+                if ((ret = fetch_op(ip, &word)) == 0) {
+                    AR_PR[n].wordno += word >> 18;
+                    AR_PR[n].PR.bitno = 0;
+                    AR_PR[n].AR.charno = 0;
+                    AR_PR[n].AR.bitno = 0;
+                }
+                return ret;
+            }
 
             case opcode0_epaq:
                 reg_A = (TPR.TSR & MASKBITS(15)) << 18;
@@ -2663,7 +2776,13 @@ static int do_an_op(instr_t *ip)
 
             // opcode1_scd unimplemented -- scan characters double
             // opcode1_scdr unimplemented -- scan characters double in reverse
-            // opcode1_scm unimplemented -- scan with mask
+            case opcode1_scm: { // scan with mask
+                extern DEVICE cpu_dev; ++opt_debug; ++ cpu_dev.dctrl;
+                int ret = op_scm(ip);
+                --opt_debug; --cpu_dev.dctrl;
+                return ret;
+            }
+            
             // opcode1_scmr unimplemented -- scan with mask in reverse
 
             case opcode1_tct: {
@@ -2689,8 +2808,14 @@ static int do_an_op(instr_t *ip)
             // mvn unimplemented -- move numeric
             // mvne unimplemented -- move numeric edited
 
+            case opcode1_csl: {     // combine bit strings left
+                extern DEVICE cpu_dev; ++opt_debug; ++ cpu_dev.dctrl;
+                int ret = op_csl(ip);
+                --opt_debug; --cpu_dev.dctrl;
+                return ret;
+            }
+            
             // csr unimplemented -- combine bit strings right
-            // csl unimplemented -- combine bit strings left
             // cmpb unimplemented -- compare bit strings
             // sztl unimplemented -- similar to csl?
             // sztr unimplemented -- similar to csr?
@@ -3145,8 +3270,8 @@ static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, in
     eis_alpha_desc_t desc2;
     parse_eis_alpha_desc(word2, &mf2, &desc2);
 
-    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&desc1));
-    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&desc2));
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
+    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
     if (nargs == 3) {
         t_uint64 word3;
         if (fetch_word(PPR.IC + 3, &word3) != 0)
@@ -3182,7 +3307,6 @@ static int op_mlr(const instr_t* ip)
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
         return 1;
 
-    PPR.IC += 3;
     cpu.irodd_invalid = 1;
 
     eis_alpha_desc_t desc1;
@@ -3190,8 +3314,8 @@ static int op_mlr(const instr_t* ip)
     eis_alpha_desc_t desc2;
     parse_eis_alpha_desc(word2, &mf2, &desc2);
 
-    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&desc1));
-    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&desc2));
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
+    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
 
     int ret = 0;
 
@@ -3219,11 +3343,13 @@ static int op_mlr(const instr_t* ip)
     // write unsaved data (if any)
     if (ret < 2)
         if (save_eis_an(&mf2, &desc2) != 0)
-            return 1;
+            ret = 2;
 
     //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
     //cancel_run(STOP_WARN);
     log_msg(DEBUG_MSG, moi, "finished.\n");
+
+    PPR.IC += 3;        // BUG: when should we bump IC?  probably not for seg faults, but probably yes for overflow
     return ret != 0;
 }
 
@@ -3254,23 +3380,24 @@ static int op_tct(const instr_t* ip, int fwd)
     if (fetch_mf_ops(&ip->mods.mf1, &word1, NULL, &word2, NULL, &word3) != 0)
         return 1;
 
-    PPR.IC += 4;
     cpu.irodd_invalid = 1;
 
     eis_alpha_desc_t desc1;
     parse_eis_alpha_desc(word1, &ip->mods.mf1, &desc1);
-    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&desc1));
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
     uint addr2, addr3;
-    if (get_eis_indir_addr(word2, &addr2) != 0)
+    if (get_eis_indir_addr(word2, &addr2) != 0) {
+        log_msg(NOTIFY_MSG, moi, "Problem reading address operand.\n");
         return 1;
-    if (get_eis_indir_addr(word3, &addr3) != 0)
+    }
+    if (get_eis_indir_addr(word3, &addr3) != 0) {
+        log_msg(NOTIFY_MSG, moi, "Problem reading address operand.\n");
         return 1;
+    }
     log_msg(DEBUG_MSG, moi, "table addr: %#o\n", addr2);
     log_msg(DEBUG_MSG, moi, "result addr: %#o\n", addr3);
 
     uint n = desc1.n;
-    // extern DEVICE cpu_dev;
-    //if (!fwd) { ++opt_debug; ++ cpu_dev.dctrl;}
     while (desc1.n > 0) {
         log_msg(DEBUG_MSG, moi, "Remaining length %d\n", desc1.n);
         uint m;
@@ -3300,6 +3427,7 @@ static int op_tct(const instr_t* ip, int fwd)
             }
             //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
             //cancel_run(STOP_IBKPT);
+            PPR.IC += 4;        // BUG: when should we bump IC?  probably not for seg faults, but probably yes for overflow
             return 0;
         }
     }
@@ -3311,7 +3439,8 @@ static int op_tct(const instr_t* ip, int fwd)
 
     //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
     //cancel_run(STOP_IBKPT);
-    // log_msg(DEBUG_MSG, moi, "finished.\n");
+    log_msg(NOTIFY_MSG, moi, "finished.\n");
+    PPR.IC += 4;        // BUG: when should we bump IC?  probably not for seg faults, but probably yes for overflow
     return 0;
 }
 
@@ -3333,7 +3462,6 @@ static int op_mvt(const instr_t* ip)
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, &word3) != 0)
         return 1;
 
-    PPR.IC += 4;
     cpu.irodd_invalid = 1;
 
     eis_alpha_desc_t desc1;
@@ -3344,8 +3472,8 @@ static int op_mvt(const instr_t* ip)
     if (get_eis_indir_addr(word3, &addr3) != 0)
         return 1;
 
-    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&desc1));
-    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&desc2));
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
+    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
     log_msg(DEBUG_MSG, moi, "translation table at %#Lo => %#o\n", word3, addr3);
 
     int ret = 0;
@@ -3380,12 +3508,14 @@ static int op_mvt(const instr_t* ip)
         }
     }
     // write unsaved data (if any)
-    if (save_eis_an(&mf2, &desc2) != 0)
-        return 1;
+    if (ret == 0)
+        if (save_eis_an(&mf2, &desc2) != 0)
+            return 1;
 
     //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
     //cancel_run(STOP_WARN);
     log_msg(DEBUG_MSG, moi, "finished.\n");
+    PPR.IC += 4;        // BUG: when should we bump IC?  probably not for seg faults, but probably yes for overflow
     return ret;
 }
 
@@ -3405,7 +3535,6 @@ static int op_cmpc(const instr_t* ip)
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
         return 1;
 
-    PPR.IC += 3;
     cpu.irodd_invalid = 1;
 
     eis_alpha_desc_t desc1;
@@ -3414,8 +3543,8 @@ static int op_cmpc(const instr_t* ip)
     word2 = setbits36(word2, 21, 2, desc1.ta);  // force (ignored) type of mf2 to match mf1
     parse_eis_alpha_desc(word2, &mf2, &desc2);
 
-    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&desc1));
-    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&desc2));
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
+    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
 
     int ret = 0;
 
@@ -3453,5 +3582,162 @@ static int op_cmpc(const instr_t* ip)
     //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
     //cancel_run(STOP_WARN);
     log_msg(DEBUG_MSG, moi, "finished.\n");
+    PPR.IC += 3;        // BUG: when should we bump IC?  probably not for seg faults, but probably yes for overflow
+    return ret;
+}
+
+// ============================================================================
+
+static int op_scm(const instr_t* ip)
+{
+    const char* moi = "OPU::scm";
+
+    cpu.irodd_invalid = 1;
+
+    uint mask = ip->addr >> 9;
+    uint mf2bits = ip->addr & MASKBITS(7);
+    eis_mf_t mf2;
+    (void) parse_mf(mf2bits, &mf2);
+    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+
+    t_uint64 word1, word2, word3;
+    if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, &word3) != 0)
+        return 1;
+
+    eis_alpha_desc_t desc1;
+    parse_eis_alpha_desc(word1, &ip->mods.mf1, &desc1);
+    eis_alpha_desc_t desc2;
+    word2 = setbits36(word2, 21, 2, desc1.ta);  // force (ignored) type of desc2 to match desc1
+    //word2 = setbits36(word2, 24, 12, 1);  // force (ignored) count of desc2 to one
+    parse_eis_alpha_desc(word2, &mf2, &desc2);
+    desc2.n = 1;
+    // eis_mf_t mf3 = { 0, 0, 1, 0};
+    uint y3;
+    if (get_eis_indir_addr(word3, &y3) != 0)
+            return 1;
+    //uint y3 = word3 >> 18;
+    //uint y3_indir = (word3 & 0100) != 0;
+    //uint y3_reg = word3 & 017;
+    
+    log_msg(DEBUG_MSG, moi, "mask = %03o\n", mask);
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
+    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
+    log_msg(DEBUG_MSG, moi, "y3: %06o\n", y3);
+
+    int ret = 0;
+
+    uint test_nib;
+    log_msg(DEBUG_MSG, moi, "Getting test char\n");
+    if (get_eis_an(&mf2, &desc2, &test_nib) != 0) {
+        return 1;
+    }
+    if (isprint(test_nib))
+        log_msg(DEBUG_MSG, moi, "test char: %03o '%c'\n", test_nib, test_nib);
+    else
+        log_msg(DEBUG_MSG, moi, "test char: %03o\n", test_nib);
+    uint n = desc1.n;
+    uint i;
+    for (i = 0; i < n; ++i) {
+        uint nib;
+        if (get_eis_an(&ip->mods.mf1, &desc1, &nib) != 0) { // must fetch when needed
+            ret = 1;
+            break;
+        }
+        uint z = ~mask & (nib ^ test_nib);
+        log_msg(NOTIFY_MSG, moi, "compare nibble %#o(%+d): value %03o yields %#o\n", i, i, nib, z);
+        if (z == 0)
+            break;
+    }
+    if (ret == 0) {
+        IR.tally_runout = i == n;
+        // t_uint64 word = setbits36(0, 12, 24, i);
+        t_uint64 word = i;
+        log_msg(WARN_MSG, moi, "TRO=%d; writing %#o(%+d) to abs addr %#o\n", IR.tally_runout, i, i, y3);
+        ret = store_abs_word(y3, word);
+    }
+
+    //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
+    //cancel_run(STOP_IBKPT);
+    PPR.IC += 4;        // BUG: check other eis mw instr to make sure IC update is after op fetches (affects ic addr mode and prob restart)
+    return ret;
+}
+
+// ============================================================================
+
+static int op_csl(const instr_t* ip)
+{
+    // Combine bit strings left
+
+    const char* moi = "OPU::csl";
+
+    uint fill = ip->addr >> 17;
+    uint bolr = (ip->addr >> 9) & MASKBITS(4);
+    flag_t t = (ip->addr >> 8) & 1;
+    uint mf2bits = ip->addr & MASKBITS(7);
+    eis_mf_t mf2;
+    (void) parse_mf(mf2bits, &mf2);
+    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+    log_msg(DEBUG_MSG, moi, "bool oper: %#o =b%d%d%d%d, fill: %d\n", bolr, (bolr>>3)&1, (bolr>>2)&1, (bolr>>1)&1, bolr&1, fill);
+
+    t_uint64 word1, word2;
+    if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
+        return 1;
+
+    cpu.irodd_invalid = 1;
+
+    eis_bit_desc_t desc1;
+    parse_eis_bit_desc(word1, &ip->mods.mf1, &desc1);
+    eis_bit_desc_t desc2;
+    parse_eis_bit_desc(word2, &mf2, &desc2);
+
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_bit_desc_to_text(&desc1));
+    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_bit_desc_to_text(&desc2));
+
+    int ret = 0;
+
+    flag_t all_zero = 1;
+    while (desc2.n > 0) {
+        flag_t bit1, bit2;
+        if (desc1.n == 0)
+            bit1 = fill;
+        else
+            if (get_eis_bit(&ip->mods.mf1, &desc1, &bit1) != 0) {   // must fetch when needed
+                ret = 1;
+                break;
+            }
+        if (retr_eis_bit(&mf2, &desc2, &bit2) != 0) {   // must fetch when needed
+            ret = 1;
+            break;
+        }
+        flag_t r = (bolr >> (3 - ((bit1 << 1) | bit2))) & 1;    // like indexing into a truth table
+        log_msg(DEBUG_MSG, moi, "nbits1=%d, nbits2=%d; %d op %d => %d\n", desc1.n, desc2.n, bit1, bit2, r);
+        if (r == bit2) {
+            // Do an ordinary "get" to advance the ptr
+            if (get_eis_bit(&mf2, &desc2, &bit2) != 0) {
+                ret = 1;
+                break;
+            }
+        } else
+            if (put_eis_bit(&mf2, &desc2, r) != 0) {
+                ret = 1;
+                break;
+            }
+        if (r)
+            all_zero = 0;
+    }
+    if (ret == 0)
+        // write unsaved data (if any)
+        if (save_eis_bit(&mf2, &desc2) != 0)
+            ret = 1;
+    if (ret == 0) {
+        IR.zero = all_zero;
+        IR.truncation = desc1.n > 0;
+        if (IR.truncation && t) {
+            fault_gen(overflow_fault);  // truncation
+            ret = 1;
+        }
+    }
+
+    PPR.IC += 3;        // BUG: when should we bump IC?  probably not for seg faults, but probably yes for overflow
     return ret;
 }

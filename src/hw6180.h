@@ -128,6 +128,7 @@ typedef struct {
     uint IC_abs;    // translation of odd IC to an absolute address; see ADDRESS of cu history
     flag_t irodd_invalid;   // cached odd instr invalid due to memory write by even instr
     uint read_addr; // last absolute read; might be same as CA for our purposes...; see APU RMA
+    // flag_t instr_fetch;  // true during an instruction fetch
     // from the control unit history register:
         flag_t trgo;    // most recent instruction caused a transfer?
         flag_t ic_odd;  // executing odd pair?
@@ -431,14 +432,12 @@ typedef struct {
 
 
 typedef struct {
-    int unimplemented;
-} eis_bit_desc;
-
-typedef struct {
     uint address;   // 18 bits at  0..17
     uint cn;    //  3 bits at 18..20; character position
+    uint bitno; // only for bitstring operand descriptors, not alpha-numeric op descriptors
     uint ta;    //  2 bits at 21..22; data type
-    uint n;     // 12 bits at 24..35; length (0..4096 or -2048..2047 ?)
+    uint n_orig;    // unmodified for debugging; 12 bits at 24..35; length (0..4096 or -2048..2047 ?)
+    uint n;         // converted to value; 12 bits at 24..35; length (0..4096 or -2048..2047 ?)
     // convenience members, not part of stored word
     int nbits;
     // tracking info for get_eis_an() and put_eis_an()
@@ -463,6 +462,18 @@ typedef struct {
     t_uint64 word;      // buffers full words to/from memory
 } eis_alpha_desc_t;
 // eis_num_desc
+
+
+#if 0
+typedef struct {
+    // A hack
+    uint n;
+    eis_alpha_desc_t desc;
+    int bitno;
+} eis_bit_desc_t;
+#else
+typedef eis_alpha_desc_t eis_bit_desc_t;
+#endif
 
 
 // ============================================================================
@@ -621,17 +632,26 @@ extern SDW_t* get_sdw();
 extern int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, int* bitnop, uint *minaddrp, uint* maxaddrp);
 extern void reg_mod(uint td, int off);          // BUG: might be performance boost if inlined
 
-extern const char* eis_alpha_desc_to_text(const eis_alpha_desc_t* descp);
-extern void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* descp);
+// EIS multi-word instructions
+extern int addr_mod_eis_addr_reg(instr_t *ip);
 extern const char* mf2text(const eis_mf_t* mfp);
+extern int get_eis_indir_addr(t_uint64 word, uint* addrp);
+// EIS Alphanumeric operands
+extern const char* eis_alpha_desc_to_text(const eis_mf_t* mfp, const eis_alpha_desc_t* descp);
+extern void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* descp);
 extern int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib);
 extern int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib);
 extern int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp);
-extern int addr_mod_eis_addr_reg(instr_t *ip);
-extern int get_eis_indir_addr(t_uint64 word, uint* addrp);
 extern int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib);
-extern void load_IR(t_uint64 word);
+// EIS Bit String Operands
+extern const char* eis_bit_desc_to_text(const eis_bit_desc_t* descp);
+extern void parse_eis_bit_desc(t_uint64 word, const eis_mf_t* mfp, eis_bit_desc_t* descp);
+extern int get_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t *bitp);
+extern int retr_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t *bitp);
+extern int put_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t bitval);
+extern int save_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp);
 
+extern void load_IR(t_uint64 word);
 
 extern void set_addr_mode(addr_modes_t mode);
 extern addr_modes_t get_addr_mode(void);
