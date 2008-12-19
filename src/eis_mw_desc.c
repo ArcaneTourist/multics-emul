@@ -59,12 +59,6 @@ eis_mf_t* parse_mf(uint mf, eis_mf_t* mfp)
 
 int get_eis_indir_addr(t_uint64 word, uint* addrp)
 {
-    return get_eis_indir_ptr(word, addrp);
-}
-
-
-int get_eis_indir_ptr(t_uint64 word, uint *addrp)
-{
     // Could be called by other EIS routines when an MF specifes that an indirect pointer to
     // and operand descriptor should be expected. -- But isn't.
     // Only called by OPU for those EIS multi-word instructions that use an indirect
@@ -87,7 +81,7 @@ int get_eis_indir_ptr(t_uint64 word, uint *addrp)
         log_msg(NOTIFY_MSG, moi, "Indir word %012Lo: addr=%#o(%d); REG(Td)=%#o\n", word, y, sign18(y), td); 
     }
 
-    int bitno;
+    uint bitno;
     uint minaddr, maxaddr;  // unneeded
 
     log_msg(NOTIFY_MSG, moi, "Calling get-address.\n");
@@ -374,7 +368,7 @@ static int get_mf_an_addr(const eis_mf_t* mfp, uint y, int nbits, uint *addrp, i
     const char *moi = "eis::mf";
 
     log_msg(DEBUG_MSG, moi, "Calling get-address.\n");
-    int ret = get_address(y, mfp->ar, mfp->reg, nbits, addrp, bitnop, minaddrp, maxaddrp);
+    int ret = get_address(y, mfp->ar, mfp->reg, nbits, addrp, (uint *) bitnop, minaddrp, maxaddrp);
     if (ret) {
         log_msg(NOTIFY_MSG, moi, "Call to get-address(y=%#o,ar=%d,reg=%d,nbits=%d,...) returns non-zero.\n", y, mfp->ar, mfp->reg, nbits);
     }
@@ -431,7 +425,12 @@ static int get_eis_an_base(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
         if (descp->curr.bitpos >= 36) {
             log_msg(NOTIFY_MSG, moi, "Too many offset bits for a single word.  Base address is %#o with bit offset %d; CN offset is %d (%d bits).  Advancing to next word.\n", descp->area.addr, descp->area.bitpos, descp->cn, descp->cn * descp->nbits);
             // cancel_run(STOP_WARN);
-            descp->curr.addr += descp->curr.bitpos / 36;    // BUG: could cause us to change to a different page
+            descp->curr.addr += descp->curr.bitpos / 36;
+            if (descp->curr.addr > descp->area.max_addr) {
+                // BUG: need to advance to next page
+                log_msg(ERR_MSG, moi, "Too many bits for last word of page.\n");
+                cancel_run(STOP_BUG);
+            }
             descp->curr.bitpos %= 36;
         }
         if (opt_debug>0) {
@@ -632,6 +631,10 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
         descp->curr.addr = descp->area.addr + ndx / nparts;
         descp->curr.bitpos = (ndx % nparts) * descp->nbits;
         // BUG: ignoring bitno
+        if (descp->bitno != 0) {
+            log_msg(DEBUG_MSG, moi, "Bitno %d in descriptor might be ignored\n", descp->bitno);
+            cancel_run(STOP_BUG);
+        }
         if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Last char is at addr %#o, bit offset %d\n", descp->curr.addr, descp->curr.bitpos);
         need_fetch = 1;
     } else {
@@ -890,6 +893,12 @@ int addr_mod_eis_addr_reg(instr_t *ip)
     uint td = ip->mods.single.tag & MASKBITS(4);
     TPR.CA = 0;         // BUG: what does reg mod mean for these instr?
     reg_mod(td, 0);     // BUG: what does reg mod mean for these instr?
+    if (td != 0) {
+        if (TPR.is_value)
+            log_msg(DEBUG_MSG, "APU", "Reg mod for EIS yields value %#Lo\n", TPR.value);
+        else
+            log_msg(DEBUG_MSG, "APU", "Reg mod for EIS yields %#o.\n", TPR.CA);
+    }
 
 
     switch (op) {

@@ -289,6 +289,7 @@ typedef struct {
         // unsigned boc:1;      // bad outward call
         // unsigned ocb:1;      // out of call brackets
     } word1flags;
+    flag_t instr_fetch;     // our usage of this may match PI-AP
 
     /* word 2, continued */
     uint delta;     // 6 bits at 2[30..35]; addr increment for repeats
@@ -629,8 +630,9 @@ extern void cmd_dump_vm(void);
 extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
 extern int addr_mod(const instr_t *ip);
 extern SDW_t* get_sdw();
-extern int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, int* bitnop, uint *minaddrp, uint* maxaddrp);
+extern int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp);
 extern void reg_mod(uint td, int off);          // BUG: might be performance boost if inlined
+extern void mod2text(char *buf, uint tm, uint td);
 
 // EIS multi-word instructions
 extern int addr_mod_eis_addr_reg(instr_t *ip);

@@ -22,6 +22,8 @@ const int do_18bit_math = 0;    // diag tape seems to want this, proably inappro
 
 // ============================================================================
 
+extern uint32 sim_brk_summ;
+
 static inline t_uint64 lrotate36(t_uint64 x, unsigned n);
 static inline void lrotate72(t_uint64* ap, t_uint64* bp, unsigned n);
 static inline int32 negate18(t_uint64 x);
@@ -265,7 +267,7 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_ldaq: {    // Load AQ reg
                 t_uint64 word1, word2;
-                int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
+                int ret = fetch_pair(TPR.CA, &word1, &word2);
                 if (ret == 0) {
                     reg_A = word1;
                     reg_Q = word2;
@@ -728,7 +730,7 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_adlaq: {   // Add logical to AQ
                 t_uint64 word1, word2;
-                int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
+                int ret = fetch_pair(TPR.CA, &word1, &word2);
                 if (ret == 0) {
                     // BUG: ignoring 18bit math
                     ret = add72(word1, word2, &reg_A, &reg_Q, 1);
@@ -894,7 +896,7 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_sbaq: {    // Subtract from AQ
                 t_uint64 word1, word2;
-                int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
+                int ret = fetch_pair(TPR.CA, &word1, &word2);
                 if (ret == 0)
                     // BUG: Ignoring 18bit math
                     if ((ret = negate72(&word1, &word2)) == 0)
@@ -1125,7 +1127,7 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_cmpaq: {
                 t_uint64 word1, word2;
-                int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
+                int ret = fetch_pair(TPR.CA, &word1, &word2);
                 if (ret == 0) {
                     if (opt_debug) log_msg(DEBUG_MSG, "OPU::cmpaq", "AQ = {%012Lo, %012Lo}\n", reg_A, reg_Q);
                     if (opt_debug) log_msg(DEBUG_MSG, "OPU::cmpaq", "Y =  {%012Lo, %012Lo}\n", word1, word2);
@@ -1355,7 +1357,7 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_oraq: {    // OR to AQ
                 t_uint64 word1, word2;
-                int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
+                int ret = fetch_pair(TPR.CA, &word1, &word2);
                 if (ret == 0) {
                     reg_A |= word1;
                     reg_Q |= word2;
@@ -1452,7 +1454,7 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_eraq: {    // XOR to AQ
                 t_uint64 word1, word2;
-                int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
+                int ret = fetch_pair(TPR.CA, &word1, &word2);
                 if (ret == 0) {
                     reg_A ^= word1;
                     reg_Q ^= word2;
@@ -2008,16 +2010,17 @@ static int do_an_op(instr_t *ip)
                 t_uint64 word0;
                 instr_t IR;
                 if (fetch_instr(TPR.CA, &IR) != 0) {
-                    log_msg(DEBUG_MSG, "OPU::opcode::xec", "fetch instr: error or fault\n");
+                    log_msg(NOTIFY_MSG, "OPU::opcode::xec", "fetch instr: error or fault\n");
                     return 1;   // faulted
                 }
+                // extern DEVICE cpu_dev; ++ opt_debug; ++ cpu_dev.dctrl;
                 log_msg(DEBUG_MSG, "OPU::opcode::xec", "executing instr at %#o\n", TPR.CA);
-                if (do_op(&IR) != 0) {
-                    log_msg(DEBUG_MSG, "OPU::opcode::xec", "fault or error executing instr\n");
-                    return 1;
-                }
+                int ret;
+                if ((ret = do_op(&IR)) != 0)
+                    log_msg(NOTIFY_MSG, "OPU::opcode::xec", "fault or error executing instr\n");
                 log_msg(DEBUG_MSG, "OPU::opcode::xec", "finished\n");
-                return 0;
+                // -- opt_debug; -- cpu_dev.dctrl;
+                return ret;
             }
             case opcode0_xed: {
 #if XED_NEW
@@ -2047,16 +2050,15 @@ static int do_an_op(instr_t *ip)
                 cu.xde = 1;
                 cu.xdo = 1;
                 log_msg(NOTIFY_MSG, "opu::xed", "Flags are set for exec of ypair at %#o\n", y);
-#if 0
                 if (sim_brk_summ)
                     if (sim_brk_test(y, SWMASK ('E')) || sim_brk_test(y+1, SWMASK ('E'))) {
                         log_msg(NOTIFY_MSG, "opu::xed", "Breakpoint on target instruction pair at %#o\n", y);
                         cancel_run(STOP_IBKPT);
                     }
-#else
-                log_msg(NOTIFY_MSG, "opu::xed", "Auto Breakpoint\n");
-                cancel_run(STOP_IBKPT);
-#endif
+                if (switches.FLT_BASE == 2) {   // true for multics, false for T&D diag tape
+                    log_msg(NOTIFY_MSG, "opu::xed", "Auto Breakpoint\n");
+                    cancel_run(STOP_IBKPT);
+                }
                 return 0;
 #else
                 // todo: re-implement via setting flags and return to control_unit()
@@ -2212,7 +2214,7 @@ static int do_an_op(instr_t *ip)
                     return 1;
                 }
                 t_uint64 word1, word2;
-                int ret = fetch_pair(TPR.CA, &word1, &word2);   // BUG: fetch_op not needed?
+                int ret = fetch_pair(TPR.CA, &word1, &word2);
                 if (! cu.PT_ON) {
                     log_msg(WARN_MSG, "OPU::ldbr", "PTWAM is not enabled\n");
                     // cancel_run(STOP_WARN);
@@ -2433,13 +2435,23 @@ static int do_an_op(instr_t *ip)
                         cancel_run(STOP_BUG);
                         break;
                     case 2:
+#if 0
+                        // from start_cpu.pl1
                         reg_A = setbits36(0, 4, 2, 0);  // 0 for L68 or DPS
-                        reg_A = setbits36(0, 6, 7, switches.FLT_BASE);
+                        reg_A = setbits36(reg_A, 6, 7, switches.FLT_BASE);  // 7 MSB bits of 12bit addr
+                        log_msg(NOTIFY_MSG, "OPU::opcode::rsw", "Fault base in bits 6..13 is %#o=>%#o\n", switches.FLT_BASE, switches.FLT_BASE << 5);
                         reg_A = setbits36(reg_A, 19, 1, 0); // 0 for L68
                         reg_A = setbits36(reg_A, 27, 1, 0); // cache
                         reg_A = setbits36(reg_A, 28, 1, 0); // gcos mode extended memory option off
                         reg_A = setbits36(reg_A, 29, 4, 016);   // 1110b=>L68 re start_cpu.pl1
                         reg_A = setbits36(reg_A, 33, 3, switches.cpu_num);
+#else
+                        // from AL39
+                        reg_A = setbits36(0, 0, 6, 0);  // 0..5 are zero for L68 or DPS
+                        reg_A = setbits36(reg_A, 6, 7, switches.FLT_BASE);  // 7 MSB bits of 12bit addr
+                        reg_A = setbits36(reg_A, 23, 11, 016);  // 1110b=>L68 re start_cpu.pl1
+                        reg_A = setbits36(reg_A, 34, 2, switches.cpu_num);
+#endif
                         log_msg(NOTIFY_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012Lo.\n", low, reg_A);
                         break;
                     default:
@@ -2485,7 +2497,6 @@ static int do_an_op(instr_t *ip)
                 log_msg(DEBUG_MSG, "OPU::opcode::sscr", "A = %Lo\n", reg_A);
                 log_msg(DEBUG_MSG, "OPU::opcode::sscr", "Q = %Lo\n", reg_Q);
                 int ret = 0;
-                // uint y = getbits36(TPR.CA, 0, 2);        // BUG: CA is 18 bits, not 36
                 uint y = (TPR.CA >> 16) & 3;    // 18bit CA
                 uint ea = y << 15;
                 log_msg(DEBUG_MSG, "OPU::opcode::sscr", "EA is 0%04o\n", ea);

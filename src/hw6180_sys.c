@@ -133,9 +133,16 @@ static void hw6180_init(void)
     memset(&switches, 0, sizeof(switches));
     switches.cpu_num = 0;   // only one cpu
     // multics uses same vector for interrupts & faults?
-    // OTOH, AN87, 1-41 claims faults are at 100o ((flt_base=1)<<5)
+    // OTOH, AN87, 1-41 claims faults are at 100o ((flt_base=1)<<5) // BUG 1<<5 is 040...
     // switches.FLT_BASE = 0;   // multics uses same vector for interrupts & faults?
+#if 0
     switches.FLT_BASE = 0100;
+#else
+    // FLT_BASE switches are 7 MSB of 12bit addr
+    // switches.FLT_BASE = 2;   // multics requires setting 02 resulting in vector at 0100
+    // switches.FLT_BASE = 0163; // diag tape allows any location *except* 02 --> 0100
+    switches.FLT_BASE = 0; // diag tape allows any location *except* 02 --> 0100
+#endif
 
     // Only one SCU
     memset(&scu, 0, sizeof(scu));

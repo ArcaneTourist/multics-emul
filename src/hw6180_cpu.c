@@ -322,6 +322,7 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
     // When using an IOX, the bootload_tape_label.alm code will check the result in the
     // status mailbox.   So, we might as well run the IOX to do the I/O.
     // ++ opt_debug; ++ cpu_dev.dctrl;
+    if (cpu_dev.dctrl != 0) opt_debug = 1;  // todo: should CPU control all debug settings?
     iom_interrupt();
     // -- opt_debug; -- cpu_dev.dctrl;
     bootimage_loaded = 1;
@@ -369,7 +370,7 @@ t_stat cpu_reset (DEVICE *dptr)
     // We need to execute the pair of instructions at 030 -- a "lda" instruction
     // and a transfer to the bootload code at 0330.   Location 030 is either part
     // of the interrupt vector or part of a combined interrupt/fault vector.
-    if (switches.FLT_BASE == 0) {
+    if (0 && switches.FLT_BASE == 0) {
         // Most documents indicate that the boot process uses the startup fault
         cycle = FETCH_cycle;
         fault_gen(startup_fault);   // pressing POWER ON button causes this fault
@@ -597,7 +598,7 @@ static t_stat control_unit(void)
     // BUG: Check non group 7 faults?  No, expect cycle to have been reset to FAULT_cycle
 
     int reason = 0;
-    int break_on_fault = 1;
+    int break_on_fault = switches.FLT_BASE == 2;    // on for multics, off for t&d tape
 
     switch(cycle) {
         case FETCH_cycle:
@@ -634,6 +635,7 @@ static t_stat control_unit(void)
             cycle = EXEC_cycle;
             TPR.TSR = PPR.PSR;
             TPR.TRR = PPR.PRR;
+            cu.instr_fetch = 1;
             if (fetch_instr(PPR.IC - PPR.IC % 2, &cu.IR) != 0) {
                 cycle = FAULT_cycle;
                 cpu.irodd_invalid = 1;
@@ -656,6 +658,7 @@ static t_stat control_unit(void)
                 }
             }
             cpu.IC_abs = cpu.read_addr;
+            cu.instr_fetch = 0;
             break;
 
 #if 0
@@ -752,7 +755,7 @@ static t_stat control_unit(void)
             events.any = 0;     // BUG: What about interrupts, other faults, etc?
 
             PPR.PRR = 0;    // set ring zero
-            uint addr = switches.FLT_BASE + 2 * fault; // ABSOLUTE mode
+            uint addr = (switches.FLT_BASE << 5) + 2 * fault; // ABSOLUTE mode
             // Force computed addr and xed opcode into the instruction
             // register and execute (during FAULT CYCLE not EXECUTE CYCLE).
             cu.IR.addr = addr;
@@ -912,9 +915,12 @@ static t_stat control_unit(void)
                 if (cpu.irodd_invalid) {
                     cpu.irodd_invalid = 0;
                     if (cycle != FETCH_cycle) {
-                        log_msg(NOTIFY_MSG, "CU", "Invalidating cached odd instruction; auto breakpoint\n");
+                        if (switches.FLT_BASE == 2) {   // on for multics, off for t&d tape
+                            reason = STOP_IBKPT;    /* stop simulation */
+                            log_msg(NOTIFY_MSG, "CU", "Invalidating cached odd instruction; auto breakpoint\n");
+                        } else
+                            log_msg(NOTIFY_MSG, "CU", "Invalidating cached odd instruction.\n");
                         cycle = FETCH_cycle;
-                        reason = STOP_IBKPT;    /* stop simulation */
                     }
                     break;
                 }
@@ -1878,7 +1884,7 @@ static void check_events()
             events.any = 0;     // BUG: What about interrupts, other faults, etc?
 
             PPR.PRR = 0;    // set ring zero
-            uint addr = switches.FLT_BASE + 2 * fault; // ABSOLUTE mode
+            uint addr = (switches.FLT_BASE << 5) + 2 * fault; // ABSOLUTE mode
             // Force computed addr and xed opcode into the instruction
             // register and execute (during FAULT CYCLE not EXECUTE CYCLE).
             cu.IR.addr = addr;
