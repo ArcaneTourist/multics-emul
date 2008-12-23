@@ -125,6 +125,7 @@ typedef struct {
 // more simulator state variables for the cpu
 // these probably belong elsewhere, perhaps control unit data or the cu-history regs...
 typedef struct {
+    cycles_t cycle;
     uint IC_abs;    // translation of odd IC to an absolute address; see ADDRESS of cu history
     flag_t irodd_invalid;   // cached odd instr invalid due to memory write by even instr
     uint read_addr; // last absolute read; might be same as CA for our purposes...; see APU RMA
@@ -134,6 +135,7 @@ typedef struct {
         flag_t ic_odd;  // executing odd pair?
         flag_t poa;     // prepare operand address
         uint opcode;    // currently executing opcode
+    addr_modes_t orig_mode_BUG;
 } cpu_state_t;
 
 
@@ -163,8 +165,8 @@ typedef struct {
 
 // Base Address Register (BAR) -- 18 bits
 typedef struct {
-    uint base;      // 9 bits
-    uint bound;     // 9 bits
+    uint base;      // 9 bits, upper 9 bits of an 18bit base
+    uint bound;     // 9 bits, upper 9 bits of an 18bit bounds
 } BAR_reg_t;
 
 // Combination: Pointer Registers and Address Registers
@@ -591,48 +593,55 @@ extern void log_msg(enum log_level, const char* who, const char* format, ...);
 extern void out_msg(const char* format, ...);
 
 extern void cmd_dump_history(void);
+void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic);
 
 extern void cancel_run(enum sim_stops reason);
-extern void execute_instr(void);
 extern void fault_gen(enum faults);
-extern int decode_addr(instr_t* ip, t_uint64* addrp);
-extern int decode_ypair_addr(instr_t* ip, t_uint64* addrp);
-extern int fetch_instr(uint IC, instr_t *ip);
 extern char *bin2text(t_uint64 word, int n);
-extern void iom_interrupt(void);
+
+extern void decode_instr(instr_t *ip, t_uint64 word);
+extern void encode_instr(const instr_t *ip, t_uint64 *wordp);
+extern int fetch_instr(uint IC, instr_t *ip);
+extern void execute_instr(void);
 extern char* instr2text(const instr_t* ip);
 extern char* print_instr(t_uint64 word);
-extern void decode_instr(instr_t *ip, t_uint64 word);
+extern void cu_safe_store(void);
+
+extern int decode_addr(instr_t* ip, t_uint64* addrp);
+extern int decode_ypair_addr(instr_t* ip, t_uint64* addrp);
+extern void iom_interrupt(void);
 extern char* print_ptw(t_uint64 word);
 extern char* print_sdw(t_uint64 word0, t_uint64 word1);
+extern int fetch_appended(uint addr, t_uint64 *wordp);
+extern int store_appended(uint offset, t_uint64 word);
 
 extern int fetch_word(uint addr, t_uint64 *wordp);
 extern int fetch_abs_word(uint addr, t_uint64 *wordp);
 extern int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p);
 extern int fetch_abs_pair(uint addr, t_uint64* word0p, t_uint64* word1p);
-extern int fetch_appended(uint addr, t_uint64 *wordp);
 extern int store_word(uint addr, t_uint64 word);
 extern int store_abs_word(uint addr, t_uint64 word);
-extern int store_appended(uint offset, t_uint64 word);
 extern int store_abs_pair(uint addr, t_uint64 word0, t_uint64 word1);
 extern int store_pair(uint addr, t_uint64 word0, t_uint64 word1);
-extern eis_mf_t* parse_mf(uint mf, eis_mf_t* mfp);
-extern int fetch_mf_ops(const eis_mf_t* mf1p, t_uint64* word1p, const eis_mf_t* mf2p, t_uint64* word2p, const eis_mf_t* mf3p, t_uint64* word3p);
-//void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits);
-extern void mpy(t_int64 a, t_int64 b, t_uint64* hip, t_uint64 *lowp);
 extern void save_IR(t_uint64* wordp);
 extern int store_yblock8(uint addr, const t_uint64 *wordsp);
 extern int fetch_yblock(uint addr, int aligned, uint n, t_uint64 *wordsp);
 extern int fetch_yblock8(uint addr, t_uint64 *wordsp);
 extern int store_yblock16(uint addr, const t_uint64 *wordsp);
 
+extern void mpy(t_int64 a, t_int64 b, t_uint64* hip, t_uint64 *lowp);
+
 extern void cmd_dump_vm(void);
 extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
 extern int addr_mod(const instr_t *ip);
 extern SDW_t* get_sdw();
-extern int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp);
+extern int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp);
 extern void reg_mod(uint td, int off);          // BUG: might be performance boost if inlined
 extern void mod2text(char *buf, uint tm, uint td);
+
+extern eis_mf_t* parse_mf(uint mf, eis_mf_t* mfp);
+extern int fetch_mf_ops(const eis_mf_t* mf1p, t_uint64* word1p, const eis_mf_t* mf2p, t_uint64* word2p, const eis_mf_t* mf3p, t_uint64* word3p);
+//void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits);
 
 // EIS multi-word instructions
 extern int addr_mod_eis_addr_reg(instr_t *ip);

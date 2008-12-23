@@ -195,8 +195,7 @@ DEVICE opcon_dev = {
 //      In order to suppport SIMH's save/restore commands, we'll at least
 //      have to register a dummy register and examine/deposit routine.
 
-static cycles_t cycle;
-static events_t events;
+events_t events;
 switches_t switches;
 cpu_ports_t cpu_ports;
 // the following two should probably be combined
@@ -250,7 +249,6 @@ static void init_ops(void);
 static void ic_history_init(void);
 static void ic_history_add(void);
 static void check_events(void);
-static void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic);
 
 void tape_block(unsigned char *p, uint32 len, uint32 addr);
 
@@ -372,11 +370,11 @@ t_stat cpu_reset (DEVICE *dptr)
     // of the interrupt vector or part of a combined interrupt/fault vector.
     if (0 && switches.FLT_BASE == 0) {
         // Most documents indicate that the boot process uses the startup fault
-        cycle = FETCH_cycle;
+        cpu.cycle = FETCH_cycle;
         fault_gen(startup_fault);   // pressing POWER ON button causes this fault
     } else {
         // Simulate an interrupt as described in bootload_tape_label.alm
-        cycle = INTERRUPT_cycle;
+        cpu.cycle = INTERRUPT_cycle;
         events.int_pending = 1;
         events.interrupts[12] = 1;
     }
@@ -458,6 +456,8 @@ ninstr = 0;
                 log_msg(DEBUG_MSG, "MAIN::clock", "TR is running with %d time units left.\n", t);
         }
 #endif
+    uint orig_seg = PPR.PSR;
+    uint orig_ic = PPR.IC;
 if (opt_debug) {
     log_msg(DEBUG_MSG, NULL, "\n", NULL);
     char icbuf[80];
@@ -482,7 +482,14 @@ if (opt_debug) {
 }
         reason = control_unit();
         if (opt_debug) {
+            // Don't let log_msg() notice (and report) the IC change
+            uint temp_seg = PPR.PSR;
+            uint temp_ic = PPR.IC;
+            PPR.PSR = orig_seg;
+            PPR.IC = orig_ic;
             hist_dump();
+            PPR.PSR = temp_seg;
+            PPR.IC = temp_ic;
             hist_save();
         }
         ++ ncycles;
@@ -530,6 +537,7 @@ void load_IR(t_uint64 word)
     IR.mid_instr_intr_fault = getbits36(word, 30, 1);
     IR.abs_mode = getbits36(word, 31, 1);
     IR.hex_mode = getbits36(word, 32, 1);
+    // Bits 33..35 not used
 }
 
 void save_IR(t_uint64* wordp)
@@ -600,7 +608,7 @@ static t_stat control_unit(void)
     int reason = 0;
     int break_on_fault = switches.FLT_BASE == 2;    // on for multics, off for t&d tape
 
-    switch(cycle) {
+    switch(cpu.cycle) {
         case FETCH_cycle:
             if (opt_debug) log_msg(DEBUG_MSG, "CU", "Cycle = FETCH; IC = %0o (%dd)\n", PPR.IC, PPR.IC);
             // If execution of the current pair is complete, the processor
@@ -613,31 +621,31 @@ static t_stat control_unit(void)
                 if (events.low_group != 0) {
                     // BUG: don't need test below now that we detect 1-6 here
                     if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Fault detected prior to FETCH\n");
-                    cycle = FAULT_cycle;
+                    cpu.cycle = FAULT_cycle;
                     break;
                 }
                 if (events.group7 != 0) {
                     // Group 7 -- See tally runout in IR, connect fields of the
                     // fault register.  DC power off must come via an interrupt?
                     if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Fault detected prior to FETCH\n");
-                    cycle = FAULT_cycle;
+                    cpu.cycle = FAULT_cycle;
                     break;
                 }
                 if (events.int_pending) {
                     if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Interrupt detected prior to FETCH\n");
-                    cycle = INTERRUPT_cycle;
+                    cpu.cycle = INTERRUPT_cycle;
                     break;
                 }
             }
             // fetch a pair of words
             // AL39, 1-13: for fetches, procedure pointer reg (PPR) is ignored. [PPR IC is a dup of IC]
             cpu.ic_odd = PPR.IC % 2;    // won't exec even if fetch from odd
-            cycle = EXEC_cycle;
+            cpu.cycle = EXEC_cycle;
             TPR.TSR = PPR.PSR;
             TPR.TRR = PPR.PRR;
             cu.instr_fetch = 1;
             if (fetch_instr(PPR.IC - PPR.IC % 2, &cu.IR) != 0) {
-                cycle = FAULT_cycle;
+                cpu.cycle = FAULT_cycle;
                 cpu.irodd_invalid = 1;
             } else {
                 if (sim_brk_summ && sim_brk_test (cpu.read_addr, SWMASK ('E'))) {
@@ -645,7 +653,7 @@ static t_stat control_unit(void)
                     reason = STOP_IBKPT;    /* stop simulation */
                 }
                 if (fetch_word(PPR.IC - PPR.IC % 2 + 1, &cu.IRODD) != 0) {
-                    cycle = FAULT_cycle;
+                    cpu.cycle = FAULT_cycle;
                     cpu.irodd_invalid = 1;
                 } else {
                     if (sim_brk_summ && sim_brk_test (cpu.read_addr, SWMASK ('E'))) {
@@ -670,7 +678,7 @@ static t_stat control_unit(void)
             // the simulator has no overlapped functions?
             // Also bring asynchronous functions within the processor
             // to an orderly halt -- todo -- do we have any?
-            cycle = FAULT_cycle;
+            cpu.cycle = FAULT_cycle;
             break;
 #endif
 
@@ -678,8 +686,6 @@ static t_stat control_unit(void)
             // BUG: low_group not used/maintained
             {
             log_msg(DEBUG_MSG, "CU", "Cycle = FAULT\n");
-            // addr_modes_t saved_addr_mode = get_addr_mode();
-            set_addr_mode(ABSOLUTE_mode); // until execution of a transfer instr whose operand is obtained via explicit use of the appending HW mechanism -- AL39, 1-3
 
             // find highest fault
             int fault = 0;
@@ -704,8 +710,8 @@ static t_stat control_unit(void)
                     // bogus fault
                     log_msg(ERR_MSG, "CU", "Fault cycle with no faults set\n");
                     reason = STOP_BUG;
-                    events.any = events.int_pending;
-                    cycle = FETCH_cycle;
+                    events.any = events.int_pending;    // recover
+                    cpu.cycle = FETCH_cycle;
                     break;
                 } else {
                     // find highest priority group 7 fault
@@ -720,6 +726,8 @@ static t_stat control_unit(void)
                         // no group 7 fault
                         log_msg(ERR_MSG, "CU", "Fault cycle with missing group-7 fault\n");
                         reason = STOP_BUG;
+                        events.any = events.int_pending;    // recover
+                        cpu.cycle = FETCH_cycle;
                         break;
                     } else {
                         fault = hi;
@@ -728,10 +736,10 @@ static t_stat control_unit(void)
                 }
             }
             log_msg(DEBUG_MSG, "CU", "fault = %d (group %d)\n", fault, group);
-            if (fault != trouble_fault) {
-                // TODO: Safe store control unit data into invisible registers
-                // in prep for a store control unit (scu) instr
-            }
+            if (fault != trouble_fault)
+                cu_safe_store();
+
+            set_addr_mode(ABSOLUTE_mode); // until execution of a transfer instr whose operand is obtained via explicit use of the appending HW mechanism -- AL39, 1-3
 
             // BUG: clear fault?  Or does scr instr do that?
             int next_fault = 0;
@@ -752,7 +760,7 @@ static t_stat control_unit(void)
                     if (events.group7 != 0)
                         events.low_group = 7;
             }
-            events.any = 0;     // BUG: What about interrupts, other faults, etc?
+            events.any = events.int_pending || events.low_group != 0;
 
             PPR.PRR = 0;    // set ring zero
             uint addr = (switches.FLT_BASE << 5) + 2 * fault; // ABSOLUTE mode
@@ -772,7 +780,7 @@ static t_stat control_unit(void)
             log_msg(DEBUG_MSG, "CU::fault", "calling execute_ir() for xed\n");
             uint IC_temp = PPR.IC;
             PPR.IC = addr;
-            ic_history_add();
+            ic_history_add();       // xed will be listed against the the addr of the first instruction
             PPR.IC = IC_temp;
             execute_ir();   // executing in FAULT CYCLE, not EXECUTE CYCLE
             if (break_on_fault) {
@@ -788,13 +796,13 @@ static t_stat control_unit(void)
             } else {
 #if XED_NEW
                 // cycle = FAULT_EXEC_cycle;
-                cycle = EXEC_cycle;
+                cpu.cycle = EXEC_cycle;     // NOTE: scu will be in EXEC not FAULT cycle
                 events.xed = 1;     // BUG: is this a hack?
 #else
                 // BUG: track events.any
                 if (next_fault == 0 && events.group7 == 0) {
                     events.any = events.int_pending;
-                    cycle = FETCH_cycle;    // BUG: is this right?
+                    cpu.cycle = FETCH_cycle;    // BUG: is this right?
                 } else
                     events.any = 1;
                 // BUG: kill cpu.trgo or IC_temp
@@ -805,10 +813,10 @@ static t_stat control_unit(void)
                     ++ PPR.IC;
                     if (cpu.ic_odd) {
                         if (PPR.IC % 2 != 0) { log_msg(ERR_MSG, "CU", "Fault on odd half of instr pair results in next instr being at an odd IC\n"); }
-                        cycle = FETCH_cycle;
+                        cpu.cycle = FETCH_cycle;
                     } else {
                         if (PPR.IC % 2 != 1) { log_msg(ERR_MSG, "CU", "Fault on even half of instr pair results in odd half pending with an even IC\n"); }
-                        cycle = EXEC_cycle;
+                        cpu.cycle = EXEC_cycle;
                     }
                     // Note that we don't automatically return to the original
                     // ring, but hopefully we're executed an rcu instruction
@@ -853,8 +861,8 @@ static t_stat control_unit(void)
             execute_ir();   // executing in INTERRUPT CYCLE, not EXECUTE CYCLE
 
 #if XED_NEW
-            // cycle = FAULT_EXEC_cycle;
-            cycle = EXEC_cycle;
+            // cpu.cycle = FAULT_EXEC_cycle;
+            cpu.cycle = EXEC_cycle;
             events.xed = 1;     // BUG: is this a hack?
             events.int_pending = 0;     // BUG: make this a counter
             for (intr = 0; intr < 32; ++intr)
@@ -863,7 +871,7 @@ static t_stat control_unit(void)
                     break;
                 }
 #else
-            cycle = FETCH_cycle;    // BUG: is this right?
+            cpu.cycle = FETCH_cycle;    // BUG: is this right?
             log_msg(ERR_MSG, "CU", "Interrupts not well tested\n");
 #endif
             break;
@@ -914,13 +922,13 @@ static t_stat control_unit(void)
             if (do_odd) {
                 if (cpu.irodd_invalid) {
                     cpu.irodd_invalid = 0;
-                    if (cycle != FETCH_cycle) {
+                    if (cpu.cycle != FETCH_cycle) {
                         if (switches.FLT_BASE == 2) {   // on for multics, off for t&d tape
                             reason = STOP_IBKPT;    /* stop simulation */
                             log_msg(NOTIFY_MSG, "CU", "Invalidating cached odd instruction; auto breakpoint\n");
                         } else
                             log_msg(NOTIFY_MSG, "CU", "Invalidating cached odd instruction.\n");
-                        cycle = FETCH_cycle;
+                        cpu.cycle = FETCH_cycle;
                     }
                     break;
                 }
@@ -970,7 +978,7 @@ static t_stat control_unit(void)
                         if (! cpu.ic_odd)
                             cpu.ic_odd = 1;
                         else
-                            cycle = FETCH_cycle;
+                            cpu.cycle = FETCH_cycle;
                     } else {
                         // Executed a repeated instruction
                         // log_msg(WARN_MSG, "CU", "Address handing for repeated instr was probably wrong.\n");
@@ -1042,7 +1050,7 @@ static t_stat control_unit(void)
                         check_events();
                         cu.xdo = 0;
                         events.xed = 0;
-                        cycle = FETCH_cycle;
+                        cpu.cycle = FETCH_cycle;
                     } else
                         log_msg(NOTIFY_MSG, "CU", "Resetting XED even flag\n");
                 } else if (cu.xdo) {
@@ -1057,7 +1065,7 @@ static t_stat control_unit(void)
                             check_events();
                         }
                     }
-                    cycle = FETCH_cycle;
+                    cpu.cycle = FETCH_cycle;
                     if (!cpu.trgo) {
                         if (PPR.IC != IC_temp)
                             log_msg(NOTIFY_MSG, "CU", "No transfer instruction in XED, but IC changed from %#o to %#o\n", IC_temp, PPR.IC);
@@ -1065,7 +1073,7 @@ static t_stat control_unit(void)
                     }
                 } else if (! cpu.ic_odd) {
                     // Performed non-repeat instr at even loc (or finished last repetition)
-                    if (cycle == EXEC_cycle) {
+                    if (cpu.cycle == EXEC_cycle) {
                             if (!cpu.trgo) {
                                 if (PPR.IC == IC_temp) {
                                     cpu.ic_odd = 1; // execute odd instr of current pair
@@ -1073,17 +1081,17 @@ static t_stat control_unit(void)
                                 } else {
                                     if (! cpu.irodd_invalid)
                                         log_msg(NOTIFY_MSG, "CU", "No transfer instruction and IRODD not invalidated, but IC changed from %#o to %#o; changing to fetch cycle\n", IC_temp, PPR.IC);
-                                    cycle = FETCH_cycle;
+                                    cpu.cycle = FETCH_cycle;
                                 }
                             } else {
-                                cycle = FETCH_cycle;    // IC changed; previously fetched instr for odd location isn't any good now
+                                cpu.cycle = FETCH_cycle;    // IC changed; previously fetched instr for odd location isn't any good now
                             }
                     } else {
-                        log_msg(WARN_MSG, "CU", "Changed from EXEC cycle to %d, not updating IC\n", cycle);
+                        log_msg(WARN_MSG, "CU", "Changed from EXEC cycle to %d, not updating IC\n", cpu.cycle);
                     }
                 } else {
                     // Performed non-repeat instr at odd loc (or finished last repetition)
-                    if (cycle == EXEC_cycle) {
+                    if (cpu.cycle == EXEC_cycle) {
                         if (!cpu.trgo) {
                             if (PPR.IC == IC_temp) {
                                 cpu.ic_odd = 0; // finished with odd half; BUG: restart issues?
@@ -1093,13 +1101,13 @@ static t_stat control_unit(void)
                                     log_msg(NOTIFY_MSG, "CU", "No transfer instruction and IRODD not invalidated, but IC changed from %#o to %#o\n", IC_temp, PPR.IC);  // DEBUGGING
                         }
                     } else
-                        log_msg(NOTIFY_MSG, "CU", "Cycle is %d after EXEC_cycle\n", cycle);
-                    cycle = FETCH_cycle;
+                        log_msg(NOTIFY_MSG, "CU", "Cycle is %d after EXEC_cycle\n", cpu.cycle);
+                    cpu.cycle = FETCH_cycle;
                 }
             }
             break;
         default:
-            log_msg(ERR_MSG, "CU", "Unknown cycle # %d\n", cycle);
+            log_msg(ERR_MSG, "CU", "Unknown cycle # %d\n", cpu.cycle);
             reason = STOP_BUG;
     }
 
@@ -1157,7 +1165,7 @@ void fault_gen(enum faults f)
     } else {
         // Groups 1-6 are handled more immediately and there can only be
         // one fault pending within each group
-        if (cycle == FAULT_cycle) {
+        if (cpu.cycle == FAULT_cycle) {
             f = trouble_fault;
             group = fault2group[f];
             log_msg(DEBUG_MSG, "CU::fault", "Double fault:  Recording current fault as a trouble fault (fault # %d in group %d).\n", f, group);
@@ -1166,9 +1174,9 @@ void fault_gen(enum faults f)
                 // todo: error, unhandled fault
                 log_msg(WARN_MSG, "CU::fault", "Found unhandled prior fault #%d in group %d.\n", events.fault[group], group);
             }
-            if (cycle == EXEC_cycle) {
+            if (cpu.cycle == EXEC_cycle) {
                 // don't execute any pending odd half of an instruction pair
-                cycle = FAULT_cycle;
+                cpu.cycle = FAULT_cycle;
             }
         }
         events.fault[group] = f;
@@ -1240,22 +1248,39 @@ int fetch_word(uint addr, t_uint64 *wordp)
     // Returns non-zero if a fault in groups 1-6 is detected
 
     addr_modes_t mode = get_addr_mode();
+#if 0
+if (mode != cpu.orig_mode_BUG) {
+log_msg(WARN_MSG, "CU::fetch", "Using mode %d not %d\n", cpu.orig_mode_BUG, mode);
+mode = cpu.orig_mode_BUG;
+}
+#endif
 
     if (mode == APPEND_mode) {
-        int ret = fetch_appended(addr, wordp);
-        return ret;
+        return fetch_appended(addr, wordp);
     } else if (mode == ABSOLUTE_mode) {
         return fetch_abs_word(addr, wordp);
     } else if (mode == BAR_mode) {
+        if (addr >= (BAR.bound << 9)) {
+            log_msg(NOTIFY_MSG, "CU::fetch", "Address %#o is out of BAR bounds of %#o.\n", addr, BAR.bound << 9);
+            fault_gen(store_fault);
+            // fault_reg.oob = 1;           // ERROR: fault_reg does not exist
+            // cancel_run(STOP_WARN);
+            return 1;
+        }
+        log_msg(DEBUG_MSG, "CU::fetch", "Translating offset %#o to %#o.\n", addr, addr + (BAR.base << 9));
+        addr += BAR.base << 9;
+        return fetch_abs_word(addr, wordp);
+        // return fetch_appended(addr, wordp);
+#if 0
         log_msg(ERR_MSG, "CU::fetch", "Addr=%#o:  BAR mode unimplemented.\n", addr);
         cancel_run(STOP_BUG);
         return fetch_abs_word(addr, wordp);
+#endif
     } else {
         log_msg(ERR_MSG, "CU::fetch", "Addr=%#o:  Unknown addr mode %d.\n", addr, mode);
         cancel_run(STOP_BUG);
         return fetch_abs_word(addr, wordp);
     }
-
 }
 
 
@@ -1293,13 +1318,15 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
 
     if (sim_brk_summ) {
         if (sim_brk_test (addr, SWMASK ('M'))) {
-            log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address %#o\n", addr);
+            log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address %#o.  Fetched value %012Lo\n", addr, M[addr]);
             (void) cancel_run(STOP_IBKPT);
         }
     }
 
     cpu.read_addr = addr;
     *wordp = M[addr];   // absolute memory reference
+    if (get_addr_mode() == BAR_mode)
+        log_msg(DEBUG_MSG, "CU::fetch-abs", "fetched word at %#o\n", addr);
     return 0;
 }
 
@@ -1310,16 +1337,35 @@ int store_word(uint addr, t_uint64 word)
     // Returns non-zero if a fault in groups 1-6 is detected
 
     addr_modes_t mode = get_addr_mode();
+#if 0
+if (mode != cpu.orig_mode_BUG){
+log_msg(WARN_MSG, "CU::store", "Using mode %d not %d\n", cpu.orig_mode_BUG, mode);
+mode = cpu.orig_mode_BUG;
+}
+#endif
 
     if (mode == APPEND_mode) {
-        int ret = store_appended(addr, word);
-        return ret;
+        return store_appended(addr, word);
     } else if (mode == ABSOLUTE_mode) {
         return store_abs_word(addr, word);
     } else if (mode == BAR_mode) {
+#if 0
         log_msg(ERR_MSG, "CU::store", "Addr=%#o:  BAR mode unimplemented.\n", addr);
         cancel_run(STOP_BUG);
         return store_abs_word(addr, word);
+#else
+        if (addr >= (BAR.bound << 9)) {
+            log_msg(NOTIFY_MSG, "CU::store", "Address %#o is out of BAR bounds of %#o.\n", addr, BAR.bound << 9);
+            fault_gen(store_fault);
+            // fault_reg.oob = 1;           // ERROR: fault_reg does not exist
+            // cancel_run(STOP_WARN);
+            return 1;
+        }
+        log_msg(DEBUG_MSG, "CU::store", "Translating offset %#o to %#o.\n", addr, addr + (BAR.base << 9));
+        addr += BAR.base << 9;
+        return store_abs_word(addr, word);
+        //return store_appended(addr, word);
+#endif
     } else {
         log_msg(ERR_MSG, "CU::store", "Addr=%#o:  Unknown addr mode %d.\n", addr, mode);
         cancel_run(STOP_BUG);
@@ -1354,9 +1400,16 @@ int store_abs_word(uint addr, t_uint64 word)
             return 0;
     }
     if (sim_brk_summ)
-        if (sim_brk_test (addr, SWMASK ('M'))) {
-            log_msg(WARN_MSG, "CU::store", "Memory Breakpoint, address %#o\n", addr);
-            (void) cancel_run(STOP_IBKPT);
+        if (sim_brk_test(addr, SWMASK('W') | SWMASK('M') | SWMASK('E'))) {
+            if (sim_brk_test(addr, SWMASK ('W'))) {
+                log_msg(WARN_MSG, "CU::store", "Memory Write Breakpoint, address %#o\n", addr);
+                (void) cancel_run(STOP_IBKPT);
+            } else if (sim_brk_test(addr, SWMASK ('M'))) {
+                log_msg(WARN_MSG, "CU::store", "Memory Breakpoint, address %#o\n", addr);
+                (void) cancel_run(STOP_IBKPT);
+            } else
+                log_msg(NOTIFY_MSG, "CU::store", "Write to a location that has an execution breakpoint, address %#o\n", addr);
+            log_msg(NOTIFY_MSG, "CU::store", "Address %08o: value was %012Lo, storing %012Lo\n", addr, M[addr], word);
         }
 
     M[addr] = word; // absolute memory reference
@@ -1364,6 +1417,8 @@ int store_abs_word(uint addr, t_uint64 word)
         log_msg(NOTIFY_MSG, "CU::store", "Flagging cached odd instruction from %o as invalidated.\n", addr);
         cpu.irodd_invalid = 1;
     }
+    if (get_addr_mode() == BAR_mode)
+        log_msg(DEBUG_MSG, "CU::store-abs", "stored word to %#o\n", addr);
     return 0;
 }
 
@@ -1502,6 +1557,23 @@ void decode_instr(instr_t *ip, t_uint64 word)
         ip->mods.mf1.id = getbits36(word, 31, 1);
         ip->mods.mf1.reg = getbits36(word, 32, 4);
     }
+}
+
+
+void encode_instr(const instr_t *ip, t_uint64 *wordp)
+{
+        *wordp = setbits36(0, 0, 18, ip->addr);
+        *wordp = setbits36(*wordp, 18, 10, ip->opcode);
+        *wordp = setbits36(*wordp, 28, 1, ip->inhibit);
+        if (! is_eis[ip->opcode&MASKBITS(10)]) {
+            *wordp = setbits36(*wordp, 29, 1, ip->mods.single.pr_bit);
+            *wordp = setbits36(*wordp, 30, 6, ip->mods.single.tag);
+        } else {
+            *wordp = setbits36(*wordp, 29, 1, ip->mods.mf1.ar);
+            *wordp = setbits36(*wordp, 30, 1, ip->mods.mf1.rl);
+            *wordp = setbits36(*wordp, 31, 1, ip->mods.mf1.id);
+            *wordp = setbits36(*wordp, 32, 4, ip->mods.mf1.reg);
+        }
 }
 
 //=============================================================================
@@ -1668,7 +1740,10 @@ static void hist_save()
 
 static void hist_dump()
 {
+    // Track and dump any changes to any registers after each instruction
+    // TODO: Track some of the control-unit data
 
+    log_msg(DEBUG_MSG, NULL, "\n", NULL);
     if (reg_A != hist.reg_A)
         log_msg(DEBUG_MSG, "HIST", "Reg A: %012Lo\n", reg_A);
     if (reg_Q != hist.reg_Q) {
@@ -1749,12 +1824,12 @@ static void hist_dump()
 
 //=============================================================================
 
-static void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic)
+void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic)
 {
     if (addr_mode == ABSOLUTE_mode)
         sprintf(icbuf, "%06o", ic);
     else if (addr_mode == BAR_mode)
-        sprintf(icbuf, "BAR %06o", ic);
+        sprintf(icbuf, "BAR %o|%06o", seg, ic);
     else
         sprintf(icbuf, "%o|%06o", seg, ic);
 }
@@ -1822,137 +1897,6 @@ static void check_events()
         log_msg(NOTIFY_MSG, "CU", "check_events: event(s) found (%d,%d,%d).\n", events.int_pending, events.low_group, events.group7);
 
     return;
-
-#if 0
-        case FAULT_cycle:
-            // BUG: low_group not used/maintained
-            {
-            log_msg(DEBUG_MSG, "CU", "Cycle = FAULT\n");
-            // addr_modes_t saved_addr_mode = get_addr_mode();
-            set_addr_mode(ABSOLUTE_mode); // until execution of a transfer instr whose operand is obtained via explicit use of the appending HW mechanism -- AL39, 1-3
-
-            // find highest fault
-            int fault = 0;
-            int group;
-            for (group = 0; group <= 6; ++ group) {
-                if ((fault = events.fault[group]) != 0)
-                    break;
-            }
-            if (fault == 0) {
-                if (events.group7 == 0) {
-                    // bogus fault
-                    log_msg(ERR_MSG, "CU", "Fault cycle with no faults set\n");
-                    reason = STOP_BUG;
-                    break;
-                } else {
-                    // find highest priority group 7 fault
-                    int hi = -1;
-                    int i;
-                    for (i = 0; i < 31; ++i) {
-                        if (fault2group[i] == 7 && (events.group7 & (1<<fault)))
-                            if (hi == -1 || fault2prio[i] < fault2prio[hi])
-                                hi = i;
-                    }
-                    if (hi == -1) {
-                        // no group 7 fault
-                        log_msg(ERR_MSG, "CU", "Fault cycle with missing group-7 fault\n");
-                        reason = STOP_BUG;
-                        break;
-                    } else
-                        fault = hi;
-                }
-            }
-            log_msg(DEBUG_MSG, "CU", "fault = %d (group %d)\n", fault, group);
-            if (fault != trouble_fault) {
-                // TODO: Safe store control unit data into invisible registers
-                // in prep for a store control unit (scu) instr
-            }
-
-            // BUG: clear fault?  Or does scr instr do that?
-            int next_fault = 0;
-            if (fault == 7) {
-                // BUG: clear group 7 fault
-                log_msg(ERR_MSG, "CU", "BUG: Fault group-7\n");
-            } else {
-                events.fault[group] = 0;
-                // Find next remaining fault (and its group)
-                for (group = 0; group <= 6; ++ group) {
-                    if ((next_fault = events.fault[group]) != 0)
-                        break;
-                }
-            }
-            events.any = 0;     // BUG: What about interrupts, other faults, etc?
-
-            PPR.PRR = 0;    // set ring zero
-            uint addr = (switches.FLT_BASE << 5) + 2 * fault; // ABSOLUTE mode
-            // Force computed addr and xed opcode into the instruction
-            // register and execute (during FAULT CYCLE not EXECUTE CYCLE).
-            cu.IR.addr = addr;
-            cu.IR.opcode = (opcode0_xed << 1);
-            cu.IR.inhibit = 1;
-            cu.IR.mods.single.pr_bit = 0;
-            cu.IR.mods.single.tag = 0;
-
-            // Maybe just set a flag and run the EXEC case?
-            // Maybe the following increments and tests are handled by EXEC and/or the XED opcode?
-
-            // todo: Check for SIMH breakpoint on execution for that addr or
-            // maybe in the code for the xed opcode.
-            log_msg(DEBUG_MSG, "CU", "calling execute_ir() for xed\n");
-            uint IC_temp = PPR.IC;
-            PPR.IC = addr;
-            ic_history_add();
-            PPR.IC = IC_temp;
-            execute_ir();   // executing in FAULT CYCLE, not EXECUTE CYCLE
-            if (break_on_fault) {
-                log_msg(WARN_MSG, "CU", "Fault: auto breakpoint\n");
-                (void) cancel_run(STOP_IBKPT);
-            }
-
-            if (events.any && events.fault[fault2group[trouble_fault]] == trouble_fault) {
-                // Fault occured during execution, so fault_gen() flagged
-                // a trouble fault
-                // Stay in FAULT CYCLE
-                log_msg(WARN_MSG, "CU", "re-faulted, remaining in fault cycle\n");
-            } else {
-
-# =============================================================================================
-#if XED_NEW
-                // cycle = FAULT_EXEC_cycle;
-                cycle = EXEC_cycle;
-                events.xed = 1;     // BUG: is this a hack?
-#else
-                // BUG: track events.any
-                if (next_fault == 0 && events.group7 == 0) {
-                    events.any = events.int_pending;
-                    cycle = FETCH_cycle;    // BUG: is this right?
-                } else
-                    events.any = 1;
-                // BUG: kill cpu.trgo or IC_temp
-                if (!cpu.trgo && PPR.IC == IC_temp) {
-                    log_msg(WARN_MSG, "CU", "no re-fault, no transfer -- incrementing IC\n");
-                    // BUG: Faulted instr doesn't get re-invoked?
-                            (void) cancel_run(STOP_IBKPT);
-                    ++ PPR.IC;
-                    if (cpu.ic_odd) {
-                        if (PPR.IC % 2 != 0) { log_msg(ERR_MSG, "CU", "Fault on odd half of instr pair results in next instr being at an odd IC\n"); }
-                        cycle = FETCH_cycle;
-                    } else {
-                        if (PPR.IC % 2 != 1) { log_msg(ERR_MSG, "CU", "Fault on even half of instr pair results in odd half pending with an even IC\n"); }
-                        cycle = EXEC_cycle;
-                    }
-                    // Note that we don't automatically return to the original
-                    // ring, but hopefully we're executed an rcu instruction
-                    // to set the correct ring
-                    // set_addr_mode(saved_addr_mode);  // FIXED BUG: this wasn't appropriate
-                } else {
-                    if (opt_debug) log_msg(DEBUG_MSG, "CU", "no re-fault, but a transfer done -- not incrementing IC\n");
-                }
-#endif
-            }
-            } // end case FAULT_cycle
-            break;
-#endif
 }
 
 //=============================================================================

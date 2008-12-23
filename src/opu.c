@@ -17,7 +17,8 @@
 #include "hw6180.h"
 #include <ctype.h>  // for isprint
 
-const int do_18bit_math = 0;    // diag tape seems to want this, proably inappropriately
+int do_18bit_math;  // diag tape seems to want this, probably inappropriately
+
 #define XED_NEW 1
 
 // ============================================================================
@@ -36,6 +37,7 @@ static inline uint max(uint a, uint b);
 static inline uint max3(uint a, uint b, uint c);
 
 static int do_op(instr_t *ip);
+static void scu2words(t_uint64 *words);
 static int op_add(instr_t *ip, t_uint64 *operand);
 static int op_and(instr_t *ip, t_uint64 *op, t_uint64 *op2, t_uint64 *dest1, t_uint64 *dest2);
 static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest);
@@ -68,6 +70,8 @@ extern int scu_set_cpu_mask(t_uint64 addr);
 extern int scu_get_calendar(t_uint64 addr);
 extern int activate_timer();
 
+static t_uint64 scu_data[8];    // For SCU instruction
+
 // ============================================================================
 
 void execute_instr(void)
@@ -83,9 +87,13 @@ void execute_instr(void)
 static int fetch_op(const instr_t *ip, t_uint64 *wordp)
 {
     if (TPR.is_value) {
+        if (cpu.orig_mode_BUG != get_addr_mode())
+            log_msg(NOTIFY_MSG, "OPU::fetch-op", "addr mode is changed, but operand is a constant.\n");
         *wordp = TPR.value;
         return 0;
     }
+    if (cpu.orig_mode_BUG != get_addr_mode())
+        log_msg(NOTIFY_MSG, "OPU::fetch-op", "fetching in changed mode\n");
     return fetch_word(TPR.CA, wordp);
 }
 
@@ -94,9 +102,14 @@ static int fetch_op(const instr_t *ip, t_uint64 *wordp)
 
 static int do_op(instr_t *ip)
 {
+    // Wrapper for do_an_op() with detection of change in address mode (for debugging).
+
+    //do_18bit_math = (switches.FLT_BASE != 2); // diag tape seems to want this, probably inappropriately
+    do_18bit_math = 0;
+
     addr_modes_t orig_mode = get_addr_mode();
+    cpu.orig_mode_BUG = orig_mode;
     uint orig_ic = PPR.IC;
-    cpu.opcode = ip->opcode;
     int ret = do_an_op(ip);
     addr_modes_t mode = get_addr_mode();
     if (orig_mode != mode) {
@@ -106,8 +119,11 @@ static int do_op(instr_t *ip)
             set_addr_mode(orig_mode);
             log_msg(DEBUG_MSG, "OPU", "Resetting addr mode for sequential instr\n");
         } else {
-            log_msg(NOTIFY_MSG, "OPU", "Address mode has been changed with a transfer instr.  Was %#o, now %#o\n", orig_ic, PPR.IC);
-            cancel_run(STOP_IBKPT);
+            log_msg(NOTIFY_MSG, "OPU", "Address mode has been changed with an IC change.  Was %#o, now %#o\n", orig_ic, PPR.IC);
+            if (switches.FLT_BASE == 2) {
+                cancel_run(STOP_IBKPT);
+                log_msg(NOTIFY_MSG, "OPU", "Auto breakpoint.\n");
+            }
         }
     }
     return ret;
@@ -118,6 +134,8 @@ static int do_an_op(instr_t *ip)
 {
     // Returns non-zero on error or non-group-7  fault
     // BUG: check for illegal modifiers
+
+    cpu.opcode = ip->opcode;
 
     uint op = ip->opcode;
     char *opname = opcodes2text[op];
@@ -152,7 +170,6 @@ static int do_an_op(instr_t *ip)
             case opcode0_epp2 + 0:
             case opcode0_epp4 + 0:
             case opcode0_epp6 + 0:
-                //if (PPR.IC == 017 || PPR.IC == 041 || PPR.IC == 044) {
                 if (TPR.TSR ==  0427) {
                     // BUG: horrid hack to allow: eppbp =its(-2,2),*
                     log_msg(WARN_MSG, "OPU", "Disabling faults for special case instr.\n");
@@ -161,6 +178,8 @@ static int do_an_op(instr_t *ip)
                     fault_gen_no_fault = 0;
                 } else
                     addr_mod(ip);       // note that ip == &cu.IR
+                    if (cpu.orig_mode_BUG != get_addr_mode())
+                        log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
                 break;
             default:
                 addr_mod(ip);       // note that ip == &cu.IR
@@ -181,12 +200,18 @@ static int do_an_op(instr_t *ip)
                     log_msg(WARN_MSG, "OPU", "Disabling faults for special case instr.\n");
                     fault_gen_no_fault = 1;
                     addr_mod(ip);       // note that ip == &cu.IR
+                    if (cpu.orig_mode_BUG != get_addr_mode())
+                        log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
                     fault_gen_no_fault = 0;
                 } else
                     addr_mod(ip);       // note that ip == &cu.IR
+                    if (cpu.orig_mode_BUG != get_addr_mode())
+                        log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
                 break;
             default:
                 addr_mod(ip);       // note that ip == &cu.IR
+                if (cpu.orig_mode_BUG != get_addr_mode())
+                    log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
         }
     }
     cpu.poa = 0;
@@ -291,6 +316,11 @@ static int do_an_op(instr_t *ip)
                         IR.parity_mask = par;
                         IR.mid_instr_intr_fault = 0;
                     }
+                    if (opt_debug) {
+                        t_uint64 ir;
+                        save_IR(&ir);
+                        log_msg(DEBUG_MSG, "OPU::ldi", "IR: %s\n", bin2text(ir, 18));
+                    }
                 }
                 return ret;
             }
@@ -345,9 +375,8 @@ static int do_an_op(instr_t *ip)
                     reg_X[7] = words[3] & MASK18;
                     reg_A = words[4];
                     reg_Q = words[5];
-                    reg_E = getbits36(words[6], 0, 7);
-                    // reg_TR not loaded
-                    // reg_RALR not loaded
+                    reg_E = getbits36(words[6], 0, 8);
+                    // NOTE: sreg stors TR and RALR, but lreg does not restore them
                 }
                 return ret;
             }
@@ -377,7 +406,7 @@ static int do_an_op(instr_t *ip)
                 words[3] = ((t_uint64) reg_X[6] << 18) | reg_X[7];
                 words[4] = reg_A;
                 words[5] = reg_Q;
-                words[6] = setbits36(0, 0, 7, reg_E);
+                words[6] = setbits36(0, 0, 8, reg_E);
                 words[7] = setbits36(0, 0, 27, reg_TR);
                 words[7] = setbits36(words[7], 33, 3, reg_RALR);
                 return store_yblock8(TPR.CA, words);
@@ -717,6 +746,7 @@ static int do_an_op(instr_t *ip)
                         reg_A &= MASK36;
                     IR.zero = reg_A == 0;
                     IR.neg = bit36_is_neg(reg_A);
+#if 0
                     if (do_18bit_math && TPR.is_value == 7 && a == 0) {
                         int is_neg = bit18_is_neg(reg_A);
                         if (is_neg != IR.neg) {
@@ -725,6 +755,7 @@ static int do_an_op(instr_t *ip)
                             cancel_run(STOP_WARN);
                         }
                     }
+#endif
                 }
                 return ret;
             }
@@ -748,6 +779,7 @@ static int do_an_op(instr_t *ip)
                         reg_Q &= MASK36;
                     IR.zero = reg_Q == 0;
                     IR.neg = bit36_is_neg(reg_Q);
+#if 0
                     if (do_18bit_math && TPR.is_value == 7 && q == 0) {
                         int is_neg = bit18_is_neg(reg_Q);
                         if (is_neg != IR.neg) {
@@ -756,6 +788,7 @@ static int do_an_op(instr_t *ip)
                             cancel_run(STOP_WARN);
                         }
                     }
+#endif
                 }
                 return ret;
             }
@@ -878,12 +911,14 @@ static int do_an_op(instr_t *ip)
                             // arithmetic on "dl" constant
                             if (opt_debug || (a>>18) != 0 || (w >> 18) != 0 || (reg_A>>18) != 0)
                                 log_msg(NOTIFY_MSG, "OPU::sba", "A = %012Lo minus %06Lo ,du operand yields %012Lo at IC %06o \n", a, w, reg_A, PPR.IC);
+#if 0
                             flag_t is_neg = bit18_is_neg(reg_A);
                             if (is_neg != IR.neg) {
                                 log_msg(WARN_MSG, "OPU::sba", "Changing IR.neg to %d for ,dl operand.\n", is_neg);
                                 IR.neg = is_neg;
                                 // cancel_run(STOP_WARN);
                             }
+#endif
                             if ((reg_A >> 18) != 0 && ! IR.carry) {
                                 log_msg(WARN_MSG, "OPU::sba", "Carry may be wrong for ,dl operand.\n");
                                 cancel_run(STOP_WARN);
@@ -916,6 +951,7 @@ static int do_an_op(instr_t *ip)
                     IR.zero = reg_Q == 0;
                     IR.neg = rsign;
                     IR.carry = sign != rsign;
+#if 0
                     if (do_18bit_math && TPR.is_value == 7 && (q>>18) == 0) {
                         int is_neg = bit18_is_neg(reg_Q);
                         if (is_neg != IR.neg) {
@@ -924,6 +960,7 @@ static int do_an_op(instr_t *ip)
  
                         }
                     }
+#endif
                 }
                 return ret;
             }
@@ -1252,6 +1289,7 @@ static int do_an_op(instr_t *ip)
                 if (ret == 0) {
                     IR.zero = word == 0;
                     IR.neg = bit36_is_neg(word);
+#if 0
                     if (do_18bit_math && TPR.is_value == 7) {
                         // Why use szn with a constant?
                         log_msg(WARN_MSG, "OPU::szn", "Using ,dl operand.\n");
@@ -1263,6 +1301,7 @@ static int do_an_op(instr_t *ip)
                             }
                         }
                     }
+#endif
                 }
                 return ret;
             }
@@ -1274,6 +1313,7 @@ static int do_an_op(instr_t *ip)
                     if (ret == 0) {
                         IR.zero = word == 0;
                         IR.neg = bit36_is_neg(word);
+#if 0
                         if (do_18bit_math && TPR.is_value == 7) {
                             log_msg(WARN_MSG, "OPU::sznc", "Using ,dl operand.\n");
                             if ((word>>18) == 0) {
@@ -1284,6 +1324,7 @@ static int do_an_op(instr_t *ip)
                                 }
                             }
                         }
+#endif
                     }
                 }
                 return ret;
@@ -1614,7 +1655,7 @@ static int do_an_op(instr_t *ip)
                 if (TPR.TRR < PPR.PRR) {
                     AR_PR[7].PR.snr = (DSBR.stack << 3) | TPR.TRR;  // 12 bit stack, 3 bit ring number
                     log_msg(NOTIFY_MSG, "OPU::call6", "Inward call\n");
-                    log_msg(NOTIFY_MSG, "OPU::call6", "PR[7] segment set to %012o||%03o==> %015o\n", DSBR.stack, TPR.TRR, AR_PR[7].PR.snr);
+                    log_msg(NOTIFY_MSG, "OPU::call6", "PR[7] segment set to %04o||%o==> %05o\n", DSBR.stack, TPR.TRR, AR_PR[7].PR.snr);
                     log_msg(NOTIFY_MSG, "OPU::call6", "Auto breakpoint\n");
                     cancel_run(STOP_IBKPT);
                 } else if (TPR.TRR == PPR.PRR)
@@ -1771,10 +1812,30 @@ static int do_an_op(instr_t *ip)
                 PPR.IC = TPR.CA;
                 PPR.PSR = TPR.TSR;
                 cpu.trgo = 1;
+                return 0;
             }
             
 
-            // opcode0_tss unimplemented
+            case opcode0_tss: {
+                if (TPR.CA >= (BAR.bound << 9)) {
+                    log_msg(NOTIFY_MSG, "OPU::tss", "Address %#o is out of BAR bounds of %#o.\n", TPR.CA, BAR.bound << 9);
+                    fault_gen(store_fault);
+                    // fault_reg.oob = 1;           // ERROR: fault_reg does not exist
+                    return 1;
+                }
+                if (get_addr_mode() == BAR_mode) {
+                    PPR.PSR = TPR.TSR;
+                    PPR.IC = TPR.CA;
+                } else {
+                    log_msg(NOTIFY_MSG, "OPU::tss", "Switching to BAR mode.\n");
+                    // PPR.IC = TPR.CA + (BAR.base << 9);   // Despite AL39, we need to let the CPU/APU add in the base
+                    PPR.PSR = TPR.TSR;
+                    PPR.IC = TPR.CA;
+                    set_addr_mode(BAR_mode);
+                }
+                cpu.trgo = 1;
+                return 0;
+            }
 
             case opcode0_tsx0:  // transfer and set X[n]
             case opcode0_tsx1:
@@ -1908,7 +1969,7 @@ static int do_an_op(instr_t *ip)
                     if (opt_debug) {
                         char cmd[20];
                         sprintf(cmd, "lprp%d", n);
-                        log_msg(DEBUG_MSG, cmd, "PR[%d] loaded from value %012o\n", n, word);
+                        log_msg(DEBUG_MSG, cmd, "PR[%d] loaded from value %012Lo\n", n, word);
                     }
                 }
                 return ret;
@@ -2173,10 +2234,35 @@ static int do_an_op(instr_t *ip)
                 return 0;
             }
 
-            // opcode0_sbar unimplemented
+            case opcode0_sbar: {
+                t_uint64 word;
+                int ret = fetch_word(TPR.CA, &word);
+                if (ret == 0) {
+                    word = setbits36(word, 0, 9, BAR.base);
+                    word = setbits36(word, 9, 9, BAR.bound);
+                    ret = store_word(TPR.CA, word);
+                }
+                return ret;
+            }
+
             // bcd unimplemented -- binary to binary-coded-decimal
             // gtb unimplemented -- gray to binary
-            // lbar unimplemented
+
+            case opcode0_lbar: {
+                if (get_addr_mode() == BAR_mode) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                t_uint64 word;
+                int ret;
+                if ((ret = fetch_op(ip, &word)) == 0) {
+                    BAR.base = getbits36(word, 0, 9);
+                    BAR.bound = getbits36(word, 9, 9);
+                    log_msg(NOTIFY_MSG, "OPU::lbar", "BAR: base = %09o => %018o, bound = %09o => %018o\n",
+                        BAR.base, BAR.base << 9, BAR.bound, BAR.bound << 9);
+                }
+                return ret;
+            }
 
             case opcode0_lcpr: {    // load central processor reg (priv)
                 int ret = 0;
@@ -2238,7 +2324,7 @@ static int do_an_op(instr_t *ip)
                 DSBR.bound = getbits36(word2, 37-36, 14);
                 DSBR.u = getbits36(word2, 55-36, 1);
                 DSBR.stack = getbits36(word2, 60-36, 12);
-                log_msg(DEBUG_MSG, "OPU::ldbr", "DSBR: addr=%#o, bound=%#o(%u), u=%d, stack=%#o\n",
+                log_msg(NOTIFY_MSG, "OPU::ldbr", "DSBR: addr=%#o, bound=%#o(%u), u=%d, stack=%#o\n",
                     DSBR.addr, DSBR.bound, DSBR.bound, DSBR.u, DSBR.stack);
                 return 0;
             }
@@ -2267,10 +2353,28 @@ static int do_an_op(instr_t *ip)
             // scpr unimplemented -- store cp register
 
             // scu unimplemented -- store control unit
-            case opcode0_scu:
-                log_msg(ERR_MSG, "OPU", "Unimplemented opcode %03o(0)\n", op);
-                cancel_run(STOP_BUG);
-                return 0;
+            case opcode0_scu: {
+                // AL39 says that CU data is not, in general, valid at any time except
+                // when safe-stored by the first of the pair of the instructions
+                // associated with the fault or interrupt.
+                // On the other hand, the T&D tape expects that a ldi/scu pair results
+                // in the updated IR and IC being stored.
+                // The T&D tape also expects that the saved data will appropriately
+                // reflect whether or not the CPU was in appending mode at the time
+                // of a fault even though the subsequent scu was executed in absolute
+                // mode.
+                // An alternative to our implemention might be to save state after
+                // every instruction except xed instructions.
+                extern events_t events; // BUG: put in hdr file or hide behind an access function
+                log_msg(WARN_MSG, "OPU::scu", "Not fully implemented\n");
+                if (switches.FLT_BASE == 2) {
+                    log_msg(WARN_MSG, "OPU::scu", "Auto breakpoint\n");
+                    cancel_run(STOP_WARN);
+                }
+                if (! events.xed)
+                    scu2words(scu_data);
+                return store_yblock8(TPR.CA, scu_data);
+            }
 
             case opcode0_sdbr: {
                 t_uint64 word0, word1;
@@ -2578,8 +2682,29 @@ static int do_an_op(instr_t *ip)
                 }
                 uint addr;
                 int ret;
-                if ((ret = get_seg_addr(TPR.CA, 0, &addr)) == 0)
-                    reg_A = (t_uint64) addr << 12;  // upper 24 bits
+#if 0
+                if (cpu.orig_mode_BUG == ABSOLUTE_mode) {
+                        (void) get_seg_addr(TPR.CA, 0, &addr);
+                        reg_A = (t_uint64) TPR.CA << 12;    // upper 24 bits
+                        if (addr == TPR.CA)
+                            log_msg(NOTIFY_MSG, "OPU::absa", "Ignored segment portion of PR register irrelevent.  Result %#Lo\n", reg_A);
+                        else
+                            log_msg(NOTIFY_MSG, "OPU::absa", "Ignoring segment portion of PR register -- Using %#Lo instead of %#Lo.\n", reg_A, (t_uint64) addr << 12);
+                        ret = 0;
+                } else {
+#else
+{
+#endif
+                        log_msg(NOTIFY_MSG, "OPU::absa", "Getting segment translation (DSBR.bound = %#o).\n", DSBR.bound);
+                        if ((ret = get_seg_addr(TPR.CA, 0, &addr)) == 0)
+                            reg_A = (t_uint64) addr << 12;  // upper 24 bits
+                        else
+                            log_msg(WARN_MSG, "OPU::absa", "Unable to translate segment offset into absolute address.\n");
+                        if (addr == TPR.CA)
+                            log_msg(NOTIFY_MSG, "OPU::absa", "Using segment portion of PR register yields no change -- %#Lo\n", reg_A);
+                        else
+                            log_msg(NOTIFY_MSG, "OPU::absa", "Using segment portion of PR register yields %#Lo instead of %#Lo.\n", reg_A, (t_uint64) TPR.CA << 12);
+                }
                 return ret;
             }
 
@@ -2764,7 +2889,7 @@ static int do_an_op(instr_t *ip)
             case opcode1_spl: {
                 // BUG: Restart of EIS instructions not yet supported, so spl is a no-op
                 t_uint64 words[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-                log_msg(NOTIFY_MSG, "OPU::spl", "Not storing enough info to allow EIS decimal op restart.\n");
+                log_msg(WARN_MSG, "OPU::spl", "Not storing enough info to allow EIS decimal op restart.\n");
                 return store_yblock8(TPR.CA, words);
             }
 
@@ -2852,6 +2977,43 @@ static int do_an_op(instr_t *ip)
 
 // ============================================================================
 
+void cu_safe_store()
+{
+    // Save current Control Unit Data in hidden temporary so a later SCU instruction running
+    // in FAULT mode can save the state as it existed at the time of the fault rather than
+    // as it exists at the time the scu instruction is executed.
+    scu2words(scu_data);
+}
+
+
+static void scu2words(t_uint64 *words)
+{
+    memset(words, 0, 8 * sizeof(*words));
+
+    words[0] = setbits36(0, 0, 3, PPR.PRR);
+    words[0] = setbits36(words[0], 3, 15, PPR.PSR);
+    words[0] = setbits36(words[0], 18, 1, PPR.P);
+    words[0] = setbits36(words[0], 21, 1, cu.SD_ON);
+    words[0] = setbits36(words[0], 23, 1, cu.PT_ON);
+    words[2] = setbits36(0, 0, 3, TPR.TRR);
+    words[2] = setbits36(words[2], 3, 15, TPR.TSR);
+    words[2] = setbits36(words[2], 27, 3, switches.cpu_num);
+    words[2] = setbits36(words[2], 30, 6, cu.delta);
+    words[3] = 0;
+    words[3] = setbits36(words[3], 30, 6, TPR.TBR);
+    save_IR(&words[4]);
+    words[4] = setbits36(words[4], 0, 18, PPR.IC);
+    words[5] = setbits36(0, 0, 18, TPR.CA);
+    words[5] = setbits36(words[5], 18, 1, cu.repeat_first);
+    words[5] = setbits36(words[5], 19, 1, cu.rpt);
+    // BUG: Not all of CU data exists and/or is saved
+    words[5] = setbits36(words[5], 24, 1, cu.xde);
+    words[5] = setbits36(words[5], 24, 1, cu.xdo);
+    words[5] = setbits36(words[5], 30, 6, cu.CT_HOLD);
+    encode_instr(&cu.IR, &words[6]);    // BUG: cu.IR isn't kept fully up-to-date
+    words[7] = cu.IRODD;
+}
+
 
 static int op_add(instr_t *ip, t_uint64 *dest)
 {
@@ -2907,16 +3069,22 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
         // arithmetic on "dl" constant
         if ((a>>18) == 0 && (b>>18) == 0) {
             if (opt_debug || (result>>18) != 0)
-                log_msg(NOTIFY_MSG, "OPU::adder36", "%012o + %012o = %012o for ,dl modified at IC %06o\n", a, b, result, PPR.IC);
+                log_msg(NOTIFY_MSG, "OPU::add36", "%012Lo + %012Lo = %012Lo for ,dl at IC %06o\n", a, b, result, PPR.IC);
             flag_t is_neg = bit18_is_neg(result);
             if (is_neg != IR.neg) {
-                log_msg(WARN_MSG, "OPU::addr36", "Changing IR.neg to %d for ,dl operand.\n", is_neg);
-                IR.neg = is_neg;
+                // problems: 017127, 017207, 017267, 017347
+                //if (PPR.IC >= 0013767 && PPR.IC <= 017047)
+                if ((PPR.IC >= 0013767 && PPR.IC <= 017047) || PPR.IC == 017127)
+                    log_msg(WARN_MSG, "OPU::add36", "**Special case: NOT changing IR.neg to %d for ,dl operand at IC %#o.\n", is_neg, PPR.IC);
+                else {
+                    log_msg(WARN_MSG, "OPU::add36", "Changing IR.neg to %d for ,dl operand at IC %#o\n", is_neg, PPR.IC);
+                    IR.neg = is_neg;
+                }
                 if (get_addr_mode() != ABSOLUTE_mode)
                      cancel_run(STOP_WARN);
             }
             if ((result >> 18) != 0 && ! IR.carry) {
-                log_msg(WARN_MSG, "OPU::addr", "Carry is probably wrong for ,dl operand.\n");
+                log_msg(WARN_MSG, "OPU::add36", "Carry is probably wrong for ,dl operand.\n");
                 cancel_run(STOP_WARN);
             }
         }

@@ -85,7 +85,7 @@ int get_eis_indir_addr(t_uint64 word, uint* addrp)
     uint minaddr, maxaddr;  // unneeded
 
     log_msg(NOTIFY_MSG, moi, "Calling get-address.\n");
-    int ret = get_address(y, indir, td, 36, addrp, &bitno, &minaddr, &maxaddr);
+    int ret = get_address(y, indir, 0, td, 36, addrp, &bitno, &minaddr, &maxaddr);
     if (ret == 0) {
         log_msg(NOTIFY_MSG, moi, "Resulting addr is %#o\n", *addrp);
         if (bitno != 0) {
@@ -368,7 +368,7 @@ static int get_mf_an_addr(const eis_mf_t* mfp, uint y, int nbits, uint *addrp, i
     const char *moi = "eis::mf";
 
     log_msg(DEBUG_MSG, moi, "Calling get-address.\n");
-    int ret = get_address(y, mfp->ar, mfp->reg, nbits, addrp, (uint *) bitnop, minaddrp, maxaddrp);
+    int ret = get_address(y, 0, mfp->ar, mfp->reg, nbits, addrp, (uint *) bitnop, minaddrp, maxaddrp);
     if (ret) {
         log_msg(NOTIFY_MSG, moi, "Call to get-address(y=%#o,ar=%d,reg=%d,nbits=%d,...) returns non-zero.\n", y, mfp->ar, mfp->reg, nbits);
     }
@@ -376,7 +376,7 @@ static int get_mf_an_addr(const eis_mf_t* mfp, uint y, int nbits, uint *addrp, i
         if (mfp->ar)
             log_msg(DEBUG_MSG, moi, "Using PR results in address %06o\n", *addrp);
         if (*bitnop != 0)
-            log_msg(DEBUG_MSG, moi, "Bit offset is %d\n", *bitnop);
+            log_msg(DEBUG_MSG, moi, "Initial bit offset is %d\n", *bitnop);
     }
     return ret;
 }

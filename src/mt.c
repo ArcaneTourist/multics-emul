@@ -179,12 +179,15 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
     } else if (tape_statep->io_mode == read_mode) {
         // read
         if (bitstm_get(tape_statep->bitsp, 36, wordp) != 0) {
+            // BUG: There isn't another word to be read from the tape buffer, but the IOM wants
+            // another word.
             // BUG: How did this tape hardare handle an attempt to read more data than was present?
-            // For "long" reads, bootload_tape_label.alm seems to assume a 4000 all-clear status,
-            // so we'll set the flags to all-ok, but return an out-of-band non-zero status to
-            // make the iom stop
-            //*majorp = 013;    // MPC Device Data Alert
-            //*subp = 02;       // Inconsistent command
+            // For "long" reads, bootload_tape_label.alm seems to assume a 4000 all-clear status.
+            // Boot_tape_io.pl1 also seems to assume that providing an over-large buffer doesn't
+            // yield any error return.
+            // So we'll set the flags to all-ok, but return an out-of-band non-zero status to
+            // make the iom stop.
+            // BUG: The IOM should be updated to return its DCW tally residue to the caller.
             *majorp = 0;
             *subp = 0;
             if (sim_tape_wrp(unitp)) *subp |= 1;

@@ -64,6 +64,7 @@ int tbit(t_uint64 word, const char *tag, int pos, int nbit)
     t_uint64 result = gbits36(word, pos, nbit);
     printf("%s: bits %d..%d: %Lo\n",
         tag, pos, pos+nbit-1, result);
+    return 0;
 }
 
 int doit()
@@ -235,7 +236,7 @@ void tape_block(int n_blocks, unsigned char *p, uint32 len)
     size_t hack = 0;
     bitstream_t *bp = bitstm_new(p, len);
     if ((len * 8) % 36 != 0) {
-        log_msg(ERR_MSG, "CPU::boot", "Length %u bytes is not a multiple of 36 bits.\n");
+        printf("CPU::boot: Length %u bytes is not a multiple of 36 bits.\n", len);
     }
     printf("=============================================================\n");
     printf("Tape block: %u bytes, %u 36-bit words\n", len, len*8/36);
@@ -248,7 +249,7 @@ void tape_block(int n_blocks, unsigned char *p, uint32 len)
         t_uint64 word;
         bitstm_get(bp, 36, &word);
         char msg[80];
-        sprintf(msg, "Block %3d, WORD %5lo", n_blocks, hack);
+        sprintf(msg, "Block %3d, WORD %5lo", n_blocks, (unsigned long) hack);
         ++hack;
         anal36(msg, word);
         // bitstm_get(bp, 36, &M[hack++]);
@@ -256,7 +257,7 @@ void tape_block(int n_blocks, unsigned char *p, uint32 len)
     }
     printf("\n");
     if (nbits != 0) {
-        log_msg(ERR_MSG, "CPU::boot", "Internal error getting bits from tape\n");
+        printf("CPU::boot: Internal error getting bits from tape\n");
     }
 }
 

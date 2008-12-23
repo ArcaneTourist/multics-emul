@@ -123,7 +123,9 @@ static void hw6180_init(void)
     // cpu_dev.dctrl = 1;
     // tape_dev.dctrl = 1;
 
-    sim_brk_types = SWMASK('E') | SWMASK('M');  // M memory (absolute address)
+    sim_brk_types = SWMASK('E');    // execution
+    sim_brk_types |= SWMASK('M');   // memory (absolute address)
+    sim_brk_types |= SWMASK('W');   // memory write (absolute address)
     sim_brk_dflt = SWMASK('E');
 
     // Hardware config -- todo - should be based on config cards!
@@ -139,9 +141,9 @@ static void hw6180_init(void)
     switches.FLT_BASE = 0100;
 #else
     // FLT_BASE switches are 7 MSB of 12bit addr
-    // switches.FLT_BASE = 2;   // multics requires setting 02 resulting in vector at 0100
+    switches.FLT_BASE = 2;  // multics requires setting 02 resulting in vector at 0100
     // switches.FLT_BASE = 0163; // diag tape allows any location *except* 02 --> 0100
-    switches.FLT_BASE = 0; // diag tape allows any location *except* 02 --> 0100
+    // switches.FLT_BASE = 0; // diag tape allows any location *except* 02 --> 0100
 #endif
 
     // Only one SCU

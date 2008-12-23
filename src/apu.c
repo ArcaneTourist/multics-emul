@@ -19,6 +19,7 @@ typedef struct {    // BUG: having a temp CA is ugly
     enum atag_tm special;
 } ca_temp_t;
 
+#define DSBR_ZERO_KILL 0
 static const int page_size = 1024;      // CPU allows [2^6 .. 2^12]; multics uses 2^10
 
 static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp);
@@ -85,7 +86,8 @@ void set_addr_mode(addr_modes_t mode)
     // BUG: set_addr_mode() probably belongs in CPU
     if (mode == ABSOLUTE_mode) {
         IR.abs_mode = 1;
-        IR.not_bar_mode = 1;
+        // BUG: T&D tape section 3 wants not-bar-mode true in absolute mode, but section 9 wants false?
+        IR.not_bar_mode = 1;    
         if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Setting absolute mode.\n");
     } else if (mode == APPEND_mode) {
         if (opt_debug>0) {
@@ -100,7 +102,7 @@ void set_addr_mode(addr_modes_t mode)
         IR.abs_mode = 0;
         IR.not_bar_mode = 0;
         log_msg(WARN_MSG, "APU", "Setting bar mode.\n");
-        cancel_run(STOP_WARN);
+        // cancel_run(STOP_WARN);
     } else {
         log_msg(ERR_MSG, "APU", "Unable to determine address mode.\n");
         cancel_run(STOP_BUG);
@@ -114,17 +116,13 @@ void set_addr_mode(addr_modes_t mode)
 addr_modes_t get_addr_mode()
 {
     // BUG: get_addr_mode() probably belongs in CPU
+    // NOTE: Operand modes can cause a change in the address mode
 
     if (IR.abs_mode)
         return ABSOLUTE_mode;
 
-    // BUG: addr mode depends upon instr's operand
-
-    if (IR.not_bar_mode == 0) {
-        log_msg(WARN_MSG, "APU", "BAR mode is untested\n");
-        cancel_run(STOP_WARN);
+    if (IR.not_bar_mode == 0)
         return BAR_mode;
-    }
 
     return APPEND_mode;
 }
@@ -280,7 +278,7 @@ char* print_instr(t_uint64 word)
 //=============================================================================
 
 
-int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp)
+int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp)
 {
     // Called only by the EIS multi-word instruction routines:
     //      get_eis_indir_ptr(t_uint64 word, uint *addrp)
@@ -302,24 +300,39 @@ int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitno
 
     uint offset;
     uint saved_PSR = 0, saved_PRR = 0, saved_CA = 0, saved_bitno = 0;
-    if (ar) {
+    if (ar || pr) {
         saved_PSR = TPR.TSR;
         saved_PRR = TPR.TRR ;
         saved_CA = TPR.CA;
         saved_bitno = TPR.TBR;
         //
-        uint pr = y >> 15;
+        uint n = y >> 15;
         int32 soffset = sign15(y & MASKBITS(15));
-        TPR.TSR = AR_PR[pr].PR.snr;
-        TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
-        offset = AR_PR[pr].wordno + soffset;
-        TPR.TBR = AR_PR[pr].PR.bitno;
+#if 0
+        // EIS indirect pointers to operand descriptors use PR registers.
+        // However, Operand Descriptors use AR registers according to the description of the AR registers
+        // and the description of EIS operand descriptors.   However, the description of the MF field
+        // claims that operands use PR registers.
+        if (pr)
+            TPR.TSR = AR_PR[n].PR.snr;
+        else {
+            if (TPR.TSR != AR_PR[n].PR.snr) {
+                log_msg(WARN_MSG, moi, "Not changing TPR.TSR from %#o to %#o via AR for EIS instr.\n", TPR.TSR, AR_PR[n].PR.snr);
+                // cancel_run(STOP_WARN);
+            }
+        }
+#else
+        TPR.TSR = AR_PR[n].PR.snr;
+#endif
+        TPR.TRR = max3(AR_PR[n].PR.rnr, TPR.TRR, PPR.PRR);
+        offset = AR_PR[n].wordno + soffset;
+        TPR.TBR = AR_PR[n].PR.bitno;
         if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o(0%o+0%o), bitno=0%o\n",
-            pr, TPR.TSR, TPR.TRR, offset, AR_PR[pr].wordno, soffset, TPR.TBR);
+            n, TPR.TSR, TPR.TRR, offset, AR_PR[n].wordno, soffset, TPR.TBR);
         *(uint*)bitnop = TPR.TBR;
     } else {
         offset = y;
-        // sofset = sign18(y);
+        // int32 sofset = sign18(y);
         *bitnop = 0;
     }
 
@@ -342,11 +355,13 @@ int get_address(uint y, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitno
         if (opt_debug>0) log_msg(DEBUG_MSG, moi, "page-in faulted\n");
     }
 
-    if (ar) {
+    if (ar || pr) {
+#if 1
         TPR.TSR = saved_PSR;
         TPR.TRR = saved_PRR;
         TPR.CA = saved_CA;
         TPR.TBR = saved_bitno;
+#endif
     }
 
     return ret;
@@ -436,7 +451,10 @@ static int temp_addr_mod(const instr_t *ip)
             log_msg(ERR_MSG, moi, "Bit 29 is on during an instruction fetch.\n");
             cancel_run(STOP_WARN);
         }
-        set_addr_mode(addr_mode = APPEND_mode);
+        if (orig_mode != APPEND_mode) {
+            log_msg(NOTIFY_MSG, moi, "Turning on APPEND mode for PR based operand.\n");
+            set_addr_mode(addr_mode = APPEND_mode);
+        }
         // AL39: Page 341, Figure 6-7 shows 3 bit PR & 15 bit offset
         int32 offset = ip->addr & MASKBITS(15);
         ca_temp.soffset = sign15(offset);
@@ -457,7 +475,6 @@ static int temp_addr_mod(const instr_t *ip)
     op >>= 1;
     if (bit27 == 0 && op == opcode0_stca)
         return 0;
-
 
 #if 0
     ???
@@ -505,18 +522,27 @@ static int temp_addr_mod(const instr_t *ip)
             // Todo: Add CA to BAR.base; add in PR; check CA vs bound
         }
         // BUG: Section 4 says make sure CA cycle handled AR reg mode & constants
-        log_msg(ERR_MSG, moi, "BAR mode not implemented.\n");
-        cancel_run(STOP_BUG);
-        return 1;
+        if (TPR.is_value) {
+            log_msg(WARN_MSG, moi, "BAR mode not fully implemented.\n");
+            return 0;
+        } else {
+            log_msg(ERR_MSG, moi, "BAR mode not implemented.\n");
+            cancel_run(STOP_BUG);
+            return 1;
+        }
     }
 
     if (addr_mode == ABSOLUTE_mode && ptr_reg_flag == 0) {
         // TPR.CA is the 18-bit absolute main memory addr
+        if (orig_mode != addr_mode)
+            log_msg(DEBUG_MSG, moi, "finished\n");
         return 0;
     }
 
     // APPEND mode handled by fetch_word() etc
 
+    if (orig_mode != addr_mode)
+        log_msg(DEBUG_MSG, moi, "finished\n");
     return 0;
 }
 
@@ -1001,21 +1027,28 @@ static int addr_append(t_uint64 *wordp)
 
 int fetch_appended(uint offset, t_uint64 *wordp)
 {
+    // Fetch a word at the given offset in the current segment (if possible).
     // Implements AL39, figure 5-4
     // Returns non-zero if a fault in groups 1-6 detected
     // Note that we allow an arbitray offset not just TPR.CA.   This is to support
     // instruction fetches.
     // BUG: Need to handle y-pairs -- fixed?
+    // In BAR mode, caller is expected to have already added the BAR.base and checked the BAR.bounds
 
     addr_modes_t addr_mode = get_addr_mode();
     if (addr_mode == ABSOLUTE_mode)
         return fetch_abs_word(offset, wordp);
+#if 0
     if (addr_mode == BAR_mode) {
-        log_msg(ERR_MSG, "APU::append", "BAR mode not implemented.\n");
-        cancel_run(STOP_BUG);
+        log_msg(WARN_MSG, "APU::fetch_append", "APU not intended for BAR mode\n");
+        offset += BAR.base << 9;
+        cancel_run(STOP_WARN);
         return fetch_abs_word(offset, wordp);
     }
     if (addr_mode != APPEND_mode) {
+#else
+    if (addr_mode != APPEND_mode && addr_mode != BAR_mode) {
+#endif
         // impossible
         log_msg(ERR_MSG, "APU::append", "Unknown mode\n");
         cancel_run(STOP_BUG);
@@ -1037,8 +1070,9 @@ int fetch_appended(uint offset, t_uint64 *wordp)
 
 int store_appended(uint offset, t_uint64 word)
 {
+    // Store a word at the given offset in the current segment (if possible).
     addr_modes_t addr_mode = get_addr_mode();
-    if (addr_mode != APPEND_mode) {
+    if (addr_mode != APPEND_mode && addr_mode != BAR_mode) {
         // impossible
         log_msg(ERR_MSG, "APU::store-append", "Not APPEND mode\n");
         cancel_run(STOP_BUG);
@@ -1198,7 +1232,12 @@ static SDWAM_t* page_in_sdw()
     if (DSBR.u) {
         // Descriptor table is unpaged
         // Do a NDSW cycle
-        if (segno * 2 >= 16 * (DSBR.bound + 1)) {
+#if DSBR_ZERO_KILL
+        if (segno * 2 >= DSBR.bound << 4) 
+#else
+        if (segno * 2 >= 16 * (DSBR.bound + 1))
+#endif
+        {
             cu.word1flags.oosb = 1;         // ERROR: nothing clears
             log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault\n", DSBR.bound, DSBR.bound);
             fault_gen(acc_viol_fault);

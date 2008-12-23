@@ -34,12 +34,7 @@ void log_msg(enum log_level level, const char* who, const char* format, ...)
             // out_msg("\n%s: %*s %s  %*sIC: %o\n", tag, 7-strlen(tag), "", who, 18-strlen(who), "", PPR.IC);
         char icbuf[80];
         addr_modes_t addr_mode = get_addr_mode();
-        if (addr_mode == ABSOLUTE_mode)
-            sprintf(icbuf, "%o", PPR.IC);
-        else if (addr_mode == BAR_mode)
-            sprintf(icbuf, "BAR %o", PPR.IC);
-        else
-            sprintf(icbuf, "%o|%o", PPR.PSR, PPR.IC);
+        ic2text(icbuf, addr_mode, PPR.PSR, PPR.IC);
         // out_msg("\n");
         // out_msg("%s: %*s IC: %s\n", tag, 7-strlen(tag), "", icbuf);
         msg(DEBUG_MSG, NULL, "\n", NULL);

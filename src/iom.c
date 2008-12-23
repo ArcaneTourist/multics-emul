@@ -951,7 +951,7 @@ static void parse_lpw(lpw_t *p, int addr, int is_conn)
 
 int lpw_write(int chan, int chanloc, const lpw_t* p)
 {
-    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o had %012o %012o\n", chan, chanloc, M[chanloc], M[chanloc+1]);
+    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o had %012Lo %012Lo\n", chan, chanloc, M[chanloc], M[chanloc+1]);
     lpw_t temp;
     parse_lpw(&temp, chanloc, chan == IOM_CONNECT_CHAN);
     //log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o had: %s\n", chan, chanloc, lpw2text(&temp, chan == IOM_CONNECT_CHAN));
@@ -976,7 +976,7 @@ int lpw_write(int chan, int chanloc, const lpw_t* p)
         word2 = setbits36(word2, 18, 18, p->idcw);
         M[chanloc+1] = word2;
     }
-    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o now %012o %012o\n", chan, chanloc, M[chanloc], M[chanloc+1]);
+    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o now %012Lo %012Lo\n", chan, chanloc, M[chanloc], M[chanloc+1]);
     return 0;
 }
 
@@ -1012,11 +1012,11 @@ static int status_service(int chan)
     word1 = setbits36(word1, 24, 6, chan_status.addr_ext);
     word1 = setbits36(word1, 30, 6, chan_status.dcw_residue);
 
-    word2 = setbits36(0, 0, 18, chan_status.addr);
-    word2 = setbits36(0, 18, 3, chan_status.char_pos);
-    word2 = setbits36(0, 21, 1, chan_status.is_read);
-    word2 = setbits36(0, 23, 2, chan_status.type);
-    word2 = setbits36(0, 25, 12, chan_status.dcw_residue);
+    word2 = setbits36(word2, 0, 18, chan_status.addr);
+    word2 = setbits36(word2, 18, 3, chan_status.char_pos);
+    word2 = setbits36(word2, 21, 1, chan_status.is_read);
+    word2 = setbits36(word2, 23, 2, chan_status.type);
+    word2 = setbits36(word2, 25, 12, chan_status.dcw_residue);
 #endif
 
     // BUG: need to write to mailbox queue
