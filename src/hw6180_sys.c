@@ -407,7 +407,50 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
         }
         fflush(ofile);
         return SCPE_OK;
-    } else
+    } else if (sw & SIM_SW_REG) {
+        REG* regp = (void*) uptr;
+        if (regp && (regp->flags&REG_USER2)) {
+            // PR registers
+            // NOTE: Another implementation would be to have the value of each register always be its
+            // index -- e.g. reg_simh_pr[5] would hold value 5.  Then the examine and deposit routines
+            // could simply operate on the associated AR_PR registers.
+            AR_PR_t pr;
+            pr.PR.snr = *val & 077777;          // 15 bits
+            pr.PR.rnr = (*val >> 15) & 07;      //  3 bits
+            pr.PR.bitno = (*val >> 18) & 077;   //  6 bits
+            pr.wordno = (*val >> 24);           // 18 bits
+            pr.AR.charno = pr.PR.bitno / 9;
+            pr.AR.bitno = pr.PR.bitno % 9;
+            fprintf(ofile, "[ring %0o, address %0o|%0o, bitno %d]", pr.PR.rnr, pr.PR.snr, pr.wordno, pr.PR.bitno);
+            fflush(ofile);
+            return SCPE_OK;
+        } else if (regp && (regp->flags&REG_USER1)) {
+            // IR register
+            fprintf(ofile, "%s", bin2text(*val, 18));
+            IR_t ir;
+            load_IR(&ir, *val);
+            fprintf(ofile, " [");
+            if (ir.zero) fprintf(ofile, " zero");
+            if (ir.neg) fprintf(ofile, " neg");
+            if (ir.carry) fprintf(ofile, " carry");
+            if (ir.overflow) fprintf(ofile, " overflow");
+            if (ir.exp_overflow) fprintf(ofile, " exp-overflow");
+            if (ir.exp_underflow) fprintf(ofile, " exp-underflow");
+            if (ir.overflow_mask) fprintf(ofile, " overflow-mask");
+            if (ir.tally_runout) fprintf(ofile, " tally-run-out");
+            if (ir.parity_error) fprintf(ofile, " parity-error");
+            if (ir.parity_mask) fprintf(ofile, " parity-mask");
+            if (ir.not_bar_mode) fprintf(ofile, " not-bar-mode");
+            if (ir.truncation) fprintf(ofile, " truncation");
+            if (ir.mid_instr_intr_fault) fprintf(ofile, " mid-instr-intr-fault");
+            if (ir.abs_mode) fprintf(ofile, " abs-mode");
+            if (ir.hex_mode) fprintf(ofile, " hex-mode");
+            fprintf(ofile, " ]");
+            fflush(ofile);
+            return SCPE_OK;
+        } else
+            return SCPE_ARG;
+    } else 
         return SCPE_ARG;
 }
 

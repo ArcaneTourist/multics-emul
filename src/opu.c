@@ -308,7 +308,7 @@ static int do_an_op(instr_t *ip)
                     uint par = IR.parity_mask;
                     uint nbar = IR.not_bar_mode;
                     uint abs = IR.abs_mode;
-                    load_IR(word);
+                    load_IR(&IR, word);
                     IR.not_bar_mode = nbar;
                     IR.abs_mode = abs;
                     addr_modes_t addr_mode = get_addr_mode();

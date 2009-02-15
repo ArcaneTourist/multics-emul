@@ -1,5 +1,11 @@
 #include "sim_defs.h"
 
+/* Additions to SIMH -- may conflict with future versions of SIMH */
+#define REG_USER1 040000000
+#define REG_USER2 020000000
+
+// ============================================================================
+
 /*
         For efficiency, we mostly use full ints instead of bit fields for
     the flags and other fields of most of the typedefs here.  When necessary,
@@ -170,6 +176,8 @@ typedef struct {
 } BAR_reg_t;
 
 // Combination: Pointer Registers and Address Registers
+// Note that the eight registers are also known by the
+// names: ap, ab, bp, bb, lp, lb, sp, sb
 typedef struct {
     int wordno; // offset from segment base;
     struct {
@@ -662,7 +670,7 @@ extern int retr_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t *bitp
 extern int put_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t bitval);
 extern int save_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp);
 
-extern void load_IR(t_uint64 word);
+extern void load_IR(IR_t *irp, t_uint64 word);
 
 extern void set_addr_mode(addr_modes_t mode);
 extern addr_modes_t get_addr_mode(void);

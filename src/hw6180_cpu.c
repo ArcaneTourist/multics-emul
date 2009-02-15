@@ -39,15 +39,16 @@ extern int32 sim_switches;
 //-----------------------------------------------------------------------------
 //*** Registers
 
-// We don't have a simple PC -- we have HW virtual memory
-// PPR pseudo-register is the PC
+// We don't have a simple program counter -- we have HW virtual memory
+// PPR pseudo-register is the program counter.   The PPR is composed of
+// registers from the appending unit and the control unit:
 //  AU:PSR -- segment number (15 bits); not used in absolute mode
 //  CU:IC -- offset (18 bits)
 //  See also
 //      AU:P -- privileged
 //      AU:PRR: 3 bits -- ring #
-// we should probably use our own addr rtn and provide for handling
-// absolute, bar, and append modes
+// We should probably provide SIMH with our own addr rtn and provide for
+// handling absolute, bar, and append modes 
 
 
 /* OBSOLETE PC COMMENTS */
@@ -81,17 +82,16 @@ t_uint64 reg_Q; // Quotient, 36 bits
 // Note: AQ register is just a combination of the A and Q registers
 t_uint64 reg_E; // Exponent
 // Note: EAQ register is just a combination of the E, A, and Q registers
-//t_uint64 reg_X[8];    // Index Registers, 18 bits
 uint32 reg_X[8];    // Index Registers, 18 bits; SIMH expects data type to be no larger than needed
 IR_t IR;        // Indicator register
-static t_uint64 saved_IR;
-// static int32 IC; // APU (appending unit) Instruction Counter, 18 bits -- see PPR.IC !!!
-static t_uint64 saved_IC;
+static t_uint64 saved_IR;   // Only for sending to/from SIMH
+static t_uint64 saved_IC;   // Only for sending to/from SIMH
 BAR_reg_t BAR;      // Base Addr Register; 18 bits
 //static uint32 saved_BAR;
 uint32 reg_TR;      // Timer Reg, 27 bits -- only valid after calls to SIMH clock routines
 uint8 reg_RALR; // Ring Alarm Reg, 3 bits
 AR_PR_t AR_PR[8];   // Combined Pointer Registers (42 bits) and Address Registers (24 bits)
+    // Note that the eight PR registers are also known by the names: ap, ab, bp, bb, lp, lb, sp, sb
 PPR_t PPR;      // Procedure Pointer Reg, 37 bits, internal only
 TPR_t TPR;      // Temporary Pointer Reg, 42 bits, internal only
 DSBR_t DSBR;    // Descriptor Segment Base Register, 51 bits
@@ -107,19 +107,21 @@ PTWAM_t PTWAM[16];  // Page Table Word Associative Memory, 51 bits
 // CU data  // Control Unit data, 288 bits, internal only
 // DU data  // Decimal Unit data, 288 bits, internal only
 
+t_uint64 reg_simh_pr[8];    // packed versions of the AR/PR registers; format specific to this simulator
 
 // SIMH gets a copy of all (or maybe most) registers
 // todo: modify simh to take a PV_ZLEFT flag (leftmost bit is bit 0) or
 // perhaps PV_ZMSB (most significant bit is numbered zero)
 REG cpu_reg[] = {
-    // name="PC", loc=PC, radix=<8>, width=36, offset=<0>, depth=<1>, flags=, qptr=
+    // structure members: name="PC", loc=PC, radix=<8>, width=36, offset=<0>, depth=<1>, flags=, qptr=
     { ORDATA (IC, saved_IC, 18) },
-    { GRDATA (IR, saved_IR, 2, 18, 0), REG_RO },
+    { GRDATA (IR, saved_IR, 2, 18, 0), REG_RO | REG_VMIO | REG_USER1},
     { ORDATA (A, reg_A, 36) },
     { ORDATA (Q, reg_Q, 36) },
     { ORDATA (E, reg_E, 36) },
     { BRDATA (X, reg_X, 8, 18, 8) },
     { ORDATA (TR, reg_TR, 27), REG_RO },
+    { BRDATA (PR, reg_simh_pr, 8, 42, 8), REG_VMIO | REG_USER2 },
     { NULL }
 };
 
@@ -249,6 +251,7 @@ static void init_ops(void);
 static void ic_history_init(void);
 static void ic_history_add(void);
 static void check_events(void);
+static void save_PR_registers(void);
 
 void tape_block(unsigned char *p, uint32 len, uint32 addr);
 
@@ -348,6 +351,16 @@ t_stat cpu_reset (DEVICE *dptr)
     // the user to load a boot tape image before starting the CPU...
 
     log_msg(DEBUG_MSG, "CPU", "Reset\n");
+if(0) {
+    // BUG -- temp debug hack
+    out_msg("DEBUG: CPU Registers:\n");
+    for (int i = 0; i < ARRAY_SIZE(cpu_reg); ++i) {
+        REG *r = &cpu_reg[i];
+        out_msg("\tRegister %d at %p: '%s': radix %d, width %d, depth %d, offset bit %d, flags %0o, loc %p, qptr %d\n",
+            i, r, r->name, r->radix, r->width, r->depth, r->offset, r->flags, r->loc, r->qptr);
+    }
+    out_msg("\n");
+}
 
     init_ops();
     ic_history_init();
@@ -515,28 +528,29 @@ if (opt_debug) {
     // BUG: pack private variables into SIMH's world
     saved_IC = PPR.IC;
     save_IR(&saved_IR);
+    save_PR_registers();
         
     return reason;
 }
 
-void load_IR(t_uint64 word)
+void load_IR(IR_t *irp, t_uint64 word)
 {
-    memset(&IR, 0, sizeof(IR));
-    IR.zero = getbits36(word, 18, 1);
-    IR.neg = getbits36(word, 19, 1);
-    IR.carry = getbits36(word, 20, 1);
-    IR.overflow = getbits36(word, 21, 1);
-    IR.exp_overflow = getbits36(word, 22, 1);
-    IR.exp_underflow = getbits36(word, 23, 1);
-    IR.overflow_mask = getbits36(word, 24, 1);
-    IR.tally_runout = getbits36(word, 25, 1);
-    IR.parity_error = getbits36(word, 26, 1);
-    IR.parity_mask = getbits36(word, 27, 1);
-    IR.not_bar_mode = getbits36(word, 28, 1);
-    IR.truncation = getbits36(word, 29, 1);
-    IR.mid_instr_intr_fault = getbits36(word, 30, 1);
-    IR.abs_mode = getbits36(word, 31, 1);
-    IR.hex_mode = getbits36(word, 32, 1);
+    memset(irp, 0, sizeof(*irp));
+    irp->zero = getbits36(word, 18, 1);
+    irp->neg = getbits36(word, 19, 1);
+    irp->carry = getbits36(word, 20, 1);
+    irp->overflow = getbits36(word, 21, 1);
+    irp->exp_overflow = getbits36(word, 22, 1);
+    irp->exp_underflow = getbits36(word, 23, 1);
+    irp->overflow_mask = getbits36(word, 24, 1);
+    irp->tally_runout = getbits36(word, 25, 1);
+    irp->parity_error = getbits36(word, 26, 1);
+    irp->parity_mask = getbits36(word, 27, 1);
+    irp->not_bar_mode = getbits36(word, 28, 1);
+    irp->truncation = getbits36(word, 29, 1);
+    irp->mid_instr_intr_fault = getbits36(word, 30, 1);
+    irp->abs_mode = getbits36(word, 31, 1);
+    irp->hex_mode = getbits36(word, 32, 1);
     // Bits 33..35 not used
 }
 
@@ -568,6 +582,18 @@ void save_IR(t_uint64* wordp)
         (IR.hex_mode << (35-32));
 }
         
+//=============================================================================
+
+static void save_PR_registers()
+{
+    for (int i = 0; i < ARRAY_SIZE(reg_simh_pr); ++ i) {
+        reg_simh_pr[i] =
+            (AR_PR[i].PR.snr & 077777) |            // 15 bits
+            ((AR_PR[i].PR.rnr & 07) << 15) |        //  3 bits
+            ((AR_PR[i].PR.bitno & 077) << 18) |     //  6 bits
+            ((AR_PR[i].wordno & 0777777) << 18);    // 18 bits
+    }
+}
 
 //=============================================================================
 
@@ -575,11 +601,6 @@ void save_IR(t_uint64* wordp)
 
 static t_stat control_unit(void)
 {
-    // ------------------------------------------------------------------------
-    //
-    // TODO: Can we get rid of the simulation of two word fetch of an even/odd
-    //  instruction pair?
-
     // ------------------------------------------------------------------------
 
     // Emulation of the control unit -- fetch cycle, execute cycle, 
@@ -683,7 +704,6 @@ static t_stat control_unit(void)
 #endif
 
         case FAULT_cycle:
-            // BUG: low_group not used/maintained
             {
             log_msg(DEBUG_MSG, "CU", "Cycle = FAULT\n");
 
@@ -691,6 +711,7 @@ static t_stat control_unit(void)
             int fault = 0;
             int group = 0;
 #if 0
+            // BUG: low_group not used/maintained
             for (group = 0; group <= 6; ++ group) {
                 if ((fault = events.fault[group]) != 0)
                     break;
@@ -739,7 +760,7 @@ static t_stat control_unit(void)
             if (fault != trouble_fault)
                 cu_safe_store();
 
-            set_addr_mode(ABSOLUTE_mode); // until execution of a transfer instr whose operand is obtained via explicit use of the appending HW mechanism -- AL39, 1-3
+            set_addr_mode(ABSOLUTE_mode); // this mode will remain in effect until execution of a transfer instr whose operand is obtained via explicit use of the appending HW mechanism -- AL39, 1-3
 
             // BUG: clear fault?  Or does scr instr do that?
             int next_fault = 0;
@@ -832,15 +853,17 @@ static t_stat control_unit(void)
 
         case INTERRUPT_cycle: {
             // This code is just a quick-n-dirty sketch to test booting via an interrupt instead of via a fault
-            set_addr_mode(ABSOLUTE_mode); // until execution of a transfer instr whose operand is obtained via explicit use of the appending HW mechanism -- AL39, 1-3
+            set_addr_mode(ABSOLUTE_mode); // this mode will remain in effect until execution of a transfer instr whose operand is obtained via explicit use of the appending HW mechanism -- AL39, 1-3
             log_msg(WARN_MSG, "CU", "Interrupts only partially implemented\n");
             PPR.PRR = 0;    // set ring zero
             int intr;
             for (intr = 0; intr < 32; ++intr)
                 if (events.interrupts[intr])
                     break;
-            if (intr == 32)
+            if (intr == 32) {
                 log_msg(ERR_MSG, "CU", "Interrupt cycle with no pending interrupt.\n");
+                // BUG: Need error handling
+            }
             log_msg(WARN_MSG, "CU", "Interrupt %#o (%d) found.\n", intr, intr);
             events.interrupts[intr] = 0;
             uint addr = 0 + 2 * intr; // ABSOLUTE mode
@@ -884,6 +907,7 @@ static t_stat control_unit(void)
             TPR.TSR = PPR.PSR;
             TPR.TRR = PPR.PRR;
             
+            // Possibly obsolete notes:
             // handle rpt and other repeat instructions
             // -----
             // don't switch to fetch cycle or update ic_odd except as noted here
@@ -901,8 +925,8 @@ static t_stat control_unit(void)
     
 #if XED_NEW
         case FAULT_EXEC_cycle: ;
-            // FAULT-EXEC is a pseudo cycle no present in the actual hardware.   The hardeware
-            // does execut intructions (e.g. an fault's xed) in a FAULT cycle.   We use the
+            // FAULT-EXEC is a pseudo cycle not present in the actual hardware.   The hardware
+            // does execute intructions (e.g. an fault's xed) in a FAULT cycle.   We use the
             // FAULT-EXEC cycle for this to gain code re-use.
 #endif
 
@@ -938,13 +962,15 @@ static t_stat control_unit(void)
             if (sim_brk_summ) {
                 if (sim_brk_test (PPR.IC, SWMASK ('E'))) {
                     // BUG: misses breakpoints on target of xed, rpt, and similar instructions
+                    // because those instructions don't update the IC.  Some of those instructions
+                    // do however provide their own breakpoint checks.
                     log_msg(WARN_MSG, "CU", "Execution Breakpoint\n");
                     reason = STOP_IBKPT;    /* stop simulation */
                     break;
                 }
             }
 
-            // We assume IC always point to correct instr -- should be advanced after even instr
+            // We assume IC always points to the correct instr -- should be advanced after even instr
             uint IC_temp = PPR.IC;
             ic_history_add();
             execute_ir();
@@ -995,7 +1021,8 @@ static t_stat control_unit(void)
                         int n = cu.tag & 07;
                         reg_X[n] += cu.delta;
                         if (opt_debug) log_msg(DEBUG_MSG, "CU", "Incrementing X[%d] by %#o to %#o.\n", n, cu.delta, reg_X[n]);
-                        // Note that the code in bootload_tape.alm expects that the tally                                       // runout *not* be set when both the termination condition is met
+                        // Note that the code in bootload_tape.alm expects that the tally
+                        // runout *not* be set when both the termination condition is met
                         // and bits 0..7 of reg X[0] hits zero.
                         if (t == 0) {
                             IR.tally_runout = 1;
@@ -1020,7 +1047,7 @@ static t_stat control_unit(void)
                         if (getbit18(reg_X[0], 17)) {
                             log_msg(DEBUG_MSG, "CU", "Checking termination conditions for overflows.\n");
                             // Process overflows -- BUG: what are all the overflows?
-                            if (IR.overflow /* || IR.exp_overflow */ ) {
+                            if (IR.overflow || IR.exp_overflow) {
                                 if (IR.overflow_mask)
                                     IR.overflow = 1;
                                 else
