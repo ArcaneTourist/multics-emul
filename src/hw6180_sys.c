@@ -44,6 +44,7 @@ int32 sim_emax = 4;
 
 DEVICE *sim_devices[] = {
     &cpu_dev,
+    // &cpu_dev2,
     &tape_dev,
     &opcon_dev,
     NULL
@@ -62,11 +63,14 @@ const char *sim_stop_messages[] = {
 
 static int vmdump(int32 arg, char *buf);
 static int history(int32 arg, char *buf);
+static int seginfo(int32 arg, char *buf);
 extern CTAB *sim_vm_cmd;
 static struct sim_ctab sim_cmds[] =  {
-    { "XSYMTAB", symtab_parse, 0, "xsymtab                  define symtab entries\n" },
-    { "XVMDUMP", vmdump, 0,   "xvmdump                  dump virtual memory caches\n" },
-    { "XHISTORY", history, 0, "xhistory                 display recent instruction counter values\n" },
+    { "XSYMTAB",  symtab_parse, 0, "xsymtab                  define symtab entries\n" },
+    { "XVMDUMP",  vmdump, 0,       "xvmdump                  dump virtual memory caches\n" },
+    { "XHISTORY", history, 0,      "xhistory                 display recent instruction counter values\n" },
+    { "XSEGINFO", seginfo, 0,      "xseginfo                 walk segment linkage table\n" },
+    { "XFIND",    cmd_find, 0,     "xfind                    search\n" },
     { 0, 0, 0, 0}
 };
 
@@ -412,7 +416,7 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
         if (regp && (regp->flags&REG_USER2)) {
             // PR registers
             // NOTE: Another implementation would be to have the value of each register always be its
-            // index -- e.g. reg_simh_pr[5] would hold value 5.  Then the examine and deposit routines
+            // index -- e.g. saved_ar_pr[5] would hold value 5.  Then the examine and deposit routines
             // could simply operate on the associated AR_PR registers.
             AR_PR_t pr;
             pr.PR.snr = *val & 077777;          // 15 bits
@@ -541,12 +545,16 @@ static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
             //log_msg(WARN_MSG, "parse_addr", "PR[%d] uses 0%o|0%o\n", pr, seg, offset);
             cptr += 4;
         } else {
-            if (!is_octal_digit(*cptr))
+            if (!is_octal_digit(*cptr)) {
+                out_msg("ERROR: Non octal digit starting at: %s\n.", cptr);
                 return 0;
+            }
             sscanf(cptr, "%o", &seg);
             cptr += strspn(cptr, "01234567");
-            if (cptr !=  offsetp)
+            if (cptr != offsetp) {
+out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
                 return 0;
+            }
             ++cptr;
         }
     } else
@@ -629,4 +637,9 @@ static int history(int32 arg, char *buf)
 {
     cmd_dump_history();
     return 0;
+}
+
+static int seginfo(int32 arg, char *buf)
+{
+    return cmd_seginfo(arg, buf);
 }

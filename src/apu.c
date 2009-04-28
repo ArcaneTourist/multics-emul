@@ -1095,8 +1095,10 @@ void cmd_dump_vm()
 {
     // Dump VM info -- However, we only know about what's in the cache registers
 
+    restore_from_simh();    // in case DSBR or other vars were updated
+
     out_msg("DSBR: addr=0%08o, bound=0%o(%d), unpaged=%c\n",
-        DSBR.addr, DSBR.bound, DSBR.bound, DSBR.u ? 'Y' : 'N');
+        cpup->DSBR.addr, cpup->DSBR.bound, cpup->DSBR.bound, cpup->DSBR.u ? 'Y' : 'N');
     if (cu.SD_ON)
         out_msg("SDWAM is enabled.\n");
     else
@@ -1105,20 +1107,20 @@ void cmd_dump_vm()
         out_msg("PTWAM is enabled.\n");
     else
         out_msg("PTWAM is NOT enabled.\n");
-    if (DSBR.u)
-        out_msg("DSBR: SDW for segment 'segno' is at %08o + 2 * segno.\n", DSBR.addr);
+    if (cpup->DSBR.u)
+        out_msg("DSBR: SDW for segment 'segno' is at %08o + 2 * segno.\n", cpup->DSBR.addr);
     else {
         out_msg("DSBR: Offset (y1) in page table for segment 'segno' is at (2 * segno)%%%d;\n", page_size);
-        out_msg("DSBR: PTW for segment 'segno' is at 0%08o + (2 * segno - y1)/%d.\n", DSBR.addr, page_size);
+        out_msg("DSBR: PTW for segment 'segno' is at 0%08o + (2 * segno - y1)/%d.\n", cpup->DSBR.addr, page_size);
         out_msg("DSBR: SDW for segment 'segno' is at PTW.addr<<6 + y1.\n");
     }
-    for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i) {
+    for (int i = 0; i < ARRAY_SIZE(cpup->SDWAM); ++i) {
         out_msg("SDWAM[%d]: ptr(segno)=0%05o, is-full=%c, use=0%02o(%02d)\n",
-            i, SDWAM[i].assoc.ptr, SDWAM[i].assoc.is_full ? 'Y' : 'N',
-            SDWAM[i].assoc.use, SDWAM[i].assoc.use);
-        SDW_t *sdwp = &SDWAM[i].sdw;
-        out_msg("\tSDW for seg %d: addr = 0%08o, r1=%o r2=%o r3=%o, f=%c, fc=0%o.\n",
-            SDWAM[i].assoc.ptr, sdwp->addr, sdwp->r1, sdwp->r2, sdwp->r3, sdwp->f ? 'Y' : 'N', sdwp->fc);
+            i, cpup->SDWAM[i].assoc.ptr, cpup->SDWAM[i].assoc.is_full ? 'Y' : 'N',
+            cpup->SDWAM[i].assoc.use, cpup->SDWAM[i].assoc.use);
+        SDW_t *sdwp = &cpup->SDWAM[i].sdw;
+        out_msg("\tSDW for seg %#o: addr = 0%08o, r1=%o r2=%o r3=%o, f=%c, fc=0%o.\n",
+            cpup->SDWAM[i].assoc.ptr, sdwp->addr, sdwp->r1, sdwp->r2, sdwp->r3, sdwp->f ? 'Y' : 'N', sdwp->fc);
         out_msg("\tbound = 0%05o(%d) => %06o(%u)\n",
             sdwp->bound, sdwp->bound, sdwp->bound * 16 + 16, sdwp->bound * 16 + 16);
         out_msg("\tr=%c e=%c w=%c, priv=%c, unpaged=%c, g=%c, c=%c, cl=%05o\n",
@@ -1143,7 +1145,9 @@ SDW_t* get_sdw()
 
 int get_seg_addr(uint offset, uint perm_mode, uint *addrp)
 {
-    // BUG: causes faults
+    // Return the absolute address of an offset in the current segment
+    // BUG: causes faults, but see fault_gen_no_fault global
+
     uint minaddr, maxaddr;  // results unneeded
     int ret = page_in(offset, perm_mode, addrp, &minaddr, &maxaddr);
     if (ret)
@@ -1193,20 +1197,21 @@ static SDWAM_t* page_in_sdw()
 
     // Check to see if SDW for segno is in SDWAM
     // Save results across invocations so that locality of reference avoids search
-    static SDWAM_t *SDWp = SDWAM;   // BUG: expose to reset?
+    static SDWAM_t *SDWp = 0;
+    if (SDWp == 0) SDWp = cpup->SDWAM;  // BUG: expose to reset? // BUG won't work for multiple CPUs
     int oldest_sdwam = -1;
     if (SDWp == NULL || SDWp->assoc.ptr != segno || ! SDWp->assoc.is_full) {    // todo: validate NULL as impossible
         SDWp = NULL;
-        for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i) {
-            if (SDWAM[i].assoc.ptr == segno && SDWAM[i].assoc.is_full) {
-                SDWp = SDWAM + i;
+        for (int i = 0; i < ARRAY_SIZE(cpup->SDWAM); ++i) {
+            if (cpup->SDWAM[i].assoc.ptr == segno && cpup->SDWAM[i].assoc.is_full) {
+                SDWp = cpup->SDWAM + i;
                 // log_msg(DEBUG_MSG, "APU::append", "Found SDW for segno 0%o in SDWAM[%d]\n", segno, i);
                 break;
             }
-            //if (! SDWAM[i].assoc.is_full) {
+            //if (! cpup->SDWAM[i].assoc.is_full) {
             //  log_msg(DEBUG_MSG, "APU::append", "Found SDWAM[%d] is unused\n", i);
             //}
-            if (SDWAM[i].assoc.use == 0)
+            if (cpup->SDWAM[i].assoc.use == 0)
                 oldest_sdwam = i;
         }
     } else {
@@ -1215,11 +1220,11 @@ static SDWAM_t* page_in_sdw()
 
     if (SDWp != NULL) {
         // SDW is in SDWAM; it becomes the LRU
-        // log_msg(DEBUG_MSG, "APU::append", "SDW is in SDWAM[%d].\n", SDWp - SDWAM);
+        // log_msg(DEBUG_MSG, "APU::append", "SDW is in SDWAM[%d].\n", SDWp - cpup->SDWAM);
         if (SDWp->assoc.use != 15) {
-            for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i) {
-                if (SDWAM[i].assoc.use > SDWp->assoc.use)
-                    -- SDWAM[i].assoc.use;
+            for (int i = 0; i < ARRAY_SIZE(cpup->SDWAM); ++i) {
+                if (cpup->SDWAM[i].assoc.use > SDWp->assoc.use)
+                    -- cpup->SDWAM[i].assoc.use;
             }
             SDWp->assoc.use = 15;
         }
@@ -1227,30 +1232,30 @@ static SDWAM_t* page_in_sdw()
     }
 
     // Fetch SDW and place into SDWAM
-    if(opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "SDW for segno 0%o is not in SDWAM.  DSBR addr is 0%o\n", segno, DSBR.addr);
+    if(opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "SDW for segno 0%o is not in SDWAM.  DSBR addr is 0%o\n", segno, cpup->DSBR.addr);
     t_uint64 sdw_word0, sdw_word1;
-    if (DSBR.u) {
+    if (cpup->DSBR.u) {
         // Descriptor table is unpaged
         // Do a NDSW cycle
 #if DSBR_ZERO_KILL
-        if (segno * 2 >= DSBR.bound << 4) 
+        if (segno * 2 >= cpup->DSBR.bound << 4) 
 #else
-        if (segno * 2 >= 16 * (DSBR.bound + 1))
+        if (segno * 2 >= 16 * (cpup->DSBR.bound + 1))
 #endif
         {
             cu.word1flags.oosb = 1;         // ERROR: nothing clears
-            log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault\n", DSBR.bound, DSBR.bound);
+            log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault\n", cpup->DSBR.bound, cpup->DSBR.bound);
             fault_gen(acc_viol_fault);
             return NULL;
         }
-        if(1) log_msg(DEBUG_MSG, "APU::append", "Fetching SDW for unpaged descriptor table from 0%o\n", DSBR.addr + 2 * segno);
-        if (fetch_abs_pair(DSBR.addr + 2 * segno, &sdw_word0, &sdw_word1) != 0)
+        if(1) log_msg(DEBUG_MSG, "APU::append", "Fetching SDW for unpaged descriptor table from 0%o\n", cpup->DSBR.addr + 2 * segno);
+        if (fetch_abs_pair(cpup->DSBR.addr + 2 * segno, &sdw_word0, &sdw_word1) != 0)
             return NULL;
     } else {
         // Descriptor table is paged
-        if (segno * 2 >= 16 * (DSBR.bound + 1)) {
+        if (segno * 2 >= 16 * (cpup->DSBR.bound + 1)) {
             // BUG 12/05/2008 -- bootload_1.alm, instr 17 triggers this
-            log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside paged DSBR bound of 0%o(%u) -- OOSB fault\n", DSBR.bound, DSBR.bound);
+            log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside paged DSBR bound of 0%o(%u) -- OOSB fault\n", cpup->DSBR.bound, cpup->DSBR.bound);
             cu.word1flags.oosb = 1;         // ERROR: nothing clears
             fault_gen(acc_viol_fault);
             cancel_run(STOP_WARN);
@@ -1262,8 +1267,8 @@ static SDWAM_t* page_in_sdw()
         uint x1 = (2 * segno - y1) / page_size;     // offset within DS page
         PTW_t DSPTW;
         t_uint64 word;
-        if(1) log_msg(DEBUG_MSG, "APU::append", "Fetching DS-PTW for paged descriptor table from 0%o\n", DSBR.addr + x1);
-        if (fetch_abs_word(DSBR.addr + x1, &word) != 0) // We assume DS is 1024 words (bound=077->16*64=1024)
+        if(1) log_msg(DEBUG_MSG, "APU::append", "Fetching DS-PTW for paged descriptor table from 0%o\n", cpup->DSBR.addr + x1);
+        if (fetch_abs_word(cpup->DSBR.addr + x1, &word) != 0)   // We assume DS is 1024 words (bound=077->16*64=1024)
             return NULL;
         decode_PTW(word, &DSPTW);   // TODO: cache this
         if (DSPTW.f == 0) {
@@ -1274,7 +1279,7 @@ static SDWAM_t* page_in_sdw()
         if (! DSPTW.u) {
             // MDSPTW cycle
             DSPTW.u = 1;
-            if (set_PTW_used(DSBR.addr + x1) != 0) {
+            if (set_PTW_used(cpup->DSBR.addr + x1) != 0) {
                 // impossible -- we just read this absolute addresed word
                 return NULL;
             }
@@ -1291,10 +1296,10 @@ static SDWAM_t* page_in_sdw()
         cancel_run(STOP_BUG);
         return NULL;
     }
-    for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i) {
-        -- SDWAM[i].assoc.use;
+    for (int i = 0; i < ARRAY_SIZE(cpup->SDWAM); ++i) {
+        -- cpup->SDWAM[i].assoc.use;
     }
-    SDWp = SDWAM + oldest_sdwam;
+    SDWp = cpup->SDWAM + oldest_sdwam;
     decode_SDW(sdw_word0, sdw_word1, &SDWp->sdw);
     SDWp->assoc.ptr = segno;
     SDWp->assoc.use = 15;
@@ -1349,20 +1354,21 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp,
         // Save results across invocations so that locality of reference helps
         uint y2 = offset % page_size;           // offset within page
         uint x2 = (offset - y2) / page_size;    // page number
-        static PTWAM_t *PTWp = PTWAM;   // BUG: expose to reset?
+        static PTWAM_t *PTWp = 0;
+        if (PTWp == 0) PTWp = cpup->PTWAM;  // BUG: expose to reset? // BUG: won't work for multiple CPUs
         int oldest_ptwam = -1;
         // TODO: performance: cache last index instead and start search from there
         if (PTWp == NULL || PTWp->assoc.ptr != segno || PTWp->assoc.pageno != x2 || ! PTWp->assoc.is_full) {    // todo: validate NULL as impossible
             PTWp = NULL;
-            for (int i = 0; i < ARRAY_SIZE(PTWAM); ++i) {
-                if (PTWAM[i].assoc.ptr == segno && PTWAM[i].assoc.pageno == x2 && PTWAM[i].assoc.is_full) {
-                    PTWp = PTWAM + i;
+            for (int i = 0; i < ARRAY_SIZE(cpup->PTWAM); ++i) {
+                if (cpup->PTWAM[i].assoc.ptr == segno && cpup->PTWAM[i].assoc.pageno == x2 && cpup->PTWAM[i].assoc.is_full) {
+                    PTWp = cpup->PTWAM + i;
                     // log_msg(DEBUG_MSG, "APU::append", "Found PTW for (segno 0%o, page 0%o) in PTWAM[%d]\n", segno, x2, i);
                     break;
                 }
-                if (PTWAM[i].assoc.use == 0)
+                if (cpup->PTWAM[i].assoc.use == 0)
                     oldest_ptwam = i;
-                //if (! PTWAM[i].assoc.is_full) {
+                //if (! cpup->PTWAM[i].assoc.is_full) {
                 //  log_msg(DEBUG_MSG, "APU::append", "PTW[%d] is not full\n", i);
                 //}
             }
@@ -1372,9 +1378,9 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp,
         if (PTWp != NULL) {
             // PTW is in PTWAM; it becomes the LRU
             if (PTWp->assoc.use != 15) {
-                for (int i = 0; i < ARRAY_SIZE(PTWAM); ++i) {
-                    if (PTWAM[i].assoc.use > PTWp->assoc.use)
-                        -- PTWAM[i].assoc.use;
+                for (int i = 0; i < ARRAY_SIZE(cpup->PTWAM); ++i) {
+                    if (cpup->PTWAM[i].assoc.use > PTWp->assoc.use)
+                        -- cpup->PTWAM[i].assoc.use;
                 }
                 PTWp->assoc.use = 15;
             }
@@ -1389,10 +1395,10 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp,
             // log_msg(DEBUG_MSG, "APU::append", "Fetching PTW for (segno 0%o, page 0%o) from 0%o(0%o+page)\n", segno, x2, SDWp->sdw.addr + x2, SDWp->sdw.addr);
             if (fetch_abs_word(SDWp->sdw.addr + x2, &word) != 0)
                 return 1;
-            for (int i = 0; i < ARRAY_SIZE(PTWAM); ++i) {
-                -- PTWAM[i].assoc.use;
+            for (int i = 0; i < ARRAY_SIZE(cpup->PTWAM); ++i) {
+                -- cpup->PTWAM[i].assoc.use;
             }
-            PTWp = PTWAM + oldest_ptwam;
+            PTWp = cpup->PTWAM + oldest_ptwam;
             decode_PTW(word, &PTWp->ptw);
             PTWp->assoc.use = 15;
             PTWp->assoc.ptr = segno;
@@ -1472,12 +1478,24 @@ static void decode_SDW(t_uint64 word0, t_uint64 word1, SDW_t *sdwp)
 
 char* print_sdw(t_uint64 word0, t_uint64 word1)
 {
-    static char buf[100];
     SDW_t sdw;
     decode_SDW(word0, word1, &sdw);
+    return sdw2text(&sdw);
+}
+
+char *sdw2text(const SDW_t *sdwp)
+{
+    static char buf[100];
+    uint bound = 16 * (sdwp->bound + 1);
+#if 1
+    sprintf(buf, "[addr=0%o, r(123)=(0%o,0%o,0%o), f=%d, fc=%o; bound=0%o(%d)->%#o(%d), r=%d,e=%d,w=%d,p=%d,u=%d,g=%d,c=%d, cl=0%o]",
+        sdwp->addr, sdwp->r1, sdwp->r2, sdwp->r3, sdwp->f, sdwp->fc,
+        sdwp->bound, sdwp->bound, bound, bound, sdwp->r, sdwp->e, sdwp->w, sdwp->priv, sdwp->u, sdwp->g, sdwp->c, sdwp->cl);
+#else
     sprintf(buf, "[addr=0%o, r(123)=(0%o,0%o,0%o), f=%d, fc=%o; bound=0%o(%d), r=%d,e=%d,w=%d,p=%d,u=%d,g=%d,c=%d, cl=0%o]",
-        sdw.addr, sdw.r1, sdw.r2, sdw.r3, sdw.f, sdw.fc,
-        sdw.bound, sdw.bound, sdw.r, sdw.e, sdw.w, sdw.priv, sdw.u, sdw.g, sdw.c, sdw.cl);
+        sdwp->addr, sdwp->r1, sdwp->r2, sdwp->r3, sdwp->f, sdwp->fc,
+        sdwp->bound, sdwp->bound, sdwp->r, sdwp->e, sdwp->w, sdwp->priv, sdwp->u, sdwp->g, sdwp->c, sdwp->cl);
+#endif
     return buf;
 }
 

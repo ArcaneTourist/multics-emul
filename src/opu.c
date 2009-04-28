@@ -176,10 +176,11 @@ static int do_an_op(instr_t *ip)
                     fault_gen_no_fault = 1;
                     addr_mod(ip);       // note that ip == &cu.IR
                     fault_gen_no_fault = 0;
-                } else
+                } else {
                     addr_mod(ip);       // note that ip == &cu.IR
                     if (cpu.orig_mode_BUG != get_addr_mode())
                         log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
+                }
                 break;
             default:
                 addr_mod(ip);       // note that ip == &cu.IR
@@ -1653,9 +1654,9 @@ static int do_an_op(instr_t *ip)
                     cancel_run(STOP_WARN);
                 }
                 if (TPR.TRR < PPR.PRR) {
-                    AR_PR[7].PR.snr = (DSBR.stack << 3) | TPR.TRR;  // 12 bit stack, 3 bit ring number
+                    AR_PR[7].PR.snr = (cpup->DSBR.stack << 3) | TPR.TRR;    // 12 bit stack, 3 bit ring number
                     log_msg(NOTIFY_MSG, "OPU::call6", "Inward call\n");
-                    log_msg(NOTIFY_MSG, "OPU::call6", "PR[7] segment set to %04o||%o==> %05o\n", DSBR.stack, TPR.TRR, AR_PR[7].PR.snr);
+                    log_msg(NOTIFY_MSG, "OPU::call6", "PR[7] segment set to %04o||%o==> %05o\n", cpup->DSBR.stack, TPR.TRR, AR_PR[7].PR.snr);
                     log_msg(NOTIFY_MSG, "OPU::call6", "Auto breakpoint\n");
                     cancel_run(STOP_IBKPT);
                 } else if (TPR.TRR == PPR.PRR)
@@ -2296,6 +2297,7 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_ldbr: {
                 if (get_addr_mode() != ABSOLUTE_mode) {
+                    log_msg(WARN_MSG, "OPU::ldbr", "ldbr when not in absolute mode.\n");
                     fault_gen(illproc_fault);   // BUG: which fault?
                     return 1;
                 }
@@ -2311,21 +2313,21 @@ static int do_an_op(instr_t *ip)
                 }
                 for (int i = 0; i < 16; ++i) {
                     if (cu.SD_ON) {
-                        SDWAM[i].assoc.is_full = 0;
-                        SDWAM[i].assoc.use = i;
+                        cpup->SDWAM[i].assoc.is_full = 0;
+                        cpup->SDWAM[i].assoc.use = i;
                     }
                     if (cu.PT_ON) {
-                        PTWAM[i].assoc.is_full = 0;
-                        PTWAM[i].assoc.use = i;
+                        cpup->PTWAM[i].assoc.is_full = 0;
+                        cpup->PTWAM[i].assoc.use = i;
                     }
                 }
                 // BUG: If cache is enabled, reset all cache colume and level full flags
-                DSBR.addr = getbits36(word1, 0, 24);
-                DSBR.bound = getbits36(word2, 37-36, 14);
-                DSBR.u = getbits36(word2, 55-36, 1);
-                DSBR.stack = getbits36(word2, 60-36, 12);
+                cpup->DSBR.addr = getbits36(word1, 0, 24);
+                cpup->DSBR.bound = getbits36(word2, 37-36, 14);
+                cpup->DSBR.u = getbits36(word2, 55-36, 1);
+                cpup->DSBR.stack = getbits36(word2, 60-36, 12);
                 log_msg(NOTIFY_MSG, "OPU::ldbr", "DSBR: addr=%#o, bound=%#o(%u), u=%d, stack=%#o\n",
-                    DSBR.addr, DSBR.bound, DSBR.bound, DSBR.u, DSBR.stack);
+                    cpup->DSBR.addr, cpup->DSBR.bound, cpup->DSBR.bound, cpup->DSBR.u, cpup->DSBR.stack);
                 return 0;
             }
             case opcode0_ldt: { // load timer reg (priv)
@@ -2378,10 +2380,10 @@ static int do_an_op(instr_t *ip)
 
             case opcode0_sdbr: {
                 t_uint64 word0, word1;
-                word0 = (t_uint64) DSBR.addr << 12;
-                word1 = setbits36(0, 37-36, 14, DSBR.bound);
-                word1 = setbits36(word1, 55-36, 1, DSBR.u);
-                word1 = setbits36(word1, 60-36, 12, DSBR.stack);
+                word0 = (t_uint64) cpup->DSBR.addr << 12;
+                word1 = setbits36(0, 37-36, 14, cpup->DSBR.bound);
+                word1 = setbits36(word1, 55-36, 1, cpup->DSBR.u);
+                word1 = setbits36(word1, 60-36, 12, cpup->DSBR.stack);
                 return store_pair(TPR.CA, word0, word1);
             }
             // sptp unimplemented
@@ -2419,8 +2421,8 @@ static int do_an_op(instr_t *ip)
                     }
                 int i;
                 for (i = 0; i < 16; ++i) {
-                    SDWAM[i].assoc.is_full = 0;
-                    SDWAM[i].assoc.use = i;
+                    cpup->SDWAM[i].assoc.is_full = 0;
+                    cpup->SDWAM[i].assoc.use = i;
                     if (clear) {
                         ret = 1;
                         log_msg(WARN_MSG, "OPU::cams", "Clear mode is unimplemented\n");
@@ -2430,9 +2432,9 @@ static int do_an_op(instr_t *ip)
                     }
                     // BUG: the enable flag in each register probably means something different
                     //if (enable == 2)
-                    //  SDWAM[i].assoc.enabled = 1;
+                    //  cpup->SDWAM[i].assoc.enabled = 1;
                     //else if (enable == 1)
-                    //  SDWAM[i].assoc.enabled = 0;
+                    //  cpup->SDWAM[i].assoc.enabled = 0;
                 }
                 return ret;
             }
@@ -2695,7 +2697,7 @@ static int do_an_op(instr_t *ip)
 #else
 {
 #endif
-                        log_msg(NOTIFY_MSG, "OPU::absa", "Getting segment translation (DSBR.bound = %#o).\n", DSBR.bound);
+                        log_msg(NOTIFY_MSG, "OPU::absa", "Getting segment translation (DSBR.bound = %#o).\n", cpup->DSBR.bound);
                         if ((ret = get_seg_addr(TPR.CA, 0, &addr)) == 0)
                             reg_A = (t_uint64) addr << 12;  // upper 24 bits
                         else
@@ -2857,8 +2859,8 @@ static int do_an_op(instr_t *ip)
                 }
                 int i;
                 for (i = 0; i < 16; ++i) {
-                    PTWAM[i].assoc.is_full = 0;
-                    PTWAM[i].assoc.use = i;
+                    cpup->PTWAM[i].assoc.is_full = 0;
+                    cpup->PTWAM[i].assoc.use = i;
                     if (sel_clear) {
                         ret = 1;
                         log_msg(WARN_MSG, "OPU::camp", "Selective Clear mode is Unimplemented\n");
@@ -2869,9 +2871,9 @@ static int do_an_op(instr_t *ip)
                         // -- what are cache blocks and dirs?
                     }
                     //if (enable == 2)
-                    //  PTWAM[i].assoc.enabled = 1;
+                    //  cpup->PTWAM[i].assoc.enabled = 1;
                     //else if (enable == 1)
-                    //  PTWAM[i].assoc.enabled = 0;
+                    //  cpup->PTWAM[i].assoc.enabled = 0;
                 }
                 return ret;
             }

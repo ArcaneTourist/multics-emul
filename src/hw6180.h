@@ -394,6 +394,17 @@ typedef struct {
     uint32 stack;   // Used by call6; 12 bits at 60..71
 } DSBR_t;
 
+// ============================================================================
+
+// Beginnings of movement of all cpu info into a single struct.   This
+// will be needed for supporting multiple CPUs.   At the moment, it mostly
+// holds semi-exposed registers used during saved/restored memory debugging.
+typedef struct {
+    PTWAM_t PTWAM[16];  // Page Table Word Associative Memory, 51 bits
+    SDWAM_t SDWAM[16];  // Segment Descriptor Word Associative Memory, 88 bits
+    DSBR_t DSBR;            // Descriptor Segment Base Register (51 bits)
+} cpu_t;
+
 // Physical Switches
 typedef struct {
     // Switches on the Processor's maintenance and configuration panels
@@ -579,10 +590,8 @@ extern uint32 reg_TR;       // Timer Reg, 27 bits -- only valid after calls to S
 extern AR_PR_t AR_PR[8];    // Combined Pointer Registers and Address Registers
 extern PPR_t PPR;           // Procedure Pointer Reg, 37 bits, internal only
 extern TPR_t TPR;           // Temporary Pointer Reg, 42 bits, internal only
-extern PTWAM_t PTWAM[16];   // Page Table Word Associative Memory, 51 bits
-extern SDWAM_t SDWAM[16];   // Segment Descriptor Word Associative Memory, 88 bits
-extern DSBR_t DSBR;         // Descriptor Segment Base Register (51 bits)
 extern uint8 reg_RALR;      // Ring Alarm Reg, 3 bits
+extern cpu_t *cpup;     // Everything you ever wanted to know about a CPU
 
 extern ctl_unit_data_t cu;
 extern cpu_state_t cpu;
@@ -600,7 +609,9 @@ extern void log_msg(enum log_level, const char* who, const char* format, ...);
 //extern void complain_msg(const char* who, const char* format, ...);
 extern void out_msg(const char* format, ...);
 
+extern void restore_from_simh(void);    // SIMH has a different form of some internal variables
 extern void cmd_dump_history(void);
+extern int cmd_find(int32 arg, char *buf);
 void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic);
 
 extern void cancel_run(enum sim_stops reason);
@@ -620,6 +631,7 @@ extern int decode_ypair_addr(instr_t* ip, t_uint64* addrp);
 extern void iom_interrupt(void);
 extern char* print_ptw(t_uint64 word);
 extern char* print_sdw(t_uint64 word0, t_uint64 word1);
+extern char* sdw2text(const SDW_t *sdwp);
 extern int fetch_appended(uint addr, t_uint64 *wordp);
 extern int store_appended(uint offset, t_uint64 word);
 

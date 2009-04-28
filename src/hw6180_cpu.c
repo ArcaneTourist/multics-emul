@@ -85,18 +85,20 @@ t_uint64 reg_E; // Exponent
 uint32 reg_X[8];    // Index Registers, 18 bits; SIMH expects data type to be no larger than needed
 IR_t IR;        // Indicator register
 static t_uint64 saved_IR;   // Only for sending to/from SIMH
-static t_uint64 saved_IC;   // Only for sending to/from SIMH
+static t_uint64 saved_IC;   // Only for sending to/from SIMH; saved_IC address also stored in sim_PC external
 BAR_reg_t BAR;      // Base Addr Register; 18 bits
-//static uint32 saved_BAR;
+static uint16 saved_BAR[2];
 uint32 reg_TR;      // Timer Reg, 27 bits -- only valid after calls to SIMH clock routines
 uint8 reg_RALR; // Ring Alarm Reg, 3 bits
 AR_PR_t AR_PR[8];   // Combined Pointer Registers (42 bits) and Address Registers (24 bits)
     // Note that the eight PR registers are also known by the names: ap, ab, bp, bb, lp, lb, sp, sb
+t_uint64 saved_ar_pr[8];    // packed versions of the AR/PR registers; format specific to this simulator
 PPR_t PPR;      // Procedure Pointer Reg, 37 bits, internal only
+static t_uint64 saved_PPR;
 TPR_t TPR;      // Temporary Pointer Reg, 42 bits, internal only
-DSBR_t DSBR;    // Descriptor Segment Base Register, 51 bits
-SDWAM_t SDWAM[16];  // Segment Descriptor Word Associative Memory, 88 bits
-PTWAM_t PTWAM[16];  // Page Table Word Associative Memory, 51 bits
+static t_uint64 saved_DSBR;     // Descriptor Segment Base Register, 51 bits
+// SDWAM_t SDWAM[16];   // Segment Descriptor Word Associative Memory, 88 bits
+// PTWAM_t PTWAM[16];   // Page Table Word Associative Memory, 51 bits
 // static fault_reg_t FR;   // Fault Register, 35 bits
 // CMR;     // Cache Mode Register, 28 bits
 // CU_hist[16];     // 72 bits
@@ -107,21 +109,30 @@ PTWAM_t PTWAM[16];  // Page Table Word Associative Memory, 51 bits
 // CU data  // Control Unit data, 288 bits, internal only
 // DU data  // Decimal Unit data, 288 bits, internal only
 
-t_uint64 reg_simh_pr[8];    // packed versions of the AR/PR registers; format specific to this simulator
+// This is a hack
+static cpu_t cpu_info;
+cpu_t *cpup = &cpu_info;
 
 // SIMH gets a copy of all (or maybe most) registers
 // todo: modify simh to take a PV_ZLEFT flag (leftmost bit is bit 0) or
 // perhaps PV_ZMSB (most significant bit is numbered zero)
 REG cpu_reg[] = {
     // structure members: name="PC", loc=PC, radix=<8>, width=36, offset=<0>, depth=<1>, flags=, qptr=
-    { ORDATA (IC, saved_IC, 18) },
+    { ORDATA (IC, saved_IC, 18) },      // saved_IC address also stored in sim_PC external
     { GRDATA (IR, saved_IR, 2, 18, 0), REG_RO | REG_VMIO | REG_USER1},
     { ORDATA (A, reg_A, 36) },
     { ORDATA (Q, reg_Q, 36) },
     { ORDATA (E, reg_E, 36) },
     { BRDATA (X, reg_X, 8, 18, 8) },
     { ORDATA (TR, reg_TR, 27), REG_RO },
-    { BRDATA (PR, reg_simh_pr, 8, 42, 8), REG_VMIO | REG_USER2 },
+    { BRDATA (PR, saved_ar_pr, 8, 42, 8), REG_VMIO | REG_USER2 },
+    // stuff needed to yield a save/restore sufficent for examining memory dumps
+    { BRDATA (BAR, saved_BAR, 8, 9, 2) },
+    { ORDATA (PPR, saved_PPR, 37) },
+    { ORDATA (DSBR, saved_DSBR, 51) },
+    // The following is a hack, but works as long as you don't save/restore across
+    // different architectures.
+        { BRDATA (CPUINFO, (&cpu_info), 8, 8, sizeof(cpu_info)) },
     { NULL }
 };
 
@@ -251,7 +262,9 @@ static void init_ops(void);
 static void ic_history_init(void);
 static void ic_history_add(void);
 static void check_events(void);
+static void save_to_simh(void);
 static void save_PR_registers(void);
+static void restore_PR_registers(void);
 
 void tape_block(unsigned char *p, uint32 len, uint32 addr);
 
@@ -429,6 +442,8 @@ t_stat sim_instr(void)
     //  decimal unit (decimal arithmetic, char string, bit string)
     //
     
+    restore_from_simh();
+
     if (! bootimage_loaded) {
         // We probably should not do this
         // See AL70, section 8
@@ -436,7 +451,7 @@ t_stat sim_instr(void)
         // return STOP_MEMCLEAR;
     }
 
-    opt_debug = (cpu_dev.dctrl != 0);   // todo: should CPU control all debug settings?
+    // opt_debug = (cpu_dev.dctrl != 0);    // todo: should CPU control all debug settings?
 
     // BUG: todo: load registers that SIMH user might have modified
 
@@ -526,11 +541,61 @@ if (opt_debug) {
             (float) delta / 1000, ncycles, ncycles*1000/delta, ninstr, ninstr*1000/delta);
 
     // BUG: pack private variables into SIMH's world
+    save_to_simh();
+        
+    return reason;
+}
+
+
+static void save_to_simh(void)
+{
     saved_IC = PPR.IC;
     save_IR(&saved_IR);
     save_PR_registers();
-        
-    return reason;
+if (0)
+{
+    AR_PR_t sv[8];
+    memcpy(sv, AR_PR, sizeof(sv));
+    restore_PR_registers();
+    if (memcmp(sv, AR_PR, sizeof(sv)) != 0) {
+        out_msg("CPU: WARNING: PR[] save/restore broken.  Fixing...\n");
+        (void) cancel_run(STOP_WARN);
+        memcpy(AR_PR, sv, sizeof(AR_PR));
+    }
+}
+
+    saved_BAR[0] = BAR.base;
+    saved_BAR[1] = BAR.bound;
+    saved_PPR = (PPR.IC) | // 18 bits
+        (PPR.P << 18) | // 1 bits
+        (PPR.PRR << 19) | // 3 bits
+        ((t_uint64) PPR.PSR << 22); // 15 bits
+    saved_DSBR = 
+        cpup->DSBR.stack | // 12 bits
+        (cpup->DSBR.u << 12) | // 1 bit
+        ((t_uint64) cpup->DSBR.bound << 13) | // 14 bits
+        ((t_uint64) cpup->DSBR.addr << 27); // 24 bits
+}
+
+void restore_from_simh(void)
+{
+
+    opt_debug = (cpu_dev.dctrl != 0);   // todo: should CPU control all debug settings?
+
+    PPR.IC = saved_IC;
+    load_IR(&IR, saved_IR);
+
+    restore_PR_registers();
+    BAR.base = saved_BAR[0];
+    BAR.bound = saved_BAR[1];
+    // PPR.IC = saved_PPR & MASK18;
+    PPR.P = (saved_PPR >> 18) & 1;
+    PPR.PRR = (saved_PPR >> 19) & 7;
+    PPR.PSR = (saved_PPR >> 22);
+    cpup->DSBR.stack = saved_DSBR & MASKBITS(12);
+    cpup->DSBR.u = (saved_DSBR >> 12) & 1;
+    cpup->DSBR.bound = (saved_DSBR >> 13) & MASKBITS(14);
+    cpup->DSBR.addr = (saved_DSBR >> 27) & MASKBITS(24);
 }
 
 void load_IR(IR_t *irp, t_uint64 word)
@@ -586,12 +651,24 @@ void save_IR(t_uint64* wordp)
 
 static void save_PR_registers()
 {
-    for (int i = 0; i < ARRAY_SIZE(reg_simh_pr); ++ i) {
-        reg_simh_pr[i] =
+    for (int i = 0; i < ARRAY_SIZE(saved_ar_pr); ++ i) {
+        saved_ar_pr[i] =
             (AR_PR[i].PR.snr & 077777) |            // 15 bits
             ((AR_PR[i].PR.rnr & 07) << 15) |        //  3 bits
             ((AR_PR[i].PR.bitno & 077) << 18) |     //  6 bits
-            ((AR_PR[i].wordno & 0777777) << 18);    // 18 bits
+            ((t_uint64)(AR_PR[i].wordno & 0777777) << 24);  // 18 bits
+    }
+}
+
+static void restore_PR_registers(void)
+{
+    for (int i = 0; i < ARRAY_SIZE(AR_PR); ++ i) {
+        AR_PR[i].PR.snr = saved_ar_pr[i] & MASKBITS(15);
+        AR_PR[i].PR.rnr = (saved_ar_pr[i] >> 15) & MASKBITS(3);
+        AR_PR[i].PR.bitno = (saved_ar_pr[i] >> 18) & MASKBITS(6);
+        AR_PR[i].AR.charno =  AR_PR[i].PR.bitno / 9;
+        AR_PR[i].AR.bitno =  AR_PR[i].PR.bitno % 9;
+        AR_PR[i].wordno = (saved_ar_pr[i] >> 24);
     }
 }
 
@@ -1732,13 +1809,11 @@ typedef struct {
     AR_PR_t AR_PR[8];
     PPR_t PPR;
     TPR_t TPR;
-    DSBR_t DSBR;
     struct {
         flag_t SD_ON;
         flag_t PT_ON;
     } cu;
-    SDWAM_t SDWAM[16];
-    PTWAM_t PTWAM[16];
+    cpu_t cpu;
 } hist_t;
 
 static void hist_save_x(hist_t *histp)
@@ -1751,11 +1826,11 @@ static void hist_save_x(hist_t *histp)
     memcpy(histp->AR_PR, AR_PR, sizeof(histp->AR_PR));
     memcpy(&histp->PPR, &PPR, sizeof(histp->PPR));
     memcpy(&histp->TPR, &TPR, sizeof(histp->TPR));
-    memcpy(&histp->DSBR, &DSBR, sizeof(histp->DSBR));
+    memcpy(&histp->cpu.DSBR, &cpup->DSBR, sizeof(histp->cpu.DSBR));
     histp->cu.SD_ON = cu.SD_ON;
     histp->cu.PT_ON = cu.PT_ON;
-    memcpy(histp->SDWAM, SDWAM, sizeof(histp->SDWAM));
-    memcpy(histp->PTWAM, PTWAM, sizeof(histp->PTWAM));
+    memcpy(histp->cpu.SDWAM, cpup->SDWAM, sizeof(histp->cpu.SDWAM));
+    memcpy(histp->cpu.PTWAM, cpup->PTWAM, sizeof(histp->cpu.PTWAM));
 }
 
 static hist_t hist;
@@ -1807,44 +1882,44 @@ static void hist_dump()
             log_msg(DEBUG_MSG, "HIST", "TPR: TRR=%#o, TSR=%#o, TBR=%#o, CA=%#o, is_value=N\n",
                 TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA);
     }
-    if (memcmp(&hist.DSBR, &DSBR, sizeof(hist.DSBR)) != 0)
+    if (memcmp(&hist.cpu.DSBR, &cpup->DSBR, sizeof(hist.cpu.DSBR)) != 0)
         log_msg(DEBUG_MSG, "HIST", "DSBR: addr=%#o, bound=%#o(%d), unpaged=%c, stack=%#o\n",
-            DSBR.addr, DSBR.bound, DSBR.bound, DSBR.u ? 'Y' : 'N', DSBR.stack);
+            cpup->DSBR.addr, cpup->DSBR.bound, cpup->DSBR.bound, cpup->DSBR.u ? 'Y' : 'N', cpup->DSBR.stack);
     if (hist.cu.PT_ON != cu.PT_ON)
         log_msg(DEBUG_MSG, "HIST", "PTWAM %s enabled\n", cu.PT_ON ? "is" : "is NOT");
-    if (memcmp(hist.PTWAM, PTWAM, sizeof(hist.PTWAM)) != 0) {
-        for (int i = 0; i < ARRAY_SIZE(PTWAM); ++i) {
-            uint tmp = hist.PTWAM[i].assoc.use;     // compare all members except "use" counter
-            hist.PTWAM[i].assoc.use = PTWAM[i].assoc.use;
-            if (memcmp(hist.PTWAM + i, PTWAM + i, sizeof(*hist.PTWAM)) != 0) {
+    if (memcmp(hist.cpu.PTWAM, cpup->PTWAM, sizeof(hist.cpu.PTWAM)) != 0) {
+        for (int i = 0; i < ARRAY_SIZE(cpup->PTWAM); ++i) {
+            uint tmp = hist.cpu.PTWAM[i].assoc.use;     // compare all members except "use" counter
+            hist.cpu.PTWAM[i].assoc.use = cpup->PTWAM[i].assoc.use;
+            if (memcmp(hist.cpu.PTWAM + i, cpup->PTWAM + i, sizeof(*hist.cpu.PTWAM)) != 0) {
                 log_msg(DEBUG_MSG, "HIST", "PTWAM[%d]: ptr/seg = %#o, pageno=%#o, is_full/used=%c, use=%02o\n",
-                    i, PTWAM[i].assoc.ptr, PTWAM[i].assoc.pageno, PTWAM[i].assoc.is_full ? 'Y' : 'N', PTWAM[i].assoc.use);
+                    i, cpup->PTWAM[i].assoc.ptr, cpup->PTWAM[i].assoc.pageno, cpup->PTWAM[i].assoc.is_full ? 'Y' : 'N', cpup->PTWAM[i].assoc.use);
                 log_msg(DEBUG_MSG, "HIST", "PTWAM[%d]: PTW: addr=%06oxx, used=%c, mod=%c, fault=%c, fc=%#o\n",
-                    i, PTWAM[i].ptw.addr, PTWAM[i].ptw.u ? 'Y' : 'N', PTWAM[i].ptw.m ? 'Y' : 'N',
-                    PTWAM[i].ptw.f ? 'Y' : 'N', PTWAM[i].ptw.fc);
+                    i, cpup->PTWAM[i].ptw.addr, cpup->PTWAM[i].ptw.u ? 'Y' : 'N', cpup->PTWAM[i].ptw.m ? 'Y' : 'N',
+                    cpup->PTWAM[i].ptw.f ? 'Y' : 'N', cpup->PTWAM[i].ptw.fc);
             }
-            hist.PTWAM[i].assoc.use = tmp;
+            hist.cpu.PTWAM[i].assoc.use = tmp;
         }
     }
     if (hist.cu.SD_ON != cu.SD_ON)
         log_msg(DEBUG_MSG, "HIST", "SDWAM %s enabled\n", cu.SD_ON ? "is" : "is NOT");
-    if (memcmp(hist.SDWAM, SDWAM, sizeof(hist.SDWAM)) != 0) {
-        for (int i = 0; i < ARRAY_SIZE(SDWAM); ++i) {
-            uint tmp = hist.SDWAM[i].assoc.use;     // compare all members except "use" counter
-            hist.SDWAM[i].assoc.use = SDWAM[i].assoc.use;
-            if (memcmp(hist.SDWAM + i, SDWAM + i, sizeof(*hist.SDWAM)) != 0) {
+    if (memcmp(hist.cpu.SDWAM, cpup->SDWAM, sizeof(hist.cpu.SDWAM)) != 0) {
+        for (int i = 0; i < ARRAY_SIZE(cpup->SDWAM); ++i) {
+            uint tmp = hist.cpu.SDWAM[i].assoc.use;     // compare all members except "use" counter
+            hist.cpu.SDWAM[i].assoc.use = cpup->SDWAM[i].assoc.use;
+            if (memcmp(hist.cpu.SDWAM + i, cpup->SDWAM + i, sizeof(*hist.cpu.SDWAM)) != 0) {
                 log_msg(DEBUG_MSG, "HIST", "SDWAM[%d]: ptr(segno)=0%05o, is-full=%c, use=0%02o(%02d).\n",
-                    i, SDWAM[i].assoc.ptr, SDWAM[i].assoc.is_full ? 'Y' : 'N',
-                    SDWAM[i].assoc.use, SDWAM[i].assoc.use);
-                SDW_t *sdwp = &SDWAM[i].sdw;
+                    i, cpup->SDWAM[i].assoc.ptr, cpup->SDWAM[i].assoc.is_full ? 'Y' : 'N',
+                    cpup->SDWAM[i].assoc.use, cpup->SDWAM[i].assoc.use);
+                SDW_t *sdwp = &cpup->SDWAM[i].sdw;
                 log_msg(DEBUG_MSG, "HIST", "\tSDW for seg %d: addr = %#08o, r1=%o r2=%o r3=%o, f=%c, fc=%#o.\n",
-                    SDWAM[i].assoc.ptr, sdwp->addr, sdwp->r1, sdwp->r2, sdwp->r3, sdwp->f ? 'Y' : 'N', sdwp->fc);
+                    cpup->SDWAM[i].assoc.ptr, sdwp->addr, sdwp->r1, sdwp->r2, sdwp->r3, sdwp->f ? 'Y' : 'N', sdwp->fc);
                 log_msg(DEBUG_MSG, "HIST", "\tbound = %05o(%d), r=%c e=%c w=%c, priv=%c, unpaged=%c, g=%c, c=%c, cl=%05o\n",
                     sdwp->bound, sdwp->bound, sdwp->r ? 'Y' : 'N', sdwp->e ? 'Y' : 'N', sdwp->w ? 'Y' : 'N',
                     sdwp->priv ? 'Y' : 'N', sdwp->u ? 'Y' : 'N', sdwp->g ? 'Y' : 'N',
                     sdwp->c ? 'Y' : 'N', sdwp->cl);
             }
-            hist.SDWAM[i].assoc.use = tmp;
+            hist.cpu.SDWAM[i].assoc.use = tmp;
         }
     }
 }

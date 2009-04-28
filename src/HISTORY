@@ -21,7 +21,8 @@ History of pre-release versions
     hw6180.h: fix bitval36(), add bitset36(), bitclear36()
 
 === Pre-Version 05 01/11/2008
-    First compilable version
+    General
+        First compilable version
     Add Makefile
     Updates to notes
     hw6180.h
@@ -48,7 +49,8 @@ History of pre-release versions
         Provided execute_instr() and do_op(); only instruction is "xed"
 
 === Pre-Version 06 01/14/2008
-    Loads first block of tape image into memory
+    General
+        Loads first block of tape image into memory
     bits.h: initial version
     bits.c: initial version
     hw6180_cpu.c: load first block of tape image into memory
@@ -90,7 +92,7 @@ History of pre-release versions
         Added cancel_run()
         Improved fault handling re prioritization etc
     hw6180_sys.c
-        Use cpu_port, and scu_ports to define how components are wired together
+        Use cpu_port and scu_ports to define how components are wired together
         Support for a timer
     opu.c
         More instructions
@@ -324,7 +326,7 @@ History of pre-release versions
         new get_eis_indir_addr()
     opu.c
         Fix add36() re IR settings after overflow
-        Implemented TCT
+        Implemented TCT multi-word instruction.
 
 === Pre-Version 30 03/14/2008
     apu.c
@@ -337,7 +339,7 @@ History of pre-release versions
         Tweak to handling of a9bd and other EIS functions to sign extend
         the 18bit CA
     opu.c
-        Implement MVT
+        Implement MVT multi-word instruction.
 
 === Pre-Version 32 03/17/2008
     apu.c
@@ -355,7 +357,7 @@ History of pre-release versions
         Fixes to get_eis_an_rev()
         Update get_address() to do register modification
     iom.c
-        The "for foo" hack
+        The "for foo" hack (later removed).
         Support console I/O
         Update to DDCW looping
     opu.c
@@ -369,7 +371,7 @@ History of pre-release versions
 === Pre-Version 35 06/02/2008
     General
         Move EIS code out of apu.c
-        Determine tape problem is related to using word counts instead
+        Determine that tape problem is related to using word counts instead
         of char counts.
 
 === Pre-Version 36 06/14/2008
@@ -425,7 +427,8 @@ History of pre-release versions
 
 === Pre-Version 43 10/27/2008
     General
-        Faults executing cams instr in non-absolute mode.   This isn't legal, but  bootload_loader.alm
+        The bootload_loader.alm will fault executing the cams instr in non-absolute mode.
+        It isn't legal to execute cams in non absolute mode, but  bootload_loader.alm
         only skips the cams instruction if the system_type is two.  The value for system_type is
         determined by bootload_tape_label.alm based on the contents of memory location zero.  A
         non-zero value for system_type indicates the presence of an IOX rather than an IOM.  So, the
@@ -437,11 +440,63 @@ History of pre-release versions
         Handling of the "rpt" repeat instruction.
         Fixed easp* instructions to work on the correct registers (not opcode&07).
 
-=== Pre-Version 44
+=== Pre-Version 44, Nov 12, 2008
     General
-        Expiremented with trying to provide an IOX instead of an IOM.
+        Use the IOM/IOX to read the first tape record.  Fixes to repeat instructions re
+        the instruction tag and X[n] updating.  Updated parse_addr() to handle expressions
+        involving pr registers.
     opu.c
-        Repaired adlaq and sbaq
+        Repaired adlaq and sbaq.    
+        Added sti, asxn, anxn, 0epbpn, sprpn, rsw, trtn.
+        Don't fault on cams in absolute mode -- the boot tape wants to do this when
+        using an IOM.
+    iom.c
+        Handle a DDCW tally of zero as 010000.  Updates to status returns.
+    mt.c
+        Add BSR (back space record).  No longer return an error when out of data.  Instead
+        return a 4000 all-clear which ootload_tape_label.alm seems to assume, but also
+        return an out-of-band non-zero status to the IOM to make it stop.
 
-Nov 3rd .. Dec 23 ???
-Dec 23 .. Feb 13 -- no work
+=== Pre-Version 45, Nov 16, 2008
+    General
+        Diag tape indicates a need for invalidation of the cached odd instruction
+        after a write.   Added various indicators to make diag tape happy:  exp
+        overflow, exp underflow, parity mask, parity error.
+    mt.c
+        Updated status codes from tape subsystem.
+    opu.c
+        Made a guess at what rsw should do for an effective address of xxxxx0.  RSw
+        also no claims the cache is enabled.
+
+=== Pre-Version 46, Nov 18, 2008
+=== Pre-Version 47, Nov 24, 2008
+=== Pre-Version 48, Nov 25, 2008
+=== Pre-Version 49, Dec 2, 2008
+=== Pre-Version 50, Dec 4, 2008
+=== Pre-Version 51, Dec 5, 2008
+=== Pre-Version 52, Dec 11, 2008
+=== Pre-Version 53, Dec 13, 2008
+=== Pre-Version 54, Dec 14, 2008
+=== Pre-Version 55, Dec 18, 2008
+=== Pre-Version 56, Dec 19, 2008
+=== Pre-Version 57, Dec 23, 2008
+=== Pre-Version 58, Feb 15, 2009
+    General
+        Examining the name table and pre-linking.
+        Display IR symbolically.  Allow SIMH to display PR registers.
+
+Apr 27, 2009
+    General
+        After adding commands to dump the linkage sections, found that the xec to an empty
+        word is from bound_priv_1$read_mask.  That's a very short ALM routine, all of
+        which is listed here:
+            read_mask:
+            inhibit on      <+><+><+><+><+><+><+><+><+><+><+><+>
+            lxl1    prds$processor_tag
+            lprpab  scs$mask_ptr,1
+            xec     scs$read_mask,1
+            inhibit off     <-><-><-><-><-><-><-><-><-><-><-><->
+            staq    ap|2,*
+            short_return
+        So, the issue is that the simulator is not preparing a config deck to be loaded
+        into the SCS segment.
