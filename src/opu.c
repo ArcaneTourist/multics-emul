@@ -87,13 +87,17 @@ void execute_instr(void)
 static int fetch_op(const instr_t *ip, t_uint64 *wordp)
 {
     if (TPR.is_value) {
+#if 0
         if (cpu.orig_mode_BUG != get_addr_mode())
             log_msg(NOTIFY_MSG, "OPU::fetch-op", "addr mode is changed, but operand is a constant.\n");
+#endif
         *wordp = TPR.value;
         return 0;
     }
+#if 0
     if (cpu.orig_mode_BUG != get_addr_mode())
         log_msg(NOTIFY_MSG, "OPU::fetch-op", "fetching in changed mode\n");
+#endif
     return fetch_word(TPR.CA, wordp);
 }
 
@@ -108,7 +112,9 @@ static int do_op(instr_t *ip)
     do_18bit_math = 0;
 
     addr_modes_t orig_mode = get_addr_mode();
+#if 0
     cpu.orig_mode_BUG = orig_mode;
+#endif
     uint orig_ic = PPR.IC;
     int ret = do_an_op(ip);
     addr_modes_t mode = get_addr_mode();
@@ -178,8 +184,10 @@ static int do_an_op(instr_t *ip)
                     fault_gen_no_fault = 0;
                 } else {
                     addr_mod(ip);       // note that ip == &cu.IR
+#if 0
                     if (cpu.orig_mode_BUG != get_addr_mode())
                         log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
+#endif
                 }
                 break;
             default:
@@ -201,18 +209,24 @@ static int do_an_op(instr_t *ip)
                     log_msg(WARN_MSG, "OPU", "Disabling faults for special case instr.\n");
                     fault_gen_no_fault = 1;
                     addr_mod(ip);       // note that ip == &cu.IR
+#if 0
                     if (cpu.orig_mode_BUG != get_addr_mode())
                         log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
+#endif
                     fault_gen_no_fault = 0;
                 } else
                     addr_mod(ip);       // note that ip == &cu.IR
+#if 0
                     if (cpu.orig_mode_BUG != get_addr_mode())
                         log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
+#endif
                 break;
             default:
                 addr_mod(ip);       // note that ip == &cu.IR
+#if 0
                 if (cpu.orig_mode_BUG != get_addr_mode())
                     log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
+#endif
         }
     }
     cpu.poa = 0;
@@ -666,7 +680,7 @@ static int do_an_op(instr_t *ip)
             case opcode0_lrs: {     // Long right shift
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 int init_neg = bit36_is_neg(reg_A);
-                log_msg(NOTIFY_MSG, "OPU::lrs", "Debug: Shift AQ %012Lo,%012Lo of %d bits.\n", reg_A, reg_Q, n);    // BUG: temp
+                // log_msg(NOTIFY_MSG, "OPU::lrs", "Debug: Shift AQ %012Lo,%012Lo of %d bits.\n", reg_A, reg_Q, n);
                 if (n >= 72) {
                     log_msg(NOTIFY_MSG, "OPU::lrs", "Shift of %d bits.\n", n);
                     if (init_neg) {
@@ -691,7 +705,7 @@ static int do_an_op(instr_t *ip)
                 }
                 IR.zero = reg_A == 0 && reg_Q == 0;
                 IR.neg = init_neg;
-                log_msg(NOTIFY_MSG, "OPU::lrs", "Debug: Result:  %012Lo,%012Lo\n", reg_A, reg_Q);   // BUG: temp
+                // log_msg(NOTIFY_MSG, "OPU::lrs", "Debug: Result:  %012Lo,%012Lo\n", reg_A, reg_Q);
                 return 0;
             }
 
@@ -2513,32 +2527,10 @@ static int do_an_op(instr_t *ip)
                 int low = TPR.CA & 07;
                 switch(low) {
                     case 0: // unformatted; maintenance panel data switches
-                        // GB61-01B says that DPS8 systems have a display instead of a panel.
-                        // Various switches should be on including some of 4..28.  But
-                        // how do these match up to bit positions?
-#if 1                       
-                        reg_A = 0;
-#else
-                        reg_A = 0;
-                        reg_A = setbits36(reg_A, 0, 2, 03); // enable match?
-                        reg_A = setbits36(reg_A, 2+4, 1, 1);    // data switches
-                        reg_A = setbits36(reg_A, 2+6, 1, 1);    // data switches
-                        reg_A = setbits36(reg_A, 2+18, 1, 1);   // data switches
-                        reg_A = setbits36(reg_A, 2+19, 1, 1);   // data switches
-                        reg_A = setbits36(reg_A, 2+20, 1, 1);   // data switches
-                        reg_A = setbits36(reg_A, 2+23, 1, 1);   // data switches
-                        reg_A = setbits36(reg_A, 2+24, 1, 1);   // data switches
-                        reg_A = setbits36(reg_A, 2+25, 1, 1);   // data switches
-                        reg_A = setbits36(reg_A, 2+26, 1, 1);   // data switches
-                        reg_A = setbits36(reg_A, 2+28, 1, 1);   // data switches
-                        // 31, auto?, off
-                        // 32, cycle?, off
-                        reg_A = setbits36(reg_A, 33, 1, 1); // execute pb
-                        // 34, init?, off
-                        // 35, execute?, off
-#endif
-                        log_msg(WARN_MSG, "OPU::opcode::rsw", "function xxx%o is undocumented.\n", low);
-                        cancel_run(STOP_BUG);
+                        // GB61-01B reports which of the data switches should be turned on.
+                        // It also discusses other switches, but these other switches are probably
+                        // not considered to be part of the "data" switches.
+                        reg_A = (t_uint64) 024000717200; // switches: 4, 6, 18, 19, 20, 23, 24, 25, 26, 28
                         break;
                     case 2:
 #if 0
@@ -2693,19 +2685,20 @@ static int do_an_op(instr_t *ip)
                         else
                             log_msg(NOTIFY_MSG, "OPU::absa", "Ignoring segment portion of PR register -- Using %#Lo instead of %#Lo.\n", reg_A, (t_uint64) addr << 12);
                         ret = 0;
-                } else {
-#else
-{
+                } else
 #endif
-                        log_msg(NOTIFY_MSG, "OPU::absa", "Getting segment translation (DSBR.bound = %#o).\n", cpup->DSBR.bound);
+                {
+                        if (opt_debug) log_msg(DEBUG_MSG, "OPU::absa", "Getting segment translation (DSBR.bound = %#o).\n", cpup->DSBR.bound);
                         if ((ret = get_seg_addr(TPR.CA, 0, &addr)) == 0)
                             reg_A = (t_uint64) addr << 12;  // upper 24 bits
                         else
                             log_msg(WARN_MSG, "OPU::absa", "Unable to translate segment offset into absolute address.\n");
-                        if (addr == TPR.CA)
-                            log_msg(NOTIFY_MSG, "OPU::absa", "Using segment portion of PR register yields no change -- %#Lo\n", reg_A);
-                        else
-                            log_msg(NOTIFY_MSG, "OPU::absa", "Using segment portion of PR register yields %#Lo instead of %#Lo.\n", reg_A, (t_uint64) TPR.CA << 12);
+                        if (opt_debug) {
+                            if (addr == TPR.CA)
+                                log_msg(DEBUG_MSG, "OPU::absa", "Using segment portion of PR register yields no change -- %#Lo\n", reg_A);
+                            else
+                                log_msg(DEBUG_MSG, "OPU::absa", "Using segment portion of PR register yields %#Lo instead of %#Lo.\n", reg_A, (t_uint64) TPR.CA << 12);
+                        }
                 }
                 return ret;
             }

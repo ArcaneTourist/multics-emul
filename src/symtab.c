@@ -7,20 +7,24 @@
 #include <stdio.h>
 
 static int cmp_symtab(const t_symtab_ent *a, const t_symtab_ent *b);
-static int symtab_add(int first, int last, enum symtab_type type, const char *fname);
 
-static int n_sym = 0;
-static int sym_tblsize = 0;
-static t_symtab_ent *symtab = NULL;
+#define MAX_SEGNO 511
+static struct syms_s {
+    int n_sym;
+    int tblsize;
+    t_symtab_ent *symtab;
+} symbols[MAX_SEGNO + 2];
+
 
 #if 0
 void symtab_init()
 {
-    if (symtab != NULL)
-        free(symtab);
-    symtab = NULL;
-    n_sym = 0;
-    sym_tblsize = 0;
+    struct syms_s *syms;
+    for (syms = symbols; syms < symbols + ARRAY_SIZE(symbols); ++syms) {
+        if (syms->symtab != NULL)
+            free(syms->symtab);
+    }
+    memset(symbols, 0, sizeof(symbols));
 }
 #endif
 
@@ -38,23 +42,34 @@ main()
 
 t_stat symtab_parse(int32 arg, char *buf)
 {
-    if (*buf == 0) {
+    if (*buf == 0)
         symtab_dump();
-    } else {
+    else if (strcmp(buf, "dump") == 0)
+        symtab_dump();
+    else {
         char *p = buf;
         char fname[1024];   // WARNING: buffer overflow possible
         int first, last;
         char dummy;
+        int seg;
         if (sscanf(buf, "source %s %i %i %c", fname, &first, &last, &dummy) == 3) {
-            symtab_add(first, last, symtab_file, fname);
+            symtab_add(-1, first, last, symtab_file, fname);
+        } else if (sscanf(buf, "source %s %i|%i %i %c", fname, &seg, &first, &last, &dummy) == 4) {
+            symtab_add(seg, first, last, symtab_file, fname);
         } else if (strncmp(buf, "dump", 4) == 0 && sscanf(buf, "dump %c", &dummy) == 0) {
             symtab_dump();
         } else if (sscanf(buf, "find %i %c", &first, &dummy) == 1) {
-            t_symtab_ent *p = symtab_find(first);
+            t_symtab_ent *p = symtab_find(-1, first);
             if (p == NULL)
                 fprintf(stderr, "0%o not found.\n", first);
             else
                 fprintf(stderr, "0%o: Range 0%05o..0%05o, %s.\n", first, p->addr_lo, p->addr_hi, p->name);
+        } else if (sscanf(buf, "find %i|%i %c", &seg, &first, &dummy) == 2) {
+            t_symtab_ent *p = symtab_find(seg, first);
+            if (p == NULL)
+                fprintf(stderr, "0%o not found.\n", first);
+            else
+                fprintf(stderr, "0%o: Range %o|%04o .. %o|%04o, %s.\n", first, seg, p->addr_lo, seg, p->addr_hi, p->name);
         } else
             fprintf(stderr, "symtab: cannot parse '%s'\n", buf);
     }
@@ -63,48 +78,74 @@ t_stat symtab_parse(int32 arg, char *buf)
 
 void symtab_dump()
 {
-    if (symtab == NULL || n_sym == 0)
-        return;
-    t_symtab_ent *p;
-    for (p = symtab; p < symtab + n_sym; ++p)
-        printf("range 0%05o .. 0%05o: %s\n", p->addr_lo, p->addr_hi, p->name);
+    struct syms_s *syms;
+
+    syms = &symbols[MAX_SEGNO + 1];
+    if (syms->symtab != NULL && syms->n_sym != 0) {
+        t_symtab_ent *p;
+        for (p = syms->symtab; p < syms->symtab + syms->n_sym; ++p)
+            printf("range 0%05o .. 0%05o: %s\n", p->addr_lo, p->addr_hi, p->name);
+    }
+    for (syms = symbols; syms <= symbols + MAX_SEGNO; ++ syms) {
+        if (syms->symtab == NULL || syms->n_sym == 0)
+            continue;
+        t_symtab_ent *p;
+        for (p = syms->symtab; p < syms->symtab + syms->n_sym; ++p)
+            printf("%o|%04o .. %o|%04o: %s\n", p->seg, p->addr_lo, p->seg, p->addr_hi, p->name);
+    }
 }
 
 
-static int symtab_add(int first, int last, enum symtab_type type, const char *fname)
+int symtab_add(int seg, int first, int last, enum symtab_type type, const char *fname)
 {
-    if (symtab == NULL) {
+    struct syms_s *syms;
+    if (seg < 0) {
+        seg = -1;
+        syms = &symbols[MAX_SEGNO + 1];
+    } else if (seg > MAX_SEGNO)
+        return -1;
+    else {
+        syms = symbols + seg;
+    }
+    if (syms->symtab == NULL) {
         // create
-        n_sym = 0;
-        sym_tblsize = 40;
-        if ((symtab = malloc(sizeof(*symtab) * sym_tblsize)) == NULL)
+        syms->n_sym = 0;
+        syms->tblsize = 20;
+        if ((syms->symtab = malloc(sizeof(*syms->symtab) * syms->tblsize)) == NULL)
             return 1;
     }
     
-    if (n_sym == sym_tblsize) {
+    if (syms->n_sym == syms->tblsize) {
         // grow
         t_symtab_ent *new;
-        if ((new = malloc(sym_tblsize * 2 * sizeof(*new))) == NULL)
+        if ((new = malloc(syms->tblsize * 2 * sizeof(*new))) == NULL)
             return 1;
-        memcpy(new, symtab, sizeof(*symtab));
-        free(symtab);
-        sym_tblsize *= 2;
-        symtab = new;
+        memcpy(new, syms->symtab, sizeof(*new) * syms->tblsize);
+        free(syms->symtab);
+        syms->tblsize *= 2;
+        syms->symtab = new;
     }
 
-    t_symtab_ent key = { first, last, 0, 0 };
+    t_symtab_ent key = { seg, first, last, 0, 0 };
     int i;
-    for (i = 0; i < n_sym; ++i)
-        if (cmp_symtab(&key, symtab+i) <= 0)
+    for (i = 0; i < syms->n_sym; ++i)
+        if (cmp_symtab(&key, syms->symtab+i) <= 0)
             break;
-    if (n_sym - i != 0)
-        (void) memmove(symtab+i+1, symtab+i, (n_sym - i) * sizeof(*symtab));
-    symtab[i].addr_lo = first;
-    symtab[i].addr_hi = last;
-    symtab[i].types |= type;
-    if ((symtab[i].name = strdup(fname)) == NULL)
+    if (syms->symtab[i].seg == seg && syms->symtab[i].addr_lo == first && strcmp(syms->symtab[i].name, fname) == 0) {
+        // duplicate
+        // out_msg("SYM: DEBUG: ignoring duplicate {seg=%#o,first=%#o,last,%s}\n", seg, first, fname);
+        return 0;
+    }
+    // out_msg("SYM: DEBUG: adding {seg=%#o,first=%#o,last,%s}\n", seg, first, fname);
+    if (syms->n_sym - i != 0)
+        (void) memmove(syms->symtab+i+1, syms->symtab+i, (syms->n_sym - i) * sizeof(*syms->symtab));
+    syms->symtab[i].seg = seg;  // redundant...
+    syms->symtab[i].addr_lo = first;
+    syms->symtab[i].addr_hi = last;
+    syms->symtab[i].types |= type;
+    if ((syms->symtab[i].name = strdup(fname)) == NULL)
         return 1;
-    ++ n_sym;
+    ++ syms->n_sym;
     return 0;
 }
 
@@ -115,6 +156,11 @@ static int cmp_symtab(const t_symtab_ent *a, const t_symtab_ent *b)
     if (b == NULL)
         return 1;
 
+    if (a->seg < b->seg)
+        return -1;
+    if (a->seg > b->seg)
+        return 1;
+
     if (a->addr_lo < b->addr_lo)
         return -1;
     if (a->addr_lo > b->addr_lo)
@@ -122,21 +168,31 @@ static int cmp_symtab(const t_symtab_ent *a, const t_symtab_ent *b)
     
     if (a->addr_hi < b->addr_hi)
         return -1;
-    if (a->addr_hi == b->addr_hi)
-        return 0;
-    return 1;
+    if (a->addr_hi > b->addr_hi)
+        return 1;
+    return 0;
 }
 
 
-t_symtab_ent *symtab_find(int addr)
+t_symtab_ent *symtab_find(int seg, int addr)
 {
-    if (n_sym == 0)
+    struct syms_s *syms;
+    if (seg < 0) {
+        seg = -1;
+        syms = &symbols[MAX_SEGNO + 1];
+    } else if (seg > MAX_SEGNO)
+        return NULL;
+    else {
+        syms = symbols + seg;
+    }
+
+    if (syms->n_sym == 0)
         return NULL;
     int lo = 0;
-    int hi = n_sym;
+    int hi = syms->n_sym;
     while (lo < hi) {
         int mid = (lo + hi) / 2;
-        if (symtab[mid].addr_lo < addr)
+        if (syms->symtab[mid].addr_lo < addr)
             lo = mid + 1;
         else {
             hi = mid;
@@ -145,11 +201,11 @@ t_symtab_ent *symtab_find(int addr)
     // ranged means we probably want the one prior to where we stopped
     if (lo > 0)
         --lo;
-    if (symtab[lo].addr_lo <= addr && addr <= symtab[lo].addr_hi)
-        return symtab + lo;
+    if (syms->symtab[lo].addr_lo <= addr && (addr <= syms->symtab[lo].addr_hi || syms->symtab[lo].addr_hi == -1))
+        return syms->symtab + lo;
     ++lo;
-    if (lo < n_sym && symtab[lo].addr_lo <= addr && addr <= symtab[lo].addr_hi)
-        return symtab + lo;
+    if (lo < syms->n_sym && syms->symtab[lo].addr_lo <= addr && (addr <= syms->symtab[lo].addr_hi || syms->symtab[lo].addr_hi == -1))
+        return syms->symtab + lo;
     return 0;
 }
 

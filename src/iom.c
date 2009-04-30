@@ -222,6 +222,7 @@ void iom_interrupt()
     do_conn_chan();
     log_msg(DEBUG_MSG, "IOM::CIOC::intr", "Finished\n");
     //-- opt_debug; -- cpu_dev.dctrl;
+    log_forget_ic();    // we log a lot of msgs, so a blank line between CIOCs in an I/O loop is good...
 }
 
 static int do_conn_chan()

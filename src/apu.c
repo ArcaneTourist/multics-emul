@@ -1486,8 +1486,8 @@ char* print_sdw(t_uint64 word0, t_uint64 word1)
 char *sdw2text(const SDW_t *sdwp)
 {
     static char buf[100];
-    uint bound = 16 * (sdwp->bound + 1);
 #if 1
+    uint bound = 16 * (sdwp->bound + 1);
     sprintf(buf, "[addr=0%o, r(123)=(0%o,0%o,0%o), f=%d, fc=%o; bound=0%o(%d)->%#o(%d), r=%d,e=%d,w=%d,p=%d,u=%d,g=%d,c=%d, cl=0%o]",
         sdwp->addr, sdwp->r1, sdwp->r2, sdwp->r3, sdwp->f, sdwp->fc,
         sdwp->bound, sdwp->bound, bound, bound, sdwp->r, sdwp->e, sdwp->w, sdwp->priv, sdwp->u, sdwp->g, sdwp->c, sdwp->cl);

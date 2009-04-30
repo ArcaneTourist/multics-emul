@@ -13,8 +13,30 @@ extern DEVICE cpu_dev;
 extern FILE *sim_deb, *sim_log;
 
 static void msg(enum log_level level, const char *who, const char* format, va_list ap);
+static int _scan_seg(uint segno, int msgs);
+uint ignore_IC = 0;
 uint last_IC;
 uint last_IC_seg;
+
+int log_ignore_ic_change()
+{
+    int old = ignore_IC;
+    ignore_IC = 1;
+    return old;
+}
+
+int log_notice_ic_change()
+{
+    int old = ignore_IC;
+    ignore_IC = 0;
+    return old;
+}
+
+void log_forget_ic()
+{
+    last_IC = 0;
+    last_IC_seg = 0;
+}
 
 void log_msg(enum log_level level, const char* who, const char* format, ...)
 {
@@ -26,7 +48,7 @@ void log_msg(enum log_level level, const char* who, const char* format, ...)
     }
 
     // Make sure all messages have a prior display of the IC
-    if (PPR.IC != last_IC || PPR.PSR != last_IC_seg) {
+    if (!ignore_IC && (PPR.IC != last_IC || PPR.PSR != last_IC_seg)) {
         last_IC = PPR.IC;
         last_IC_seg = PPR.PSR;
         char *tag = "Debug";
@@ -47,8 +69,8 @@ void log_msg(enum log_level level, const char* who, const char* format, ...)
     va_start(ap, format);
 #if 0
     char *tag = (level == DEBUG_MSG) ? "Debug" :
-        (level == WARN_MSG) ? "WARNING" :
         (level == NOTIFY_MSG) ? "Note" :
+        (level == WARN_MSG) ? "WARNING" :
         (level == ERR_MSG) ? "ERROR" :
             "???MESSAGE";
     msg(tag, who, format, ap);
@@ -180,32 +202,11 @@ static void msg(enum log_level level, const char *who, const char* format, va_li
     }
 }
 
-static t_stat _cmd_seginfo(int32 arg, char *buf);
 static void word2pr(t_uint64 word, AR_PR_t *prp);
 static int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp);
 int fetch_acc(uint addr, char bufp[513]);
 
 t_stat cmd_seginfo(int32 arg, char *buf)
-{
-    uint saved_seg = TPR.TSR;
-    fault_gen_no_fault = 1;
-    addr_modes_t amode = get_addr_mode();
-    set_addr_mode(APPEND_mode);
-
-    int saved_debug = opt_debug;
-    opt_debug = 0;
-    t_stat ret = _cmd_seginfo(arg, buf);
-    if (ret > 1)
-        out_msg("xseginfo: Error processing request.\n");
-
-    opt_debug = saved_debug;
-    TPR.TSR = saved_seg;
-    fault_gen_no_fault = 0;
-    set_addr_mode(amode);
-    return ret;
-}
-
-static t_stat _cmd_seginfo(int32 arg, char *buf)
 {
     if (*buf == 0) {
         out_msg("USAGE xseginfo <segment number>\n");
@@ -218,39 +219,67 @@ static t_stat _cmd_seginfo(int32 arg, char *buf)
         out_msg("xseginfo: Expecting a octal segment number.\n");
         return 1;
     }
+    return scan_seg(segno, 1);
+}
 
+
+int scan_seg(uint segno, int msgs)
+{
+    uint saved_seg = TPR.TSR;
+    fault_gen_no_fault = 1;
+    addr_modes_t amode = get_addr_mode();
+    set_addr_mode(APPEND_mode);
+
+    int saved_debug = opt_debug;
+    opt_debug = 0;
+    t_stat ret = _scan_seg(segno, msgs);
+    if (ret > 1 && msgs)
+        out_msg("xseginfo: Error processing request.\n");
+
+    opt_debug = saved_debug;
+    TPR.TSR = saved_seg;
+    fault_gen_no_fault = 0;
+    set_addr_mode(amode);
+    return ret;
+}
+
+static int _scan_seg(uint segno, int msgs)
+{
     t_uint64 word0, word1;
 
-    /* Get last word of segment -- but in-memory copy may be larger than original, so search for last non-zero word */
-    TPR.TSR = segno;
-    if (fetch_word(0, &word0) != 0) {
-        out_msg("xseginfo: Cannot read first word of segment %#o.\n", segno);
-    }
-    SDW_t *sdwp = get_sdw();        // Get SDW for TPR.TSR
-    if (sdwp == 0) {
-        out_msg("xseginfo: Cannot find SDW segment descriptor word for segment %#o.\n", segno);
-    } else {
-        out_msg("SDW segment descriptor word for %#o: %s\n", segno, sdw2text(sdwp));
-        int bound = 16 * (sdwp->bound + 1);
-        t_uint64 last = 0;
-        for (bound -= 2; bound > 0; bound -= 2) {
-            if (fetch_pair(bound, &word0, &word1) != 0) {
-                out_msg("xseginfo: Error reading %#o|%#o/2\n", segno, bound);
-                break;
-            }
-            // don't stop for 'b' 'k' 'p' 't'
-            if (word0 != 0 && word0 != 0142153160164) {
-                last = word0;
-                break;
-            }
-            if (word1 != 0 && word1 != 0142153160164) {
-                last = word1;
-                ++ bound;
-                break;
-            }
+    if (msgs) {
+        /* Get last word of segment -- but in-memory copy may be larger than original, so search for last non-zero word */
+        TPR.TSR = segno;
+        if (fetch_word(0, &word0) != 0) {
+            if (msgs)
+                out_msg("xseginfo: Cannot read first word of segment %#o.\n", segno);
         }
-        if (bound > 0) {
-            out_msg("Last non-zero word might be at %#o|%#o: %012Lo\n", segno, bound, last);
+        SDW_t *sdwp = get_sdw();        // Get SDW for TPR.TSR
+        if (sdwp == 0) {
+            out_msg("xseginfo: Cannot find SDW segment descriptor word for segment %#o.\n", segno);
+        } else {
+            out_msg("SDW segment descriptor word for %#o: %s\n", segno, sdw2text(sdwp));
+            int bound = 16 * (sdwp->bound + 1);
+            t_uint64 last = 0;
+            for (bound -= 2; bound > 0; bound -= 2) {
+                if (fetch_pair(bound, &word0, &word1) != 0) {
+                    out_msg("xseginfo: Error reading %#o|%#o/2\n", segno, bound);
+                    break;
+                }
+                // don't stop for 'b' 'k' 'p' 't'
+                if (word0 != 0 && word0 != 0142153160164) {
+                    last = word0;
+                    break;
+                }
+                if (word1 != 0 && word1 != 0142153160164) {
+                    last = word1;
+                    ++ bound;
+                    break;
+                }
+            }
+            if (bound > 0) {
+                out_msg("Last non-zero word might be at %#o|%#o: %012Lo\n", segno, bound, last);
+            }
         }
     }
 
@@ -259,16 +288,19 @@ static t_stat _cmd_seginfo(int32 arg, char *buf)
     TPR.TSR = 015;
 
     if (fetch_word(segno, &word0) != 0) {
-        out_msg("xseginfo: Error reading LOT entry 15|%o\n", segno);
+        if (msgs)
+            out_msg("xseginfo: Error reading LOT entry 15|%o\n", segno);
         return 1;
     }
     if (word0 == 0) {
-        out_msg("LOT entry for seg %#o is empty.\n", segno);
+        if (msgs)
+            out_msg("LOT entry for seg %#o is empty.\n", segno);
         return 0;
     }
     AR_PR_t linkage;
     word2pr(word0, &linkage);
-    out_msg("LOT entry for seg %#o is %o|%#o linkage pointer.\n", segno, linkage.PR.snr, linkage.wordno);
+    if (msgs)
+        out_msg("LOT entry for seg %#o is %o|%#o linkage pointer.\n", segno, linkage.PR.snr, linkage.wordno);
 
     /* Linkage section -- read definitions pointer */
     //uint linkage_addr;
@@ -279,21 +311,25 @@ static t_stat _cmd_seginfo(int32 arg, char *buf)
     if (fetch_pair(linkage.wordno, &word0, &word1) != 0)
         return 2;
     if (word0 == 0 && word1 == 0) {
-        out_msg("Seg %#o has a linkage section at %o|%o with no ITS pointer to definitions.\n", segno, linkage.PR.snr, linkage.wordno);
+        if (msgs)
+            out_msg("Seg %#o has a linkage section at %o|%o with no ITS pointer to definitions.\n", segno, linkage.PR.snr, linkage.wordno);
         return 1;
     }
     words2its(word0, word1, &defs);
-    out_msg("Linkage section has ITS to defs at %o|%o\n", defs.PR.snr, defs.wordno);
+    if (msgs)
+        out_msg("Linkage section has ITS to defs at %o|%o\n", defs.PR.snr, defs.wordno);
 
     /* Linkage section -- read link pair info */
     if (fetch_word(linkage.wordno + 6, &word1) != 0)
         return 2;
     uint first_link = word1 >> 18;
     uint last_link = word1 & MASK18;
-    if (word1 == 0)
-        out_msg("Linkage section has no references to other segments.\n");
-    else {
-        out_msg("Linkage section has %d references to other segments at entry #s %#o .. %#o.\n", (last_link - first_link) / 2 + 1, first_link, last_link);
+    if (msgs) {
+        if (word1 == 0)
+            out_msg("Linkage section has no references to other segments.\n");
+        else {
+            out_msg("Linkage section has %d references to other segments at entry #s %#o .. %#o.\n", (last_link - first_link) / 2 + 1, first_link, last_link);
+        }
     }
 
     TPR.TSR = defs.PR.snr;
@@ -302,12 +338,17 @@ static t_stat _cmd_seginfo(int32 arg, char *buf)
     if (fetch_word(defp, &word0) != 0)
         return 2;
     uint off = word0 >> 18;
-    if (off == 0)
-        out_msg("Definition header points doesn't point to any entries\n");
-    else {
-        out_msg("\n");
-        out_msg("Definition header points to first entry at offset %#o.   This segment provides the following:\n", off);
+    if (off == 0) {
+        if (msgs)
+            out_msg("Definition header points doesn't point to any entries\n");
+    } else {
+        if (msgs) {
+            out_msg("\n");
+            out_msg("Definition header points to first entry at offset %#o.   This segment provides the following:\n", off);
+        }
         defp += off;
+        char entryname[1025];
+        char *entryp = entryname;
         for (;;) {
             t_uint64 word2, word3;
             if (fetch_word(defp, &word0) != 0)
@@ -323,14 +364,19 @@ static t_stat _cmd_seginfo(int32 arg, char *buf)
             uint fwdp = word0 >> 18;
             uint class = word1 & 7;
             // out_msg("Def entry at %o|%o (offset %#o): fwdp %#o, class %#o.  ", TPR.TSR, defp, defp - defs.wordno, fwdp, class);
-            out_msg("Def entry at %o|%04o (offset %04o): class %#o.  ", TPR.TSR, defp, defp - defs.wordno, class);
+            if (msgs)
+                out_msg("Def entry at %o|%04o (offset %04o): class %#o.  ", TPR.TSR, defp, defp - defs.wordno, class);
             uint namep = word2 >> 18;
             char buf[513];
             if (fetch_acc(defs.wordno + namep, buf) != 0)
                 return 2;
             if (class == 3) {
                 uint firstp = word2 & MASK18;
-                out_msg("Segment Name is %s; first def is at offset %#o.\n", buf, firstp);
+                if (msgs)
+                    out_msg("Segment Name is %s; first def is at offset %#o.\n", buf, firstp);
+                strcpy(entryname, buf);
+                entryp = entryname + strlen(entryname);
+                *entryp++ = '$';
             } else {
                 char sectbuf[20];
                 const char *sect;
@@ -350,9 +396,13 @@ static t_stat _cmd_seginfo(int32 arg, char *buf)
                 //}
                 //uint off = tmp_word >> 18;
                 if (class == 0) {
-                    out_msg("Text %s: link %o|%#o\n", buf, segno, thing_relp);
+                    if (msgs)
+                        out_msg("Text %s: link %o|%#o\n", buf, segno, thing_relp);
+                    strcpy(entryp, buf);
+                    symtab_add(segno, thing_relp, -1, symtab_proc, entryname);
                 } else if (class == 2) {
-                    out_msg("Name is %s; offset is %#o within %s section\n", buf, thing_relp, sect);
+                    if (msgs)
+                        out_msg("Name is %s; offset is %#o within %s section\n", buf, thing_relp, sect);
 #if 0
                     if (strcmp(buf, "bind_map") == 0) {
                     } else if (strcmp(buf, "symbol_table") == 0) {
@@ -360,13 +410,14 @@ static t_stat _cmd_seginfo(int32 arg, char *buf)
                             ...
 #endif
                 } else
-                    out_msg("Name is %s with offset thing_relp = %#o within the %s section.\n", buf, thing_relp, sect);
+                    if (msgs)
+                        out_msg("Name is %s with offset thing_relp = %#o within the %s section.\n", buf, thing_relp, sect);
             }
             defp = defs.wordno + fwdp;
         }
     }
 
-    if (first_link != 0 && last_link != 0) {
+    if (msgs && first_link != 0 && last_link != 0) {
         out_msg("\n");
         out_msg("Linkage section:\n");
         for (int link = first_link; link <= last_link; link += 2) {
