@@ -28,7 +28,7 @@
 // BUG: Make sure all data types referenced in sim_devices[] are sized as the min size for number of bits
 
 //-----------------------------------------------------------------------------
-//*** SIMH specific externs
+// *** SIMH specific externs
 
 #define MAXMEMSIZE (16*1024*1024)
 t_uint64 M[MAXMEMSIZE]; /* memory */
@@ -37,7 +37,7 @@ extern uint32 sim_brk_summ;
 extern int32 sim_switches;
 
 //-----------------------------------------------------------------------------
-//*** Registers
+// *** Registers
 
 // We don't have a simple program counter -- we have HW virtual memory
 // PPR pseudo-register is the program counter.   The PPR is composed of
@@ -137,7 +137,7 @@ REG cpu_reg[] = {
 };
 
 //-----------------------------------------------------------------------------
-//*** CPU
+// *** CPU
 
 /* CPU data structures for SIMH
 
@@ -158,7 +158,7 @@ static MTAB cpu_mod[] = {
     { 0 }
 };
 
-t_stat cpu_boot (int32 unit_num, DEVICE *dptr);;
+t_stat cpu_boot (int32 unit_num, DEVICE *dptr);
 t_stat cpu_reset (DEVICE *dptr);
 
 // SIMH directs requests to examine/change memory to the CPU DEVICE?
@@ -202,7 +202,7 @@ DEVICE opcon_dev = {
 };
 
 //-----------------------------------------------------------------------------
-//*** Other Globals holding state values
+// *** Other Globals holding state values
 //      If SIMH uses known devices to switch between CPUs, we'll have to 
 //      add these to cpu_reg as read only (perhaps even hidden) registers.
 //      In order to suppport SIMH's save/restore commands, we'll at least
@@ -223,7 +223,7 @@ iom_t iom;  // only one for now
 flag_t fault_gen_no_fault;
 
 //-----------------------------------------------------------------------------
-//***  Other Externs
+// ***  Other Externs
 int opt_debug;
 extern int bootimage_loaded;    // only relevent for the boot CPU ?
 extern uint32 sim_emax;
@@ -231,7 +231,7 @@ t_uint64 calendar_a;
 t_uint64 calendar_q;
 
 //-----------------------------------------------------------------------------
-//***  Constants, unchanging lookup tables, etc
+// ***  Constants, unchanging lookup tables, etc
 
 static int fault2group[32] = {
     // from AL39, page 7-3
@@ -251,7 +251,7 @@ static int fault2prio[32] = {
 static int is_eis[1024];    // hack
 
 //-----------------------------------------------------------------------------
-//***  Function prototypes
+// ***  Function prototypes
 
 static t_stat control_unit(void);
 int fetch_instr(uint IC, instr_t *ip);
@@ -265,6 +265,7 @@ static void check_events(void);
 static void save_to_simh(void);
 static void save_PR_registers(void);
 static void restore_PR_registers(void);
+static void show_location(int show_source_lines);
 
 void tape_block(unsigned char *p, uint32 len, uint32 addr);
 
@@ -288,7 +289,7 @@ static int32 sign15(uint x)
 {
     if (bit_is_neg(x,15)) {
         int32 r = - ((1<<15) - (x&MASKBITS(15)));
-        // log_msg(DEBUG_MSG, "sign15", "%#Lo => %#o (%+d decimal)\n", x, r, r);
+        // log_msg(DEBUG_MSG, "sign15", "%#%#llo => %#o (%+d decimal)\n", x, r, r);
         return r;
     }
     else
@@ -464,7 +465,6 @@ t_stat sim_instr(void)
 uint32 ncycles = 0;
 ninstr = 0;
     uint32 start = sim_os_msec();
-    static t_symtab_ent *source = 0;        // WARNING: re-init this is (re)init() is ever implemented for symtab pkg
 
     if (opt_debug && sim_interval > 128) {
         // debug mode is slow, so be more responsive to keyboard interrupt
@@ -486,68 +486,13 @@ ninstr = 0;
 #endif
 
         //
-        // Log a message about where we're at -- if debugging or if we want procedure call tracing
+        // Log a message about where we're at -- if debugging, or if we want procedure call tracing,
+        // or if we're displaying source code
         //
 
-        // Segment 0400 is the first used segment and shows a lot of bouncing between source
-        // files that's no longer of interest   
-        const int show_source_changes = PPR.PSR != 0400 || (source && source->seg != 0400);
-        static int seg_scanned[512];
-        if (opt_debug || show_source_changes) {
-            if (opt_debug)
-                log_msg(DEBUG_MSG, NULL, "\n", NULL);
-            addr_modes_t amode = get_addr_mode();
-            int seg = (amode == APPEND_mode) ? PPR.PSR : -1;
-            if (seg > 0 && seg < ARRAY_SIZE(seg_scanned) && ! seg_scanned[seg]) {
-                scan_seg(seg, 0);
-                seg_scanned[seg] = 1;
-            }
-            if (source) {
-                if (source->seg == seg && source->addr_lo <= PPR.IC && PPR.IC <= source->addr_hi) {
-                    if (opt_debug) {
-                        char icbuf[80];
-                        ic2text(icbuf, amode, PPR.PSR, PPR.IC);
-                        log_msg(DEBUG_MSG, "MAIN", "IC: %s\n", icbuf);  // source unchanged
-                    }
-                } else {
-                    char icbuf[80];
-                    ic2text(icbuf, amode, PPR.PSR, PPR.IC);
-                    char *old = source->name;
-                    source = symtab_find(seg, PPR.IC);
-                    if (source) {
-                        int offset = (int) PPR.IC - source->addr_lo;
-                        if (offset == 0)
-                            log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: %s\n", icbuf, source->name);
-                        else {
-                            char sign = (offset < 0) ? '-' : '+';
-                            if (sign == '-')
-                                offset = - offset;
-                            log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: %s %c%#o\n", icbuf, source->name, sign, offset);
-                        }
-                    } else
-                        log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: Unknown (leaving %s)\n", icbuf, old);
-                } 
-            } else {
-                if ((source = symtab_find(seg, PPR.IC)) != NULL) {
-                    char icbuf[80];
-                    ic2text(icbuf, amode, PPR.PSR, PPR.IC);
-                    int offset = (int) PPR.IC - source->addr_lo;
-                    if (offset == 0)
-                            log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: %s\n", icbuf, source->name);
-                    else {
-                            char sign = (offset < 0) ? '-' : '+';
-                            if (sign == '-')
-                                offset = - offset;
-                            log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: %s %c%#o\n", icbuf, source->name, sign, offset);
-                    }
-                } else
-                    if (opt_debug) {
-                        char icbuf[80];
-                        ic2text(icbuf, amode, PPR.PSR, PPR.IC);
-                        log_msg(DEBUG_MSG, "MAIN", "IC: %s\n", icbuf);  // still unknown
-                    }
-            }
-        }
+        const int show_source_lines = 1;
+        if (opt_debug || show_source_lines)
+            show_location(show_source_lines);
 
         //
         // Execute instructions (or fault or whatever)
@@ -1338,6 +1283,8 @@ void fault_gen(enum faults f)
 
 int fault_check(enum faults f)
 {
+    // Find fault
+
     if (f < 1 || f > 32) {
         log_msg(ERR_MSG, "CU::fault-check", "Bad fault # %d\n", f);
         cancel_run(STOP_BUG);
@@ -1355,6 +1302,8 @@ int fault_check(enum faults f)
 
 int fault_check_group(int group)
 {
+    // Returns whether or not any faults exist for the specifed group or a higher priority group
+
     if (group < 1 || group > 7) {
         log_msg(ERR_MSG, "CU::fault-check-group", "Bad group # %d\n", group);
         cancel_run(STOP_BUG);
@@ -1383,7 +1332,7 @@ int fetch_instr(uint IC, instr_t *ip)
             ip = &i;
             decode_instr(ip, word);
         }
-        if (opt_debug>0) log_msg(DEBUG_MSG, "CU::fetch-instr", "Fetched word %012Lo => %s\n", word, instr2text(ip));
+        if (opt_debug>0) log_msg(DEBUG_MSG, "CU::fetch-instr", "Fetched word %012llo => %s\n", word, instr2text(ip));
     }
 #endif
     return ret;
@@ -1467,7 +1416,7 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
 
     if (sim_brk_summ) {
         if (sim_brk_test (addr, SWMASK ('M'))) {
-            log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address %#o.  Fetched value %012Lo\n", addr, M[addr]);
+            log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address %#o.  Fetched value %012llo\n", addr, M[addr]);
             (void) cancel_run(STOP_IBKPT);
         }
     }
@@ -1558,7 +1507,7 @@ int store_abs_word(uint addr, t_uint64 word)
                 (void) cancel_run(STOP_IBKPT);
             } else
                 log_msg(NOTIFY_MSG, "CU::store", "Write to a location that has an execution breakpoint, address %#o\n", addr);
-            log_msg(NOTIFY_MSG, "CU::store", "Address %08o: value was %012Lo, storing %012Lo\n", addr, M[addr], word);
+            log_msg(NOTIFY_MSG, "CU::store", "Address %08o: value was %012llo, storing %012llo\n", addr, M[addr], word);
         }
 
     M[addr] = word; // absolute memory reference
@@ -1756,7 +1705,7 @@ void anal36 (const char* tag, t_uint64 word)
     nines[2] = (word >> 9) & 0777;
     nines[1] = (word >> 18) & 0777;
     nines[0] = (word >> 27) & 0777;
-    printf("%s: %012Lo octal, %Lu decimal\n", tag, word, word);
+    printf("%s: %012llo octal, %llu decimal\n", tag, word, word);
     printf("bin64: %s\n", bin2text(word, 64));
     printf("bin36: %s\n", bin2text(word, 36));
     printf("9bits(oct): %03o %03o %03o %03o\n", nines[0], nines[1], nines[2], nines[3]);
@@ -1892,15 +1841,15 @@ static void hist_dump()
 
     log_msg(DEBUG_MSG, NULL, "\n", NULL);
     if (reg_A != hist.reg_A)
-        log_msg(DEBUG_MSG, "HIST", "Reg A: %012Lo\n", reg_A);
+        log_msg(DEBUG_MSG, "HIST", "Reg A: %012llo\n", reg_A);
     if (reg_Q != hist.reg_Q) {
         if (reg_Q == calendar_q)
             log_msg(DEBUG_MSG, "HIST", "Reg Q: <calendar>\n");
         else
-            log_msg(DEBUG_MSG, "HIST", "Reg Q: %012Lo\n", reg_Q);
+            log_msg(DEBUG_MSG, "HIST", "Reg Q: %012llo\n", reg_Q);
     }
     if (reg_E != hist.reg_E)
-        log_msg(DEBUG_MSG, "HIST", "Reg E: %012Lo\n", reg_E);
+        log_msg(DEBUG_MSG, "HIST", "Reg E: %012llo\n", reg_E);
     for (int i = 0; i < ARRAY_SIZE(reg_X); ++i)
         if (reg_X[i] != hist.reg_X[i])
             log_msg(DEBUG_MSG, "HIST", "Reg X[%d]: %06o\n", i, reg_X[i]);
@@ -1921,7 +1870,7 @@ static void hist_dump()
         log_msg(DEBUG_MSG, "HIST", "PPR: PRR=%#o, PSR=%#o, P=%#o, IC=%#o\n", PPR.PRR, PPR.PSR, PPR.P, PPR.IC);
     if (memcmp(&hist.TPR, &TPR, sizeof(hist.TPR)) != 0) {
         if (TPR.is_value)
-            log_msg(DEBUG_MSG, "HIST", "TPR: TRR=%#o, TSR=%#o, TBR=%#o, CA=%#o, is_value=Y, value=%#Lo\n",
+            log_msg(DEBUG_MSG, "HIST", "TPR: TRR=%#o, TSR=%#o, TBR=%#o, CA=%#o, is_value=Y, value=%#llo\n",
                 TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA, TPR.value);
         else
             log_msg(DEBUG_MSG, "HIST", "TPR: TRR=%#o, TSR=%#o, TBR=%#o, CA=%#o, is_value=N\n",
@@ -2035,11 +1984,12 @@ void cmd_dump_history()
         for (int i = start; i < end; ++i) {
             char icbuf[80];
             ic2text(icbuf, ic_hist[i].addr_mode, ic_hist[i].seg, ic_hist[i].ic);
-            source = symtab_find((ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1, ic_hist[i].ic);
-            char *name = source ? source->name : unknown;
+            source = symtab_find((ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1, ic_hist[i].ic, symtab_file | symtab_proc);
+            // BUG: do line number
+            char *name = source ? (source->ename) ? source->ename : source->fname : unknown;
             if (prior != name) {
                 int offset = (source) ? (int) ic_hist[i].ic - source->addr_lo : 0;
-                if (offset == 0)
+                if (offset == 0 || !(source->types & symtab_proc))
                     out_msg("IC: %s: %-60s %s\n", icbuf, instr2text(&ic_hist[i].instr), name);
                 else {
                     char sign = (offset < 0) ? '-' : '+';
@@ -2071,3 +2021,81 @@ static void check_events()
 }
 
 //=============================================================================
+
+static void show_location(int show_source_lines)
+{
+
+    static t_symtab_ent *source = 0;        // WARNING: re-init this if (re)init() is ever implemented for symtab pkg
+    // Segment 0400 is the first used segment and shows a lot of bouncing between source
+    // files that's no longer of interest   
+    const int show_source_changes = PPR.PSR != 0400 || (source && source->seg != 0400);
+
+    static int seg_scanned[512];
+    if (! opt_debug && ! show_source_changes && ! show_source_lines)
+        return;
+
+    // Scan segments for entry points to procedures
+    addr_modes_t amode = get_addr_mode();
+    int seg = (amode == APPEND_mode) ? PPR.PSR : -1;
+    if (seg > 0 && seg < ARRAY_SIZE(seg_scanned) && ! seg_scanned[seg]) {
+        scan_seg(seg, 0);
+        seg_scanned[seg] = 1;
+    }
+
+    if (opt_debug)
+        log_msg(DEBUG_MSG, NULL, "\n", NULL);
+
+    // Did we just change from source file or procedure to another?
+    int source_changed;
+    char *old = (source == NULL) ? NULL : (source->ename) ? source->ename : source->fname;
+    if (source) {
+        source_changed = source->seg != seg || source->addr_lo > PPR.IC || PPR.IC > source->addr_hi;
+        if (source_changed)
+            source = symtab_find(seg, PPR.IC, symtab_file | symtab_proc);
+    } else {
+        // Note that we don't expect to have both a "file" entry and a "proc" entry
+        source = symtab_find(seg, PPR.IC, symtab_file | symtab_proc);
+        source_changed = source != NULL;
+    }
+
+    if (show_source_lines) {
+        t_symtab_ent *source_line = symtab_find(seg, PPR.IC, symtab_line);
+        if (source_line != NULL) {
+            // Note that if we have a source line, we also expect to have a "proc" entry
+            // and do not expect to have a "file" entry.
+            if (source_changed) {
+                if (source) {
+                    if ((source->types & symtab_proc) != 0)
+                        log_msg(DEBUG_MSG, "MAIN", "%s: %s\n", "Procedure", source->ename);
+                    else if ((source->types & symtab_file) != 0)
+                        log_msg(DEBUG_MSG, "MAIN", "%s: %s\n", "Source file", source->fname);
+                } else {
+                        log_msg(DEBUG_MSG, "MAIN", "Source unknown\n");
+                }
+            }
+            out_msg("Source:  Line %5d:  %s\n", source_line->line_no, source_line->line);
+        }
+    }
+
+    if (opt_debug || (source_changed && show_source_changes)) {
+        char *name = (source == NULL) ? NULL : (source->ename) ? source->ename : source->fname;
+        char icbuf[80];
+        ic2text(icbuf, amode, PPR.PSR, PPR.IC);
+        if (source_changed) {
+            if (source) {
+                int offset = (int) PPR.IC - source->addr_lo;
+                if (offset == 0 || !(source->types & symtab_proc))
+                    log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: %s\n", icbuf, name);
+                else {
+                    char sign = (offset < 0) ? '-' : '+';
+                    if (sign == '-')
+                        offset = - offset;
+                    log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: %s %c%#o\n", icbuf, name, sign, offset);
+                }
+            } else if (old != NULL)
+                log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: Unknown (leaving %s)\n", icbuf, old);
+        } else
+            if (opt_debug)
+                log_msg(DEBUG_MSG, "MAIN", "IC: %s\n", icbuf);  // source unchanged
+    }
+}

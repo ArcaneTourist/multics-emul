@@ -370,7 +370,7 @@ static int do_an_op(instr_t *ip)
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
                     reg_X[n] = (word >> 18) & MASK18;   // reg is 18 bits
-                    log_msg(DEBUG_MSG, "OPU::instr::ldx*", "X[%d]: Loaded %#Lo => %#Lo (%#o aka %#o)\n", n, word, word >> 18, reg_X[n], reg_X[n] & MASK18);
+                    log_msg(DEBUG_MSG, "OPU::instr::ldx*", "X[%d]: Loaded %#llo => %#llo (%#o aka %#o)\n", n, word, word >> 18, reg_X[n], reg_X[n] & MASK18);
                     IR.zero = reg_X[n] == 0;
                     IR.neg = bit18_is_neg(reg_X[n]);
                 }
@@ -464,7 +464,7 @@ static int do_an_op(instr_t *ip)
                 save_IR(&word);
                 word = setbits36(word, 25, 1, initial_tally);
                 word |= ((t_uint64)(PPR.IC + 1) << 18);
-                // log_msg(DEBUG_MSG, "OPU::stct1", "saving %012Lo to %#o\n", word, TPR.CA);
+                // log_msg(DEBUG_MSG, "OPU::stct1", "saving %012llo to %#o\n", word, TPR.CA);
                 return store_word(TPR.CA, word);
             }
             case opcode0_stc2: {
@@ -569,7 +569,7 @@ static int do_an_op(instr_t *ip)
             case opcode0_als: { // A reg left shift
                 int n = TPR.CA & 0177;  // bits 11..17 of 18bit CA
                 //log_msg(DEBUG_MSG, "OPU::als", "CA = %#o; bits 11..17 = %0o\n", TPR.CA, n);
-                //log_msg(DEBUG_MSG, "OPU::als", "A = (%0Lo << %d) ==> %0Lo\n", reg_A, n, (reg_A << n) & MASK36);
+                //log_msg(DEBUG_MSG, "OPU::als", "A = (%#llo << %d) ==> %#llo\n", reg_A, n, (reg_A << n) & MASK36);
                 int init_neg = bit36_is_neg(reg_A);
                 reg_A = (reg_A << n) & MASK36;
                 IR.zero = reg_A == 0;
@@ -593,7 +593,7 @@ static int do_an_op(instr_t *ip)
                     reg_A = setbits36(reg_A, 0, n, MASKBITS(n));
                 IR.zero = reg_A == 0;
                 IR.neg = bit36_is_neg(reg_A);
-                log_msg(DEBUG_MSG, "OPU::ars", "%012Lo>>%d ==> %012Lo\n", tmp, n, reg_A);
+                log_msg(DEBUG_MSG, "OPU::ars", "%012llo>>%d ==> %012llo\n", tmp, n, reg_A);
                 return 0;
             }
             case opcode0_llr: {     // Long left rotate
@@ -638,9 +638,9 @@ static int do_an_op(instr_t *ip)
                     }
                 }
                 if (reg_A != a || reg_Q != q) {
-                    log_msg(NOTIFY_MSG, "OPU::lls", "BUG Fix: Shift of %012Lo,%012Lo by %d bits\n", asv, qsv, n);
-                    log_msg(NOTIFY_MSG, "OPU::lls", "Prior result was: %012Lo,%012Lo\n", a, q);
-                    log_msg(NOTIFY_MSG, "OPU::lls", "Fixed result is:  %012Lo,%012Lo\n", reg_A, reg_Q);
+                    log_msg(NOTIFY_MSG, "OPU::lls", "BUG Fix: Shift of %012llo,%012llo by %d bits\n", asv, qsv, n);
+                    log_msg(NOTIFY_MSG, "OPU::lls", "Prior result was: %012llo,%012llo\n", a, q);
+                    log_msg(NOTIFY_MSG, "OPU::lls", "Fixed result is:  %012llo,%012llo\n", reg_A, reg_Q);
                 }
 
                 IR.zero = reg_A == 0 && reg_Q == 0;
@@ -652,7 +652,7 @@ static int do_an_op(instr_t *ip)
             case opcode0_lrl: {     // long right logical
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 int init_neg = bit36_is_neg(reg_A);
-                log_msg(NOTIFY_MSG, "OPU::lrl", "Debug: Shift AQ %012Lo,%012Lo of %d bits.\n", reg_A, reg_Q, n);    // BUG: temp
+                log_msg(NOTIFY_MSG, "OPU::lrl", "Debug: Shift AQ %012llo,%012llo of %d bits.\n", reg_A, reg_Q, n);  // BUG: temp
                 if (n >= 72) {
                     log_msg(NOTIFY_MSG, "OPU::lrl", "Shift of %d bits.\n", n);
                     if (init_neg) {
@@ -673,14 +673,14 @@ static int do_an_op(instr_t *ip)
                 }
                 IR.zero = reg_A == 0 && reg_Q == 0;
                 IR.neg = init_neg;
-                log_msg(NOTIFY_MSG, "OPU::lrl", "Debug: Result:  %012Lo,%012Lo\n", reg_A, reg_Q);   // BUG: temp
+                log_msg(NOTIFY_MSG, "OPU::lrl", "Debug: Result:  %012llo,%012llo\n", reg_A, reg_Q); // BUG: temp
                 return 0;
             }
 
             case opcode0_lrs: {     // Long right shift
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 int init_neg = bit36_is_neg(reg_A);
-                // log_msg(NOTIFY_MSG, "OPU::lrs", "Debug: Shift AQ %012Lo,%012Lo of %d bits.\n", reg_A, reg_Q, n);
+                // log_msg(NOTIFY_MSG, "OPU::lrs", "Debug: Shift AQ %012llo,%012llo of %d bits.\n", reg_A, reg_Q, n);
                 if (n >= 72) {
                     log_msg(NOTIFY_MSG, "OPU::lrs", "Shift of %d bits.\n", n);
                     if (init_neg) {
@@ -705,7 +705,7 @@ static int do_an_op(instr_t *ip)
                 }
                 IR.zero = reg_A == 0 && reg_Q == 0;
                 IR.neg = init_neg;
-                // log_msg(NOTIFY_MSG, "OPU::lrs", "Debug: Result:  %012Lo,%012Lo\n", reg_A, reg_Q);
+                // log_msg(NOTIFY_MSG, "OPU::lrs", "Debug: Result:  %012llo,%012llo\n", reg_A, reg_Q);
                 return 0;
             }
 
@@ -916,16 +916,16 @@ static int do_an_op(instr_t *ip)
                     word = (~ word) & MASK36;
                     ret = add36(reg_A, word, &reg_A);
                     int carry = IR.carry;
-                    log_msg(DEBUG_MSG, "OPU::sba", "%012Lo - %012Lo ==> adding %012Lo yields %012Lo with carry=%c.\n", a, w, word, reg_A, IR.carry ? 'Y' : 'N');
+                    log_msg(DEBUG_MSG, "OPU::sba", "%012llo - %012llo ==> adding %012llo yields %012llo with carry=%c.\n", a, w, word, reg_A, IR.carry ? 'Y' : 'N');
                     if (ret == 0) {
                         word = 1;
                         ret = add36(reg_A, word, &reg_A);
-                        log_msg(DEBUG_MSG, "OPU::sba", "adding one yields %012Lo with carry=%c.\n", reg_A, IR.carry ? 'Y' : 'N');
+                        log_msg(DEBUG_MSG, "OPU::sba", "adding one yields %012llo with carry=%c.\n", reg_A, IR.carry ? 'Y' : 'N');
                         IR.carry |= carry;
                         if (do_18bit_math && TPR.is_value == 7 && (a>>18) == 0) {
                             // arithmetic on "dl" constant
                             if (opt_debug || (a>>18) != 0 || (w >> 18) != 0 || (reg_A>>18) != 0)
-                                log_msg(NOTIFY_MSG, "OPU::sba", "A = %012Lo minus %06Lo ,du operand yields %012Lo at IC %06o \n", a, w, reg_A, PPR.IC);
+                                log_msg(NOTIFY_MSG, "OPU::sba", "A = %012llo minus %06llo ,du operand yields %012llo at IC %06o \n", a, w, reg_A, PPR.IC);
 #if 0
                             flag_t is_neg = bit18_is_neg(reg_A);
                             if (is_neg != IR.neg) {
@@ -1015,16 +1015,16 @@ static int do_an_op(instr_t *ip)
                     word = (~ word) & MASK36;
                     ret = add36(reg_Q, word, &reg_Q);
                     int carry = IR.carry;
-                    log_msg(DEBUG_MSG, "OPU::sbq", "%012Lo - %012Lo ==> adding %012Lo yields %012Lo with carry=%c.\n", q, w, word, reg_Q, IR.carry ? 'Y' : 'N');
+                    log_msg(DEBUG_MSG, "OPU::sbq", "%012llo - %012llo ==> adding %012llo yields %012llo with carry=%c.\n", q, w, word, reg_Q, IR.carry ? 'Y' : 'N');
                     if (ret == 0) {
                         word = 1;
                         ret = add36(reg_Q, word, &reg_Q);
-                        log_msg(DEBUG_MSG, "OPU::sbq", "adding one yields %012Lo with carry=%c.\n", reg_Q, IR.carry ? 'Y' : 'N');
+                        log_msg(DEBUG_MSG, "OPU::sbq", "adding one yields %012llo with carry=%c.\n", reg_Q, IR.carry ? 'Y' : 'N');
                         IR.carry |= carry;
                         if (do_18bit_math && TPR.is_value == 7 && (q>>18) == 0) {
                             // arithmetic on "dl" constant
                             if (opt_debug || (q>>18) != 0 || (w >> 18) != 0 || (reg_Q>>18) != 0)
-                                log_msg(NOTIFY_MSG, "OPU::sbq", "A = %012Lo minus %06Lo ,du operand yields %012Lo at IC %06o \n", q, w, reg_Q, PPR.IC);
+                                log_msg(NOTIFY_MSG, "OPU::sbq", "A = %012llo minus %06llo ,du operand yields %012llo at IC %06o \n", q, w, reg_Q, PPR.IC);
                             flag_t is_neg = bit18_is_neg(reg_Q);
                             if (is_neg != IR.neg) {
                                 log_msg(WARN_MSG, "OPU::sbq", "Changing IR.neg to %d for ,dl operand.\n", is_neg);
@@ -1060,7 +1060,7 @@ static int do_an_op(instr_t *ip)
 #if 0
                         char buf[40];
                         sprintf(buf, "OPU::sbx%d", n);
-                        log_msg(DEBUG_MSG, buf, "X[%d] -= %#Lo(%Ld) ==> %#o+%#Lo == %d+%d = %#Lo (%Ld)\n",
+                        log_msg(DEBUG_MSG, buf, "X[%d] -= %#llo(%lld) ==> %#o+%#llo == %d+%d = %#llo (%lld)\n",
                             n, orig, orig,
                             reg_X[n], word, reg_X[n], sign18(word),
                             result, result);
@@ -1087,8 +1087,8 @@ static int do_an_op(instr_t *ip)
                     mpy(sign36(word), sign36(reg_Q), &reg_A, &reg_Q);
                     IR.zero = reg_Q == 0 && reg_A == 0;
                     IR.neg = bit36_is_neg(reg_A);
-                    log_msg(DEBUG_MSG, "OPU::mpy", "%#Lo * %#Lo ===> A=%#Lo, Q=%#Lo\n", word, q, reg_A, reg_Q);
-                    log_msg(DEBUG_MSG, "OPU::mpy", "%Ld * %Ld ===> A=%Ld, Q=%Ld\n", word, q, reg_A, reg_Q);
+                    log_msg(DEBUG_MSG, "OPU::mpy", "%#llo * %#llo ===> A=%#llo, Q=%#llo\n", word, q, reg_A, reg_Q);
+                    log_msg(DEBUG_MSG, "OPU::mpy", "%lld * %lld ===> A=%lld, Q=%lld\n", word, q, reg_A, reg_Q);
                 }
                 return ret;
             }
@@ -1107,7 +1107,7 @@ static int do_an_op(instr_t *ip)
                         IR.zero = w == 0;
                         ret = 1;
                     } else {
-                        log_msg(DEBUG_MSG, "OPU::div", "%#Lo/%#Lo => %#Lo/%#Lo)\n", reg_Q, word, q, w);
+                        log_msg(DEBUG_MSG, "OPU::div", "%#llo/%#llo => %#llo/%#llo)\n", reg_Q, word, q, w);
                         reg_Q = (q / w) & MASK36;
                         reg_A = (q % w) & MASK36;
                         IR.zero = reg_Q == 0;
@@ -1181,8 +1181,8 @@ static int do_an_op(instr_t *ip)
                 t_uint64 word1, word2;
                 int ret = fetch_pair(TPR.CA, &word1, &word2);
                 if (ret == 0) {
-                    if (opt_debug) log_msg(DEBUG_MSG, "OPU::cmpaq", "AQ = {%012Lo, %012Lo}\n", reg_A, reg_Q);
-                    if (opt_debug) log_msg(DEBUG_MSG, "OPU::cmpaq", "Y =  {%012Lo, %012Lo}\n", word1, word2);
+                    if (opt_debug) log_msg(DEBUG_MSG, "OPU::cmpaq", "AQ = {%012llo, %012llo}\n", reg_A, reg_Q);
+                    if (opt_debug) log_msg(DEBUG_MSG, "OPU::cmpaq", "Y =  {%012llo, %012llo}\n", word1, word2);
                     int neg1 = bit36_is_neg(reg_A);
                     int neg2 = bit36_is_neg(word1);
                     if (neg1 == 0 && neg2 == 1) {
@@ -1984,7 +1984,7 @@ static int do_an_op(instr_t *ip)
                     if (opt_debug) {
                         char cmd[20];
                         sprintf(cmd, "lprp%d", n);
-                        log_msg(DEBUG_MSG, cmd, "PR[%d] loaded from value %012Lo\n", n, word);
+                        log_msg(DEBUG_MSG, cmd, "PR[%d] loaded from value %012llo\n", n, word);
                     }
                 }
                 return ret;
@@ -2042,7 +2042,7 @@ static int do_an_op(instr_t *ip)
                 word = setbits36(word, 18, 18, AR_PR[n].wordno);
                 char cmd[20];
                 sprintf(cmd, "OPU::sprp%d", n);
-                log_msg(DEBUG_MSG, cmd, "Packed value %012Lo from PR[%d] (snr=%o, wordno=%0o, bitno=%#o)\n",
+                log_msg(DEBUG_MSG, cmd, "Packed value %012llo from PR[%d] (snr=%o, wordno=%0o, bitno=%#o)\n",
                     word, n, AR_PR[n].PR.snr, AR_PR[n].wordno, AR_PR[n].PR.bitno);
                 int ret = store_word(TPR.CA, word);
                 return ret;
@@ -2171,7 +2171,7 @@ static int do_an_op(instr_t *ip)
                     log_msg(DEBUG_MSG, "OPU::opcode::xed", "fetch even: error or fault\n");
                     return 1;   // faulted
                 }
-                log_msg(DEBUG_MSG, "OPU::opcode::xed", "executing even instr at %#Lo\n", y);
+                log_msg(DEBUG_MSG, "OPU::opcode::xed", "executing even instr at %#llo\n", y);
                 if (do_op(&IR) != 0) {
                     log_msg(WARN_MSG, "OPU::opcode::xed", "fault or error executing even instr\n");
                     // BUG: no way to get to the second instr
@@ -2186,7 +2186,7 @@ static int do_an_op(instr_t *ip)
                         log_msg(DEBUG_MSG, "OPU::opcode::xed", "fetch odd: error or fault\n");
                         return 1;   // faulted
                     }
-                    log_msg(DEBUG_MSG, "OPU::opcode::xed", "executing odd instr at %#Lo\n", y);
+                    log_msg(DEBUG_MSG, "OPU::opcode::xed", "executing odd instr at %#llo\n", y);
                     if (do_op(&IR) != 0) {
                         log_msg(WARN_MSG, "OPU::opcode::xed", "fault or error executing odd instr\n");
                         return 1;
@@ -2285,13 +2285,13 @@ static int do_an_op(instr_t *ip)
                 switch (ip->mods.single.tag) {      // no addr modifications
                     case 2:
                         ret = fetch_word(TPR.CA, &word);
-                        log_msg(ERR_MSG, "OPU::opcode::lcpr", "Not writing %#Lo to cache mode reg.\n", word);
+                        log_msg(ERR_MSG, "OPU::opcode::lcpr", "Not writing %#llo to cache mode reg.\n", word);
                         if (word != 0)
                             ret = 1;
                         break;
                     case 4:
                         ret = fetch_word(TPR.CA, &word);
-                        log_msg(ERR_MSG, "OPU::opcode::lcpr", "Not writing %#Lo to mode reg.\n", word);
+                        log_msg(ERR_MSG, "OPU::opcode::lcpr", "Not writing %#llo to mode reg.\n", word);
                         if (word != 0)
                             ret = 1;
                         break;
@@ -2354,7 +2354,7 @@ static int do_an_op(instr_t *ip)
                 t_uint64 word;
                 if ((ret = fetch_op(ip, &word)) == 0) {
                     t_uint64 bits = getbits36(word, 0, 27);
-                    log_msg(DEBUG_MSG, "OPU::opcode::ldt", "Operand is %#Lo => %#Lo\n", word, bits);
+                    log_msg(DEBUG_MSG, "OPU::opcode::ldt", "Operand is %#llo => %#llo\n", word, bits);
                     reg_TR = bits;
                     activate_timer();
                 }
@@ -2517,9 +2517,9 @@ static int do_an_op(instr_t *ip)
                     ret = 1;
                     // error
                 }
-                log_msg(DEBUG_MSG, "OPU::opcode::rscr", "A = %Lo\n", reg_A);
+                log_msg(DEBUG_MSG, "OPU::opcode::rscr", "A = %llo\n", reg_A);
                 if (show_q)
-                    log_msg(DEBUG_MSG, "OPU::opcode::rscr", "Q = %Lo\n", reg_Q);
+                    log_msg(DEBUG_MSG, "OPU::opcode::rscr", "Q = %llo\n", reg_Q);
                 return ret;
             }
 
@@ -2550,7 +2550,7 @@ static int do_an_op(instr_t *ip)
                         reg_A = setbits36(reg_A, 23, 11, 016);  // 1110b=>L68 re start_cpu.pl1
                         reg_A = setbits36(reg_A, 34, 2, switches.cpu_num);
 #endif
-                        log_msg(NOTIFY_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012Lo.\n", low, reg_A);
+                        log_msg(NOTIFY_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012llo.\n", low, reg_A);
                         break;
                     default:
                         log_msg(WARN_MSG, "OPU::opcode::rsw", "function xxx%o not implemented.\n", low);
@@ -2592,8 +2592,8 @@ static int do_an_op(instr_t *ip)
                     fault_gen(illproc_fault);
                     return 1;
                 }
-                log_msg(DEBUG_MSG, "OPU::opcode::sscr", "A = %Lo\n", reg_A);
-                log_msg(DEBUG_MSG, "OPU::opcode::sscr", "Q = %Lo\n", reg_Q);
+                log_msg(DEBUG_MSG, "OPU::opcode::sscr", "A = %llo\n", reg_A);
+                log_msg(DEBUG_MSG, "OPU::opcode::sscr", "Q = %llo\n", reg_Q);
                 int ret = 0;
                 uint y = (TPR.CA >> 16) & 3;    // 18bit CA
                 uint ea = y << 15;
@@ -2681,9 +2681,9 @@ static int do_an_op(instr_t *ip)
                         (void) get_seg_addr(TPR.CA, 0, &addr);
                         reg_A = (t_uint64) TPR.CA << 12;    // upper 24 bits
                         if (addr == TPR.CA)
-                            log_msg(NOTIFY_MSG, "OPU::absa", "Ignored segment portion of PR register irrelevent.  Result %#Lo\n", reg_A);
+                            log_msg(NOTIFY_MSG, "OPU::absa", "Ignored segment portion of PR register irrelevent.  Result %#llo\n", reg_A);
                         else
-                            log_msg(NOTIFY_MSG, "OPU::absa", "Ignoring segment portion of PR register -- Using %#Lo instead of %#Lo.\n", reg_A, (t_uint64) addr << 12);
+                            log_msg(NOTIFY_MSG, "OPU::absa", "Ignoring segment portion of PR register -- Using %#llo instead of %#llo.\n", reg_A, (t_uint64) addr << 12);
                         ret = 0;
                 } else
 #endif
@@ -2695,9 +2695,9 @@ static int do_an_op(instr_t *ip)
                             log_msg(WARN_MSG, "OPU::absa", "Unable to translate segment offset into absolute address.\n");
                         if (opt_debug) {
                             if (addr == TPR.CA)
-                                log_msg(DEBUG_MSG, "OPU::absa", "Using segment portion of PR register yields no change -- %#Lo\n", reg_A);
+                                log_msg(DEBUG_MSG, "OPU::absa", "Using segment portion of PR register yields no change -- %#llo\n", reg_A);
                             else
-                                log_msg(DEBUG_MSG, "OPU::absa", "Using segment portion of PR register yields %#Lo instead of %#Lo.\n", reg_A, (t_uint64) TPR.CA << 12);
+                                log_msg(DEBUG_MSG, "OPU::absa", "Using segment portion of PR register yields %#llo instead of %#llo.\n", reg_A, (t_uint64) TPR.CA << 12);
                         }
                 }
                 return ret;
@@ -3034,7 +3034,7 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
     if ((result >> 36) != 0) {
         // BUG: generates inappropriate? carry when adding a negative to a positive number
         IR.carry = 1;
-        //log_msg(WARN_MSG, "OPU::add36", "%012Lo (%Ld) + %012Lo (%Ld) ==> carry on result %012Lo (%Ld => %Ld)\n",
+        //log_msg(WARN_MSG, "OPU::add36", "%012llo (%lld) + %012llo (%lld) ==> carry on result %012llo (%lld => %lld)\n",
         //  a, sign36(a), b, sign36(b), result, sign36(result), sign36(result & MASK36));
         result &= MASK36;
     } else {
@@ -3042,13 +3042,13 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
     }
     uint signr = result >> 35;
     //if (signr != wrong_s) {
-    //  log_msg(WARN_MSG, "OPU::add36", "Prior version had incorrect sign %#o instead of %o -- %012Lo (%Ld) + %012Lo (%Ld) ==> %012Lo ==> %012Lo (%Ld => %Ld)\n",
+    //  log_msg(WARN_MSG, "OPU::add36", "Prior version had incorrect sign %#o instead of %o -- %012llo (%lld) + %012llo (%lld) ==> %012llo ==> %012llo (%lld => %lld)\n",
     //      wrong_s, signr, a, sign36(a), b, sign36(b), wrong_r, result, sign36(result), sign36(result & MASK36));
     //}
     IR.zero = result == 0;
     IR.neg = signr;
     if (sign1 == sign2 && signr != sign1) {
-        if(opt_debug) log_msg(DEBUG_MSG, "OPU::add36", "%012Lo (%Ld) + %012Lo (%Ld) ==> overflow on result %012Lo (%Ld)\n",
+        if(opt_debug) log_msg(DEBUG_MSG, "OPU::add36", "%012llo (%lld) + %012llo (%lld) ==> overflow on result %012llo (%lld)\n",
             a, sign36(a), b, sign36(b), result, sign36(result));
         IR.overflow = 1;
         if (IR.overflow_mask == 0) {
@@ -3064,7 +3064,7 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
         // arithmetic on "dl" constant
         if ((a>>18) == 0 && (b>>18) == 0) {
             if (opt_debug || (result>>18) != 0)
-                log_msg(NOTIFY_MSG, "OPU::add36", "%012Lo + %012Lo = %012Lo for ,dl at IC %06o\n", a, b, result, PPR.IC);
+                log_msg(NOTIFY_MSG, "OPU::add36", "%012llo + %012llo = %012llo for ,dl at IC %06o\n", a, b, result, PPR.IC);
             flag_t is_neg = bit18_is_neg(result);
             if (is_neg != IR.neg) {
                 // problems: 017127, 017207, 017267, 017347
@@ -3265,7 +3265,7 @@ static int32 sign18(t_uint64 x)
 {
     if (bit18_is_neg(x)) {
         int32 r = - ((1<<18) - (x&MASK18));
-        // log_msg(DEBUG_MSG, "OPU::sign18", "%#Lo => %#o (%+d decimal)\n", x, r, r);
+        // log_msg(DEBUG_MSG, "OPU::sign18", "%#llo => %#o (%+d decimal)\n", x, r, r);
         return r;
     }
     else
@@ -3412,7 +3412,7 @@ static int do_spri(int n)
     t_uint64 word0, word1;
     spri_to_words(n, &word0, &word1);
     if(opt_debug) log_msg(DEBUG_MSG, "OPU::spri*", "Saving PR[%d]: snr=%#o, rnr=%o, wordno=%#o, bitno=%#o\n", n, AR_PR[n].PR.snr, AR_PR[n].PR.rnr, AR_PR[n].wordno, AR_PR[n].PR.bitno);
-    // log_msg(NOTIFY_MSG, "OPU::spri*", "Saving PR[%d]: { snr=%#o, rnr=%o, wordno=%#o, bitno=%#o} as {%012Lo, %012Lo}\n", n, AR_PR[n].PR.snr, AR_PR[n].PR.rnr, AR_PR[n].wordno, AR_PR[n].PR.bitno, word0, word1);
+    // log_msg(NOTIFY_MSG, "OPU::spri*", "Saving PR[%d]: { snr=%#o, rnr=%o, wordno=%#o, bitno=%#o} as {%012llo, %012llo}\n", n, AR_PR[n].PR.snr, AR_PR[n].PR.rnr, AR_PR[n].wordno, AR_PR[n].PR.bitno, word0, word1);
     return store_pair(TPR.CA, word0, word1);
 }
 
@@ -3450,7 +3450,7 @@ static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, in
         t_uint64 word3;
         if (fetch_word(PPR.IC + 3, &word3) != 0)
             return 1;
-        log_msg(DEBUG_MSG, moi, "word3 = %012Lo\n", word3);
+        log_msg(DEBUG_MSG, moi, "word3 = %012llo\n", word3);
     }
 
     PPR.IC += nargs + 1;
@@ -3648,7 +3648,7 @@ static int op_mvt(const instr_t* ip)
 
     log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
     log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
-    log_msg(DEBUG_MSG, moi, "translation table at %#Lo => %#o\n", word3, addr3);
+    log_msg(DEBUG_MSG, moi, "translation table at %#llo => %#o\n", word3, addr3);
 
     int ret = 0;
 

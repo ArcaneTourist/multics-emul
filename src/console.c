@@ -145,13 +145,13 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
 
         case write_mode: {
 
-            // log_msg(DEBUG_MSG, "CON::iom_io", "Write: word = %012Lo\n", *wordp);
+            // log_msg(DEBUG_MSG, "CON::iom_io", "Write: word = %012llo\n", *wordp);
 
             char buf[80];
             *buf = 0;
             t_uint64 word = *wordp;
             if ((word >> 36) != 0) {
-                log_msg(ERR_MSG, "CON::iom_io", "Word %012Lo has more than 36 bits.\n", word);
+                log_msg(ERR_MSG, "CON::iom_io", "Word %012llo has more than 36 bits.\n", word);
                 cancel_run(STOP_BUG);
                 word &= MASK36;
             }

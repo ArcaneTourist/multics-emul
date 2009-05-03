@@ -323,7 +323,7 @@ int scu_cioc(t_uint64 addr)
         return ret;
     }
     int port = word & 7;
-    log_msg(DEBUG_MSG, "SCU::cioc", "Contents of %Lo are: %Lo => port %d\n", addr, word, port);
+    log_msg(DEBUG_MSG, "SCU::cioc", "Contents of %llo are: %llo => port %d\n", addr, word, port);
     // OK ... what's a connect signal (as opposed to an interrupt?
     // A connect signal does the following (AN70, 8-7):
     //  IOM target: connect strobe to IOM

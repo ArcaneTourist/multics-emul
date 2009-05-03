@@ -243,13 +243,13 @@ static void init_memory_iom()
     // IOM Mailbox, at Base*6
     int mbx = base * 64;
     M[mbx+07] = ((t_uint64) base << 24) | (02 << 18) | 02;      // Fault channel DCW
-    // log_msg(DEBUG_MSG, "SYS", "IOM MBX @%0o: %0Lo\n", mbx+7, M[mbx+7]);
+    // log_msg(DEBUG_MSG, "SYS", "IOM MBX @%#o: %#llo\n", mbx+7, M[mbx+7]);
     M[mbx+010] = 04000;                             // Connect channel LPW -> PCW at 000000
 
     // Channel mailbox, at Base*64 + 4*Chan#
     mbx = (base * 64) + 4 * tape_chan;
     M[mbx+0] = (3<<18) | (2<<12) | 3;                   //  Boot dev LPW -> IDCW @ 000003
-    // log_msg(DEBUG_MSG, "SYS", "Channel MBX @%0o: %0Lo\n", mbx, M[mbx]);
+    // log_msg(DEBUG_MSG, "SYS", "Channel MBX @%0o: %#llo\n", mbx, M[mbx]);
     M[mbx+2] = ((t_uint64) base <<24);                          //  Boot dev SCW -> IOM mailbox
 #endif
 
@@ -380,21 +380,21 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
         if (sw & SWMASK('M')) {
             // M -> instr
             char *instr = print_instr(M[addr]);
-            fprintf(ofile, "%012Lo %s", M[addr], instr);
+            fprintf(ofile, "%012llo %s", M[addr], instr);
         } else if (sw & SWMASK('L')) {
             // L -> LPW
-            fprintf(ofile, "%012Lo %s", M[addr], print_lpw(addr));
+            fprintf(ofile, "%012llo %s", M[addr], print_lpw(addr));
         } else if (sw & SWMASK('P')) {
             // P -> PTW
             char *s = print_ptw(M[addr]);
-            fprintf(ofile, "%012Lo %s", M[addr], s);
+            fprintf(ofile, "%012llo %s", M[addr], s);
         } else if (sw & SWMASK('S')) {
             // S -> SDW
             char *s = print_sdw(M[addr], M[addr+1]);
-            fprintf(ofile, "%012Lo %012Lo %s", M[addr], M[addr+1], s);
+            fprintf(ofile, "%012llo %012llo %s", M[addr], M[addr+1], s);
         } else if (sw & SWMASK('A')) {
             t_uint64 word = M[addr];
-            fprintf(ofile, "%012Lo ", word);
+            fprintf(ofile, "%012llo ", word);
             for (int i = 0; i < 4; ++i) {
                 uint c = word >> 27;
                 word = (word << 9) & MASKBITS(36);
@@ -407,7 +407,7 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
         } else if (sw) {
             return SCPE_ARG;
         } else {
-            fprintf(ofile, "%012Lo", M[addr]);
+            fprintf(ofile, "%012llo", M[addr]);
         }
         fflush(ofile);
         return SCPE_OK;
@@ -467,7 +467,7 @@ t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
 int activate_timer()
 {
     uint32 t;
-    log_msg(DEBUG_MSG, "SYS::clock", "TR is %Ld 0%Lo.\n", reg_TR, reg_TR);
+    log_msg(DEBUG_MSG, "SYS::clock", "TR is %lld %#llo.\n", reg_TR, reg_TR);
     if (bit27_is_neg(reg_TR)) {
         if ((t = sim_is_active(&TR_clk_unit)) != 0)
             log_msg(DEBUG_MSG, "SYS::clock", "TR cancelled with %d time units left.\n", t);
@@ -549,7 +549,7 @@ static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
                 out_msg("ERROR: Non octal digit starting at: %s\n.", cptr);
                 return 0;
             }
-            sscanf(cptr, "%o", &seg);
+            sscanf(cptr, "%o", (unsigned int *) &seg);
             cptr += strspn(cptr, "01234567");
             if (cptr != offsetp) {
 out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);

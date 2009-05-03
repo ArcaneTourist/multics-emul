@@ -278,7 +278,7 @@ static int _scan_seg(uint segno, int msgs)
                 }
             }
             if (bound > 0) {
-                out_msg("Last non-zero word might be at %#o|%#o: %012Lo\n", segno, bound, last);
+                out_msg("Last non-zero word might be at %#o|%#o: %012llo\n", segno, bound, last);
             }
         }
     }
@@ -307,7 +307,7 @@ static int _scan_seg(uint segno, int msgs)
     //if (get_addr(linkage.PR.snr, linkage.wordno, &linkage_addr) != 0)
     //  return 2;
     TPR.TSR = linkage.PR.snr;
-    AR_PR_t defs = {};
+    AR_PR_t defs = { 0, { 0, 0, 0 }, { 0, 0} };
     if (fetch_pair(linkage.wordno, &word0, &word1) != 0)
         return 2;
     if (word0 == 0 && word1 == 0) {
@@ -399,7 +399,7 @@ static int _scan_seg(uint segno, int msgs)
                     if (msgs)
                         out_msg("Text %s: link %o|%#o\n", buf, segno, thing_relp);
                     strcpy(entryp, buf);
-                    symtab_add(segno, thing_relp, -1, symtab_proc, entryname);
+                    symtab_add_entry(segno, thing_relp, -1, entryname);
                 } else if (class == 2) {
                     if (msgs)
                         out_msg("Name is %s; offset is %#o within %s section\n", buf, thing_relp, sect);
@@ -428,13 +428,13 @@ static int _scan_seg(uint segno, int msgs)
                 // snapped link
                 AR_PR_t pr;
                 if (words2its(word0, word1, &pr) != 0)
-                    out_msg("Link pair at %#o: %012Lo %012Lo: snapped link -- bad ptr\n", link, word0, word1);
+                    out_msg("Link pair at %#o: %012llo %012llo: snapped link -- bad ptr\n", link, word0, word1);
                 else
-                    out_msg("Link pair at %#o: %012Lo %012Lo: snapped link %o|%#o\n", link, word0, word1, pr.PR.snr, pr.wordno);
+                    out_msg("Link pair at %#o: %012llo %012llo: snapped link %o|%#o\n", link, word0, word1, pr.PR.snr, pr.wordno);
             } else if ((word0 & 077) == 046) {
                 // unsnapped link
                 uint exp_ptr = word1 >> 18;
-                // out_msg("Link pair at %#o: %012Lo %012Lo: unsnapped link with exp-ptr %#o.\n", link, word0, word1, exp_ptr);
+                // out_msg("Link pair at %#o: %012llo %012llo: unsnapped link with exp-ptr %#o.\n", link, word0, word1, exp_ptr);
                 out_msg("Link pair at %#o: %#o|%#04o: unsnapped link ", link, TPR.TSR, linkage.wordno + link);
                 t_uint64 word2;
                 TPR.TSR = defs.PR.snr;
@@ -445,14 +445,14 @@ static int _scan_seg(uint segno, int msgs)
                 uint offset = word2 >> 18;
                 t_uint64 a, q;
                 if (fetch_word(defs.wordno + offset, &a) != 0) {
-                    out_msg("... exp-word at %o|%o: %012Lo: offset %o|%o => <error>\n", linkage.PR.snr, exp_ptr, word2, TPR.TSR, offset);
+                    out_msg("... exp-word at %o|%o: %012llo: offset %o|%o => <error>\n", linkage.PR.snr, exp_ptr, word2, TPR.TSR, offset);
                     return 2;
                 }
                 if (fetch_word(defs.wordno + offset + 1, &q) != 0) {
-                    out_msg("... exp-word at %o|%o: %012Lo: offset %o|%o => <error>\n", linkage.PR.snr, exp_ptr, word2, TPR.TSR, offset);
+                    out_msg("... exp-word at %o|%o: %012llo: offset %o|%o => <error>\n", linkage.PR.snr, exp_ptr, word2, TPR.TSR, offset);
                     return 2;
                 }
-                // out_msg("\texp-word %012Lo: offset %o => type-pair (%#Lo,%#Lo)\n", word2, offset, a, q);
+                // out_msg("\texp-word %012llo: offset %o => type-pair (%#llo,%#llo)\n", word2, offset, a, q);
                 int exp_offset = word2 & MASK18;
                 int typ = a >> 18;
                 if (typ == 0 || typ > 6) {
@@ -481,7 +481,7 @@ static int _scan_seg(uint segno, int msgs)
                         out_msg("of type %d to %s$%s%+d\n", typ, sname, ename, exp_offset);
                 }
             } else {
-                out_msg("Link pair at %#o: %012Lo %012Lo: unrecognized/ignorable.\n", link, word0, word1);
+                out_msg("Link pair at %#o: %012llo %012llo: unrecognized/ignorable.\n", link, word0, word1);
             }
         }
     }
@@ -649,7 +649,7 @@ int cmd_find(int32 arg, char *buf)
             ++ tailp;
             hi = 0;
             if (strspn(tailp, "01234567     ") == strlen(tailp))
-                (void) sscanf(tailp, "%o", &n);
+                (void) sscanf(tailp, "%o", (unsigned *) &n);
             else {
                 out_msg("Expecting a count after '/'.\n");
                 return 1;
@@ -693,7 +693,7 @@ int cmd_find(int32 arg, char *buf)
         addr = lo;
     } else {
         char dummy;
-        if (sscanf(lo_text, "%o | %o %c", &seg, &offset, &dummy) == 2) {
+        if (sscanf(lo_text, "%o | %o %c", (unsigned *) &seg, (unsigned *) &offset, &dummy) == 2) {
             out_msg("Using seg %o, initial offset %o\n", seg, offset);
             TPR.TSR = seg;
         } else {

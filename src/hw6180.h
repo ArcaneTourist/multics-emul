@@ -317,7 +317,7 @@ typedef struct {
     uint tag;       // td portion of instr tag (we only update this for rpt instructions which is the only time we need it)
 
     /* word 7 */
-    // instr_t IRODD;   /* Instr holding register; odd word of last pair fetched */
+    // instr_t IRODD;   // Instr holding register; odd word of last pair fetched
     t_uint64 IRODD; /* Instr holding register; odd word of last pair fetched */
     
 } ctl_unit_data_t;
@@ -523,6 +523,12 @@ static const t_uint64 MASK18 = ~(~((t_uint64)0)<<18);   // lower 18 bits all one
 #define MASKBITS(x) ( ~(~((t_uint64)0)<<x) )    // lower (x) bits all ones
 
 extern void log_msg(enum log_level, const char* who, const char* format, ...);
+extern int log_ignore_ic_change(void);
+extern int log_notice_ic_change(void);
+extern void log_forget_ic(void);
+
+extern int scan_seg(uint segno, int msgs);  // scan definitions section for procedure entry points
+t_stat cmd_seginfo(int32 arg, char *buf);   // display segment info
 
 /*  Extract (i)th bit of a 36 bit word (held in a uint64). */
 #define bitval36(word,i) ( ((word)>>(35-i)) & (uint64_t) 1 )
@@ -531,17 +537,17 @@ extern void log_msg(enum log_level, const char* who, const char* format, ...);
 #define bitset36(word,i) ( (word) | ( (uint64_t) 1 << (35 - i)) )
 #define bitclear36(word,i) ( (word) & ~ ( (uint64_t) 1 << (35 - i)) )
 
-static inline t_uint64 getbits36(t_uint64 x, int i, int n) {
+static inline t_uint64 getbits36(t_uint64 x, int i, unsigned n) {
     // bit 35 is right end, bit zero is 36th from the right
     int shift = 35-i-n+1;
     if (shift < 0 || shift > 35) {
         log_msg(ERR_MSG, "getbits36", "bad args (%Lo,i=%d,n=%d)\n", x, i, n);
         return 0;
     } else
-        return (x >> shift) & ~ (~0 << n);
+        return (x >> (unsigned) shift) & ~ (~0 << n);
 }
 
-static inline t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
+static inline t_uint64 setbits36(t_uint64 x, int p, unsigned n, t_uint64 val)
 {
     // return x with n bits starting at p set to n lowest bits of val 
     // return (x & ((~0 << (p + 1)) | (~(~0 << (p + 1 - n))))) | ((val & ~(~0 << n)) << (p + 1 - n));
@@ -554,7 +560,7 @@ static inline t_uint64 setbits36(t_uint64 x, int p, int n, t_uint64 val)
         log_msg(ERR_MSG, "setbit36", "bad args\n");
         return 0;
     }
-    mask <<= 36 - p - n;    // shift 1s to proper position; result 0*1{n}0*
+    mask <<= (unsigned) shift;  // shift 1s to proper position; result 0*1{n}0*
             // 0,1 => 35 => 1000... (35 zeros)
             // 1,1 => 34 => 0100... (34 z)
             // 0,2 = 34 => 11000 (34 z)
@@ -625,6 +631,7 @@ extern void execute_instr(void);
 extern char* instr2text(const instr_t* ip);
 extern char* print_instr(t_uint64 word);
 extern void cu_safe_store(void);
+extern int fault_check_group(int group);    // Do faults exist a given or higher priority?
 
 extern int decode_addr(instr_t* ip, t_uint64* addrp);
 extern int decode_ypair_addr(instr_t* ip, t_uint64* addrp);

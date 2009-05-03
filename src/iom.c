@@ -759,7 +759,7 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
 {
     // IOTD, IOTP, IONTP
 
-    log_msg(DEBUG_MSG, "IOW::DO-DDCW", "%012Lo: %s\n", M[addr], dcw2text(dcwp));
+    log_msg(DEBUG_MSG, "IOW::DO-DDCW", "%012llo: %s\n", M[addr], dcw2text(dcwp));
 
     // impossible for (cp == 7); see do_dcw
 
@@ -804,7 +804,7 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
     // Assume that DCW is only in scratchpad (bootload_tape_label.alm rd_tape reuses same DCW on each call)
     M[addr] = setbits36(M[addr], 0, 18, daddr);
     M[addr] = setbits36(M[addr], 24, 12, tally);
-    log_msg(DEBUG_MSG, "IOM::DDCW", "Data DCW update: %012Lo: addr=%0o, tally=%d\n", M[addr], daddr, tally);
+    log_msg(DEBUG_MSG, "IOM::DDCW", "Data DCW update: %012llo: addr=%0o, tally=%d\n", M[addr], daddr, tally);
 #endif
     return ret;
 }
@@ -952,7 +952,7 @@ static void parse_lpw(lpw_t *p, int addr, int is_conn)
 
 int lpw_write(int chan, int chanloc, const lpw_t* p)
 {
-    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o had %012Lo %012Lo\n", chan, chanloc, M[chanloc], M[chanloc+1]);
+    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o had %012llo %012llo\n", chan, chanloc, M[chanloc], M[chanloc+1]);
     lpw_t temp;
     parse_lpw(&temp, chanloc, chan == IOM_CONNECT_CHAN);
     //log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o had: %s\n", chan, chanloc, lpw2text(&temp, chan == IOM_CONNECT_CHAN));
@@ -977,7 +977,7 @@ int lpw_write(int chan, int chanloc, const lpw_t* p)
         word2 = setbits36(word2, 18, 18, p->idcw);
         M[chanloc+1] = word2;
     }
-    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o now %012Lo %012Lo\n", chan, chanloc, M[chanloc], M[chanloc+1]);
+    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o now %012llo %012llo\n", chan, chanloc, M[chanloc], M[chanloc+1]);
     return 0;
 }
 
@@ -1031,7 +1031,7 @@ static int status_service(int chan)
     int addr = getbits36(M[scw], 0, 18);    // absolute
     // log_msg(DEBUG_MSG, "IOM::status", "Writing status for chan %d to 0%o\n", chan, addr);
     log_msg(DEBUG_MSG, "IOM::status", "Writing status for chan %d to 0%o=>0%o\n", chan, scw, addr);
-    log_msg(DEBUG_MSG, "IOM::status", "Status: 0%012Lo 0%012Lo\n", word1, word2);
+    log_msg(DEBUG_MSG, "IOM::status", "Status: 0%012llo 0%012llo\n", word1, word2);
     log_msg(DEBUG_MSG, "IOM::status", "Status: (0)t=Y, (1)pow=%d, (2..5)major=0%02o, (6..11)substatus=0%02o, (12)e/o=Z, (13)marker=Y, (14..15)Z, 16(Z?), 17(Z)\n",
         chan_status.power_off, chan_status.major, chan_status.substatus);
     int lq = getbits36(M[scw], 18, 2);

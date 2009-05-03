@@ -341,10 +341,14 @@ int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, 
         saved_CA = TPR.CA;
         TPR.CA = 0;
         uint o = offset;
+        uint bits = *bitnop;
         register_mod(reg, offset, bitnop, nbits);
         offset = TPR.CA;
         TPR.CA = saved_CA;
-        log_msg(DEBUG_MSG, moi, "Register mod 0%o: offset was 0%o, now 0%o\n", reg, o, offset);
+        if (bits != *bitnop || bits != 0 || *bitnop != 0)
+            log_msg(DEBUG_MSG, moi, "Register mod 0%o: offset was 0%o, now 0%o; bit offset was %d, now %d.\n", reg, o, offset, bits, *bitnop);
+        else
+            log_msg(DEBUG_MSG, moi, "Register mod 0%o: offset was 0%o, now 0%o\n", reg, o, offset);
         //log_msg(WARN_MSG, moi, "Auto-breakpoint\n");
         //cancel_run(STOP_IBKPT);
     }
@@ -609,7 +613,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
             } else
                 if (addr_append(&word) != 0)
                     return 1;
-            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "RI: fetch:  word at TPR.CA=0%o is 0%Lo\n", TPR.CA, word);
+            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "RI: fetch:  word at TPR.CA=0%o is 0%llo\n", TPR.CA, word);
             if (cu.rpt) {
                 // ignore tag and don't allow more indirection
                 return 0;
@@ -717,7 +721,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 t_uint64 word;
                 if (addr_append(&word) != 0)
                     return 1;
-                if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR", "fetched:  word at TPR.CA=0%o is 0%Lo:\n",
+                if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR", "fetched:  word at TPR.CA=0%o is 0%llo:\n",
                     TPR.CA, word);
                 ca_tempp->tag = word & MASKBITS(6);
                 if (TPR.CA % 2 == 0 && (ca_tempp->tag == 041 || ca_tempp->tag == 043)) {
@@ -828,7 +832,7 @@ static void register_mod(uint td, uint off, uint *bitnop, int nbits)
         case 3: // ,du
             TPR.is_value = td;  // BUG: Use "direct operand flag" instead
             TPR.value = ((t_uint64) TPR.CA) << 18;
-            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Mod du: Value from offset 0%o is 0%Lo\n", TPR.CA, TPR.value);
+            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Mod du: Value from offset 0%o is 0%llo\n", TPR.CA, TPR.value);
             break;
         case 4: // PPR.IC
             TPR.CA = off + PPR.IC;  // BUG: IC assumed to be unsigned
@@ -840,7 +844,7 @@ static void register_mod(uint td, uint off, uint *bitnop, int nbits)
             TPR.CA &= MASK18;
             if (opt_debug) {
                 uint a = getbits36(reg_A, 18, 18);
-                log_msg(DEBUG_MSG, "APU", "Tm=REG,Td=%02o: offset 0%o(%d) + A=0%Lo=>0%o(%+d decimal) ==> 0%o=>0%o(%+d)\n",
+                log_msg(DEBUG_MSG, "APU", "Tm=REG,Td=%02o: offset 0%o(%d) + A=0%llo=>0%o(%+d decimal) ==> 0%o=>0%o(%+d)\n",
                     td, off, off, reg_A, a, sign18(a), TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
             }
             break;
@@ -852,7 +856,7 @@ static void register_mod(uint td, uint off, uint *bitnop, int nbits)
         case 7: // ,dl
             TPR.is_value = td;  // BUG: Use "direct operand flag" instead
             TPR.value = TPR.CA; // BUG: Should we sign?
-            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Mod dl: Value from offset 0%o is 0%Lo\n", TPR.CA, TPR.value);
+            if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Mod dl: Value from offset 0%o is 0%llo\n", TPR.CA, TPR.value);
             break;
         case 010:
         case 011:
@@ -903,7 +907,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         if (ret != 0)
             return ret;
         if (word01 != word1) {
-            log_msg(WARN_MSG, "APU:ITS/ITP", "Refetched word at %#o has changed.   Was %012Lo, now %012Lo.\n", word01, word1);
+            log_msg(WARN_MSG, "APU:ITS/ITP", "Refetched word at %#o has changed.   Was %012llo, now %012llo.\n", word01, word1);
             cancel_run(STOP_BUG);
         }
         set_addr_mode(APPEND_mode);
@@ -1175,7 +1179,7 @@ static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uin
     }
     int ret = page_in_page(SDWp, offset, perm_mode, addrp, minaddrp, maxaddrp);
     if (ret != 0) {
-        log_msg(WARN_MSG, moi, "page_in_page returned non zero.  Segno 0%o, offset 0%o(%d)\n", segno, offset);
+        log_msg(WARN_MSG, moi, "page_in_page returned non zero.  Segno 0%o, offset 0%o(%d)\n", segno, offset, offset);
     }
     return ret;
 }

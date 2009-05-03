@@ -60,7 +60,7 @@ eis_mf_t* parse_mf(uint mf, eis_mf_t* mfp)
 int get_eis_indir_addr(t_uint64 word, uint* addrp)
 {
     // Could be called by other EIS routines when an MF specifes that an indirect pointer to
-    // and operand descriptor should be expected. -- But isn't.
+    // an operand descriptor should be expected. -- But isn't.
     // Only called by OPU for those EIS multi-word instructions that use an indirect
     // pointer to specify the address of an operand word (for example scm).
     const char *moi = "APU::EIS-indir-ptr";
@@ -75,10 +75,10 @@ int get_eis_indir_addr(t_uint64 word, uint* addrp)
         uint pr = y >> 15;
         int32 offset = y & MASKBITS(15);
         int32 soffset = sign15(offset);
-        log_msg(NOTIFY_MSG, moi, "Indir word %012Lo: pr=%#o, offset=%#o(%d); REG(Td)=%#o\n", word, pr, offset, soffset, td); 
+        log_msg(NOTIFY_MSG, moi, "Indir word %012llo: pr=%#o, offset=%#o(%d); REG(Td)=%#o\n", word, pr, offset, soffset, td); 
     } else {
         // use 18 bit addr
-        log_msg(NOTIFY_MSG, moi, "Indir word %012Lo: addr=%#o(%d); REG(Td)=%#o\n", word, y, sign18(y), td); 
+        log_msg(NOTIFY_MSG, moi, "Indir word %012llo: addr=%#o(%d); REG(Td)=%#o\n", word, y, sign18(y), td); 
     }
 
     uint bitno;
@@ -124,10 +124,10 @@ static int fetch_mf_op(uint opnum, const eis_mf_t* mfp, t_uint64* wordp)
             int32 soffset = sign15(offset);
             // PR[pr]
             // generalize once we have an example.  Call get_mf_an_addr()
-            log_msg(ERR_MSG, "APU", "Indir word %012Lo: pr=%#o, offset=%#o(%d); REG(Td)=%#o\n", *wordp, pr, offset, soffset, td); 
+            log_msg(ERR_MSG, "APU", "Indir word %012llo: pr=%#o, offset=%#o(%d); REG(Td)=%#o\n", *wordp, pr, offset, soffset, td); 
         } else {
             // use 18 bit addr in all words -- fetch_word will handle
-            log_msg(ERR_MSG, "APU", "Indir word %012Lo: offset=%#o(%d); REG(Td)=%#o\n", *wordp, addr, sign18(addr), td); 
+            log_msg(ERR_MSG, "APU", "Indir word %012llo: offset=%#o(%d); REG(Td)=%#o\n", *wordp, addr, sign18(addr), td); 
         }
         // enum atag_tm tm = atag_r;
         // TPR.CA = 0;
@@ -318,7 +318,7 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
                     cancel_run(STOP_BUG);
                 }
                 if (nbits != 9) {
-                    log_msg(WARN_MSG, "APU", "MF len: nbits=%d, reg modifier 05: A=%#Lo => %#o\n", nbits, reg_A, *np);
+                    log_msg(WARN_MSG, "APU", "MF len: nbits=%d, reg modifier 05: A=%#llo => %#o\n", nbits, reg_A, *np);
                     cancel_run(STOP_IBKPT);
                 }
                 return;
@@ -337,7 +337,7 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
                     cancel_run(STOP_BUG);
                 }
                 if (nbits != 9) {
-                    log_msg(WARN_MSG, "APU", "MF len: nbits=%d, reg modifier 06: A=%#Lo => %#o\n", nbits, reg_A, *np);
+                    log_msg(WARN_MSG, "APU", "MF len: nbits=%d, reg modifier 06: A=%#llo => %#o\n", nbits, reg_A, *np);
                     cancel_run(STOP_IBKPT);
                 }
                 return;
@@ -421,6 +421,7 @@ static int get_eis_an_base(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
 
     if (descp->cn != 0 || descp->bitno != 0) {
         // Descriptor initially points to a non-zero bit offset
+        int curr_bit = descp->curr.bitpos;
         descp->curr.bitpos += descp->cn * descp->nbits + descp->bitno;
         if (descp->curr.bitpos >= 36) {
             log_msg(NOTIFY_MSG, moi, "Too many offset bits for a single word.  Base address is %#o with bit offset %d; CN offset is %d (%d bits).  Advancing to next word.\n", descp->area.addr, descp->area.bitpos, descp->cn, descp->cn * descp->nbits);
@@ -435,9 +436,9 @@ static int get_eis_an_base(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
         }
         if (opt_debug>0) {
             if (descp->bitno == 0)
-                log_msg(DEBUG_MSG, moi, "Cn is %d, so initial bitpos becomes %d\n", descp->cn, descp->curr.bitpos);
+                log_msg(DEBUG_MSG, moi, "Cn is %d, addr is bit %d, so initial bitpos becomes %d\n", descp->cn, curr_bit, descp->curr.bitpos);
             else
-                log_msg(DEBUG_MSG, moi, "Cn is %d and bitno is %d, so initial bitpos becomes %d\n", descp->cn, descp->bitno, descp->curr.bitpos);
+                log_msg(DEBUG_MSG, moi, "Cn is %d, addr is bit %d, and bitno is %d, so initial bitpos becomes %d\n", descp->cn, curr_bit, descp->bitno, descp->curr.bitpos);
         }
     }
 
@@ -555,7 +556,7 @@ static int get_eis_an_fwd(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *ni
             opt_debug = saved_debug;
             return 1;
         }
-        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Fetched word at %#o %012Lo\n", descp->curr.addr, descp->word);
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Fetched word at %#o %012llo\n", descp->curr.addr, descp->word);
 
         if (advance)
             ++ descp->curr.addr;
@@ -570,7 +571,7 @@ static int get_eis_an_fwd(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *ni
 
     *nib = getbits36(descp->word, descp->curr.bitpos, descp->nbits);
     //if (opt_debug)
-    //  log_msg(DEBUG_MSG, moi, "%dbit char at bit %d of word %012Lo, value is %#o\n", descp->nbits, descp->bitpos, descp->word, *nib);
+    //  log_msg(DEBUG_MSG, moi, "%dbit char at bit %d of word %012llo, value is %#o\n", descp->nbits, descp->bitpos, descp->word, *nib);
     if (advance) {
         -- descp->n;
         descp->curr.bitpos += descp->nbits;
@@ -663,7 +664,7 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
             opt_debug = saved_debug;
             return 1;
         }
-        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Fetched word at %#o %012Lo\n", descp->curr.addr, descp->word);
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Fetched word at %#o %012llo\n", descp->curr.addr, descp->word);
 
         if (descp->first)
             descp->first = 0;
@@ -672,7 +673,7 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
 
     *nib = getbits36(descp->word, descp->curr.bitpos, descp->nbits);
     if (opt_debug)
-        log_msg(DEBUG_MSG, moi, "%dbit char at bit %d of word %012Lo, value is %#o\n", descp->nbits, descp->curr.bitpos, descp->word, *nib);
+        log_msg(DEBUG_MSG, moi, "%dbit char at bit %d of word %012llo, value is %#o\n", descp->nbits, descp->curr.bitpos, descp->word, *nib);
     -- descp->n;
     descp->curr.bitpos -= descp->nbits;
     opt_debug = saved_debug;
@@ -729,7 +730,7 @@ static int put_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib, 
                 return 1;
             }
             //opt_debug = 1;
-            if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Fetched target word %012Lo from addr %#o because output starts at bit %d.\n", descp->word, descp->curr.addr, descp->curr.bitpos);
+            if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Fetched target word %012llo from addr %#o because output starts at bit %d.\n", descp->word, descp->curr.addr, descp->curr.bitpos);
             opt_debug = saved_debug;
         }
         descp->first = 0;
@@ -748,7 +749,7 @@ static int put_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib, 
     t_uint64 tmp = descp->word;
     descp->word = setbits36(descp->word, descp->curr.bitpos, descp->nbits, nib);
     if (opt_debug > 1)
-        log_msg(DEBUG_MSG, moi, "Setting %d-bit char at position %2d of %012Lo to %#o: %012Lo\n",
+        log_msg(DEBUG_MSG, moi, "Setting %d-bit char at position %2d of %012llo to %#o: %012llo\n",
             descp->nbits, descp->curr.bitpos, tmp, nib, descp->word);
 
     if (advance) {
@@ -758,7 +759,7 @@ static int put_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib, 
         if (descp->curr.bitpos == 36) {
             // Word is full, so output it
             // Note: Bitno is irrelevent -- if necessary, we folded in the first word
-            if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Storing %012Lo to addr=%#o\n", descp->word, descp->curr.addr);
+            if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Storing %012llo to addr=%#o\n", descp->word, descp->curr.addr);
             if (descp->curr.addr > descp->area.max_addr) {
                 log_msg(DEBUG_MSG, moi, "Address %o is past segment or page range of %#o .. %#o\n", descp->curr.addr, descp->area.min_addr, descp->area.max_addr);
                 if (get_eis_an_next_page(mfp, descp) != 0) {
@@ -828,11 +829,11 @@ int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
         }
         t_uint64 tmp = descp->word;
         descp->word = setbits36(descp->word, descp->curr.bitpos, 36 - descp->curr.bitpos, word);
-        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Combined buffered dest %012Lo with fetched %012Lo: %012Lo\n", tmp, word, descp->word);
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Combined buffered dest %012llo with fetched %012llo: %012llo\n", tmp, word, descp->word);
     }
 
     //opt_debug = 1;
-    if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Storing %012Lo to addr=%#o.\n", descp->word, descp->curr.addr);
+    if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Storing %012llo to addr=%#o.\n", descp->word, descp->curr.addr);
     opt_debug = 0;
     if (store_abs_word(descp->curr.addr, descp->word) != 0) {
         log_msg(WARN_MSG, moi, "Failed.\n");
@@ -895,7 +896,7 @@ int addr_mod_eis_addr_reg(instr_t *ip)
     reg_mod(td, 0);     // BUG: what does reg mod mean for these instr?
     if (td != 0) {
         if (TPR.is_value)
-            log_msg(DEBUG_MSG, "APU", "Reg mod for EIS yields value %#Lo\n", TPR.value);
+            log_msg(DEBUG_MSG, "APU", "Reg mod for EIS yields value %#llo\n", TPR.value);
         else
             log_msg(DEBUG_MSG, "APU", "Reg mod for EIS yields %#o.\n", TPR.CA);
     }

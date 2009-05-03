@@ -25,11 +25,11 @@ void decode_instr(instr_t *ip, t_uint64 word);
 
 static t_uint64 gbits36(t_uint64 x, int i, int n) {
     // bit 35 is right end, bit zero is 36th from the left
-    printf("getbits(%012Lo,%d,%d): ", x, i, n);
+    printf("getbits(%012llo,%d,%d): ", x, i, n);
     t_uint64 shifted = (x >> (35-i-n+1));
     t_uint64 mask = ~ (~0<<n);
     t_uint64 result = shifted & mask;
-    printf("%012Lo & %012Lo = %12Lo\n", shifted, mask, result);
+    printf("%012llo & %012llo = %12llo\n", shifted, mask, result);
     // return (x >> (35-i+n-1)) & ~ (~0 << n);
     return result;
 }
@@ -62,7 +62,7 @@ exit(1);
 int tbit(t_uint64 word, const char *tag, int pos, int nbit)
 {
     t_uint64 result = gbits36(word, pos, nbit);
-    printf("%s: bits %d..%d: %Lo\n",
+    printf("%s: bits %d..%d: %llo\n",
         tag, pos, pos+nbit-1, result);
     return 0;
 }
@@ -270,8 +270,8 @@ void anal36 (const char* tag, t_uint64 word)
     nines[2] = (word >> 9) & 0777;
     nines[1] = (word >> 18) & 0777;
     nines[0] = (word >> 27) & 0777;
-    // printf("%s: %012Lo octal, %Lu decimal\n", tag, word, word);
-    printf("%s: %012Lo", tag, word);
+    // printf("%s: %012llo octal, %llu decimal\n", tag, word, word);
+    printf("%s: %012llo", tag, word);
     if (word == magic) {
         printf(" <MAGIC>");
     }
