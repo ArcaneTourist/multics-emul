@@ -1095,9 +1095,9 @@ int store_appended(uint offset, t_uint64 word)
 
 //=============================================================================
 
-void cmd_dump_vm()
+int cmd_dump_vm(int32 arg, char *buf)
 {
-    // Dump VM info -- However, we only know about what's in the cache registers
+    // Dump VM info -- display the cache registers
 
     restore_from_simh();    // in case DSBR or other vars were updated
 
@@ -1132,6 +1132,7 @@ void cmd_dump_vm()
             sdwp->priv ? 'Y' : 'N', sdwp->u ? 'Y' : 'N', sdwp->g ? 'Y' : 'N',
             sdwp->c ? 'Y' : 'N', sdwp->cl);
     }
+    return 0;
 }
 
 //=============================================================================

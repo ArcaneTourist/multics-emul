@@ -466,9 +466,9 @@ uint32 ncycles = 0;
 ninstr = 0;
     uint32 start = sim_os_msec();
 
-    if (opt_debug && sim_interval > 128) {
+    if (opt_debug && sim_interval > 32) {
         // debug mode is slow, so be more responsive to keyboard interrupt
-        sim_interval = 128;
+        sim_interval = 32;
     }
     while (reason == 0) {   /* loop until halted */
         if (sim_interval <= 0) { /* check clock queue */
@@ -1967,9 +1967,8 @@ static void ic_history_add()
     }
 }
 
-void cmd_dump_history()
+int cmd_dump_history(int32 arg, char *buf)
 {
-    t_symtab_ent *source = 0;
     char *prior = 0;
     char *unknown = "unknown";
     for (int wrapped = ic_hist_wrapped; wrapped >= 0; --wrapped) {
@@ -1984,24 +1983,31 @@ void cmd_dump_history()
         for (int i = start; i < end; ++i) {
             char icbuf[80];
             ic2text(icbuf, ic_hist[i].addr_mode, ic_hist[i].seg, ic_hist[i].ic);
-            source = symtab_find((ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1, ic_hist[i].ic, symtab_file | symtab_proc);
+            t_symtab_ent *source = symtab_find((ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1, ic_hist[i].ic, symtab_file | symtab_proc);
             // BUG: do line number
             char *name = source ? (source->ename) ? source->ename : source->fname : unknown;
             if (prior != name) {
-                int offset = (source) ? (int) ic_hist[i].ic - source->addr_lo : 0;
-                if (offset == 0 || !(source->types & symtab_proc))
-                    out_msg("IC: %s: %-60s %s\n", icbuf, instr2text(&ic_hist[i].instr), name);
-                else {
-                    char sign = (offset < 0) ? '-' : '+';
-                    if (sign == '-')
-                        offset = - offset;
-                    out_msg("IC: %s: %-60s %s %c%#o\n", icbuf, instr2text(&ic_hist[i].instr), name, sign, offset);
+                t_symtab_ent *source_line = symtab_find((ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1, ic_hist[i].ic, symtab_line);
+                if (source_line) {
+                    out_msg("IC: %s: %-60s %s, line %d\n", icbuf, instr2text(&ic_hist[i].instr), name, source_line->line_no);
+                    out_msg("\tline %d: %s\n", source_line->line_no, source_line->line);
+                } else {
+                    int offset = (source) ? (int) ic_hist[i].ic - source->addr_lo : 0;
+                    if (offset == 0 || !(source->types & symtab_proc))
+                        out_msg("IC: %s: %-60s %s\n", icbuf, instr2text(&ic_hist[i].instr), name);
+                    else {
+                        char sign = (offset < 0) ? '-' : '+';
+                        if (sign == '-')
+                            offset = - offset;
+                        out_msg("IC: %s: %-60s %s %c%#o\n", icbuf, instr2text(&ic_hist[i].instr), name, sign, offset);
+                    }
                 }
                 prior = name;
             } else
                 out_msg("IC: %s: %-60s\n", icbuf, instr2text(&ic_hist[i].instr));
         }
     }
+    return 0;
 }
 
 
@@ -2058,7 +2064,7 @@ static void show_location(int show_source_lines)
         source_changed = source != NULL;
     }
 
-    if (show_source_lines) {
+    if (show_source_lines && (opt_debug || cpu.cycle != FETCH_cycle)) {
         t_symtab_ent *source_line = symtab_find(seg, PPR.IC, symtab_line);
         if (source_line != NULL) {
             // Note that if we have a source line, we also expect to have a "proc" entry
@@ -2073,7 +2079,11 @@ static void show_location(int show_source_lines)
                         log_msg(DEBUG_MSG, "MAIN", "Source unknown\n");
                 }
             }
-            out_msg("Source:  Line %5d:  %s\n", source_line->line_no, source_line->line);
+            if (source) {
+                char *name = (source->types & symtab_proc) ? source->ename : source->fname;
+                out_msg("Source:  %s, %5d:  %s\n", name, source_line->line_no, source_line->line);
+            } else
+                out_msg("Source:  Line %5d:  %s\n", source_line->line_no, source_line->line);
         }
     }
 

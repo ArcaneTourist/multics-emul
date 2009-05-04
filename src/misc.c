@@ -580,7 +580,6 @@ static char *bytes2text(const unsigned char *s, int n)
 }
 #endif
 
-extern t_addr (*sim_vm_parse_addr)(DEVICE *, char *, char **);  // BUG: move to hdr
 int cmd_find(int32 arg, char *buf)
 {
     if (*buf == 0) {
@@ -787,4 +786,47 @@ int cmd_find(int32 arg, char *buf)
     TPR.TSR = saved_seg;
     set_addr_mode(saved_amode);
     return 0;
+}
+
+static int listing_segno = -1;
+
+static int consume(int lineno, unsigned loc, const char *line)
+{
+    return symtab_add_line(listing_segno, loc, loc, lineno, line);
+}
+
+int cmd_load_listing(int32 arg, char *buf)
+{
+    if (*buf == 0) {
+        out_msg("USAGE xlist <segment number> <pathname>\n");
+        return 1;
+    }
+    char *s = buf + strspn(buf, " \t");
+    int n = strspn(buf, "01234567");
+    char sv = buf[n];
+    buf[n] = 0;
+    unsigned segno;
+    char c;
+    if (sscanf(s, "%o %c", &segno, &c) != 1) {
+        out_msg("xlist: Expecting a octal segment number.\n");
+        buf[n] = sv;
+        return 1;
+    }
+    buf[n] = sv;
+    s += n;
+    s += strspn(s, " \t");
+    listing_segno = segno;
+
+    FILE *f;
+    if ((f = fopen(s, "r")) == NULL) {
+        perror(s);
+        return 1;
+    }
+
+    int ret = listing_parse(f, consume);
+    if (fclose(f) != 0) {
+        perror(s);
+        ret = -1;
+    }
+    return ret;
 }

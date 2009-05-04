@@ -5,9 +5,6 @@
 #include "hw6180.h"
 #include <ctype.h>
 
-extern uint32 sim_brk_types, sim_brk_dflt, sim_brk_summ; /* breakpoint info */
-extern t_addr (*sim_vm_parse_addr)(DEVICE *, char *, char **);
-extern void (*sim_vm_fprint_addr)(FILE *, DEVICE *, t_addr);
 static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr);
 static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr addr);
 
@@ -61,16 +58,14 @@ const char *sim_stop_messages[] = {
     0
 };
 
-static int vmdump(int32 arg, char *buf);
-static int history(int32 arg, char *buf);
-static int seginfo(int32 arg, char *buf);
 extern CTAB *sim_vm_cmd;
 static struct sim_ctab sim_cmds[] =  {
-    { "XSYMTAB",  symtab_parse, 0, "xsymtab                  define symtab entries\n" },
-    { "XVMDUMP",  vmdump, 0,       "xvmdump                  dump virtual memory caches\n" },
-    { "XHISTORY", history, 0,      "xhistory                 display recent instruction counter values\n" },
-    { "XSEGINFO", seginfo, 0,      "xseginfo                 walk segment linkage table\n" },
-    { "XFIND",    cmd_find, 0,     "xfind                    search\n" },
+    { "XSYMTAB",  cmd_symtab_parse, 0, "xsymtab                  define symtab entries\n" },
+    { "XVMDUMP",  cmd_dump_vm, 0,      "xvmdump                  dump virtual memory caches\n" },
+    { "XHISTORY", cmd_dump_history, 0, "xhistory                 display recent instruction counter values\n" },
+    { "XSEGINFO", cmd_seginfo, 0,      "xseginfo                 walk segment linkage table\n" },
+    { "XFIND",    cmd_find, 0,         "xfind                    search memory for string\n" },
+    { "XLIST",    cmd_load_listing, 0, "xlist                    load pl1 listing\n" },
     { 0, 0, 0, 0}
 };
 
@@ -625,21 +620,4 @@ out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
 static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr addr)
 {
     fprintf(stream, "%06o", addr);
-}
-
-static int vmdump(int32 arg, char *buf)
-{
-    cmd_dump_vm();
-    return 0;
-}
-
-static int history(int32 arg, char *buf)
-{
-    cmd_dump_history();
-    return 0;
-}
-
-static int seginfo(int32 arg, char *buf)
-{
-    return cmd_seginfo(arg, buf);
 }

@@ -1,11 +1,11 @@
 include Makefile.defs
 
 
-multics.a: hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o bits.o apu.o eis_mw_desc.o scu.o iom.o mt.o math.o console.o symtab.o
+multics.a: hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o bits.o apu.o eis_mw_desc.o scu.o iom.o mt.o math.o console.o symtab.o listing.o
 	ar cr $@ $?
 
 wc:
-	wc hw6180.h symtab.h bits.h hw6180_cpu.c hw6180_sys.c opcode_text.c misc.c opu.c bits.c apu.c eis_mw_desc.c scu.c iom.c mt.c math.c console.c symtab.c
+	wc hw6180.h symtab.h bits.h hw6180_cpu.c hw6180_sys.c opcode_text.c misc.c opu.c bits.c apu.c eis_mw_desc.c scu.c iom.c mt.c math.c console.c symtab.c listing.c
 
 opcode-count:
 	@echo `grep -n 'case opcode._' opu.c | grep -cv ' + 0:'` of `grep -c 'opcode._.*=' opcodes.h`
@@ -27,6 +27,7 @@ mt.o: *.h
 math.o: *.h
 console.o: *.h
 symtab.o: *.h
+listing.o: *.h
 
 bit-test.o: *.h
 bit-test: bit-test.o bits.o

@@ -1,5 +1,10 @@
 #include "sim_defs.h"
 
+/* These are from SIMH, but not listed in sim_defs.h */
+extern t_addr (*sim_vm_parse_addr)(DEVICE *, char *, char **);
+extern void (*sim_vm_fprint_addr)(FILE *, DEVICE *, t_addr);
+extern uint32 sim_brk_types, sim_brk_dflt, sim_brk_summ; /* breakpoint info */
+
 /* Additions to SIMH -- may conflict with future versions of SIMH */
 #define REG_USER1 040000000
 #define REG_USER2 020000000
@@ -70,7 +75,7 @@ enum log_level { DEBUG_MSG, NOTIFY_MSG, WARN_MSG, ERR_MSG };
 #define DN355_MBX_LOW 03400
 #define DN355_MBX_LEN 03000
 
-#define ARRAY_SIZE(a) ( sizeof(a) / sizeof(a[0]) )
+#define ARRAY_SIZE(a) ( sizeof(a) / sizeof((a)[0]) )
 
 
 // ============================================================================
@@ -616,9 +621,10 @@ extern void log_msg(enum log_level, const char* who, const char* format, ...);
 extern void out_msg(const char* format, ...);
 
 extern void restore_from_simh(void);    // SIMH has a different form of some internal variables
-extern void cmd_dump_history(void);
+extern int cmd_dump_history(int32 arg, char *buf);
 extern int cmd_find(int32 arg, char *buf);
-void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic);
+extern int cmd_load_listing(int32 arg, char *buf);
+extern void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic);
 
 extern void cancel_run(enum sim_stops reason);
 extern void fault_gen(enum faults);
@@ -658,7 +664,7 @@ extern int store_yblock16(uint addr, const t_uint64 *wordsp);
 
 extern void mpy(t_int64 a, t_int64 b, t_uint64* hip, t_uint64 *lowp);
 
-extern void cmd_dump_vm(void);
+extern int cmd_dump_vm(int32 arg, char *buf);
 extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
 extern int addr_mod(const instr_t *ip);
 extern SDW_t* get_sdw();

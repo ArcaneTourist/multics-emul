@@ -11,7 +11,7 @@
 #include "sim_defs.h"
 #include "symtab.h"
 
-#if 1
+#if 0
 static int consume(int lineno, unsigned loc, const char *line)
 {
     printf("Consuming line %d at loc %o: %s<<<\n", lineno, loc, line);
@@ -34,7 +34,7 @@ static int add_line(char ***pool, size_t *max, int lineno, const char *line)
         char **newpool = calloc(*max * 2, sizeof(*newpool));
         if (newpool == NULL)
             return -1;
-        memcpy(newpool, *pool, *max);
+        memcpy(newpool, *pool, *max * sizeof(*newpool));
         *max *= 2;
         free(*pool);
         *pool = newpool;
@@ -52,14 +52,18 @@ static int add_line(char ***pool, size_t *max, int lineno, const char *line)
 
 int listing_parse(FILE *f, int(*consumer)(int lineno, unsigned loc, const char *line))
 {
-    char lbuf[200];
+    char lbuf[500];
     char **lines;
     size_t maxlines;
     unsigned nlines;
     
     maxlines = 400;
-    if ((lines = malloc(maxlines * sizeof(*lines))) == NULL)
+    if ((lines = malloc(maxlines * sizeof(*lines))) == NULL) {
+        int e = errno;
+        fprintf(stderr, "listing_parse: malloc error.\n");
+        errno = e;
         return -1; 
+    }
 
     int seen_ll_hdr = 0;    // Seen the "LINE LOC LINE LOC ..." header ?
     int source_finished = 0;    // Seen something that says no more source (just statics and info)
@@ -114,8 +118,12 @@ int listing_parse(FILE *f, int(*consumer)(int lineno, unsigned loc, const char *
                     char dummy;
                     if (sscanf(lbuf, "%d %c", &lineno, &c) == 1) {
                         lbuf[9] = c;
-                        if (add_line(&lines, &maxlines, lineno, lbuf + 9) == -1)
+                        if (add_line(&lines, &maxlines, lineno, lbuf + 9) == -1) {
+                            int e = errno;
+                            fprintf(stderr, "listing_parse: error saving line.\n");
+                            errno = e;
                             return -1;
+                        }
                     } else {
                         // probably an included line with multiple line numbers
                         lbuf[9] = c;
@@ -165,6 +173,9 @@ int listing_parse(FILE *f, int(*consumer)(int lineno, unsigned loc, const char *
     }
 
     if (ferror(f)) {
+        int e = errno;
+        fprintf(stderr, "listing_parse: error reading file.\n");
+        errno = e;
         return -1;
     }
     return 0;

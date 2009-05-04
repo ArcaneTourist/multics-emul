@@ -2716,7 +2716,7 @@ static int do_an_op(instr_t *ip)
                     return 1;
                 } else {
                     log_msg(WARN_MSG, "OPU::dis", "DIS unimplemented.   Continuing after history dump.\n");
-                    cmd_dump_history();
+                    cmd_dump_history(-1, NULL);
                     return 0;
                 }
 
