@@ -2908,9 +2908,9 @@ static int do_an_op(instr_t *ip)
             // opcode1_scd unimplemented -- scan characters double
             // opcode1_scdr unimplemented -- scan characters double in reverse
             case opcode1_scm: { // scan with mask
-                extern DEVICE cpu_dev; ++opt_debug; ++ cpu_dev.dctrl;
+                // extern DEVICE cpu_dev; ++opt_debug; ++ cpu_dev.dctrl;
                 int ret = op_scm(ip);
-                --opt_debug; --cpu_dev.dctrl;
+                //--opt_debug; --cpu_dev.dctrl;
                 return ret;
             }
             
@@ -2940,9 +2940,7 @@ static int do_an_op(instr_t *ip)
             // mvne unimplemented -- move numeric edited
 
             case opcode1_csl: {     // combine bit strings left
-                extern DEVICE cpu_dev; ++opt_debug; ++ cpu_dev.dctrl;
                 int ret = op_csl(ip);
-                --opt_debug; --cpu_dev.dctrl;
                 return ret;
             }
             
@@ -3772,7 +3770,7 @@ static int op_scm(const instr_t* ip)
     uint mf2bits = ip->addr & MASKBITS(7);
     eis_mf_t mf2;
     (void) parse_mf(mf2bits, &mf2);
-    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+    log_msg(NOTIFY_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
 
     t_uint64 word1, word2, word3;
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, &word3) != 0)
@@ -3793,10 +3791,10 @@ static int op_scm(const instr_t* ip)
     //uint y3_indir = (word3 & 0100) != 0;
     //uint y3_reg = word3 & 017;
     
-    log_msg(DEBUG_MSG, moi, "mask = %03o\n", mask);
-    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
-    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
-    log_msg(DEBUG_MSG, moi, "y3: %06o\n", y3);
+    log_msg(NOTIFY_MSG, moi, "mask = %03o\n", mask);
+    log_msg(NOTIFY_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
+    log_msg(NOTIFY_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
+    log_msg(NOTIFY_MSG, moi, "y3: %06o\n", y3);
 
     int ret = 0;
 
@@ -3806,9 +3804,9 @@ static int op_scm(const instr_t* ip)
         return 1;
     }
     if (isprint(test_nib))
-        log_msg(DEBUG_MSG, moi, "test char: %03o '%c'\n", test_nib, test_nib);
+        log_msg(NOTIFY_MSG, moi, "test char: %03o '%c'\n", test_nib, test_nib);
     else
-        log_msg(DEBUG_MSG, moi, "test char: %03o\n", test_nib);
+        log_msg(NOTIFY_MSG, moi, "test char: %03o\n", test_nib);
     uint n = desc1.n;
     uint i;
     for (i = 0; i < n; ++i) {
@@ -3850,8 +3848,9 @@ static int op_csl(const instr_t* ip)
     uint mf2bits = ip->addr & MASKBITS(7);
     eis_mf_t mf2;
     (void) parse_mf(mf2bits, &mf2);
-    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
-    log_msg(DEBUG_MSG, moi, "bool oper: %#o =b%d%d%d%d, fill: %d\n", bolr, (bolr>>3)&1, (bolr>>2)&1, (bolr>>1)&1, bolr&1, fill);
+    log_msg(NOTIFY_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+    char *ops[16] = { "clear", "and", "x&!y", "x", "!x&y", "y", "xor", "or", "!or", "!xor", "!y", "!x&y", "!x", "x|!y", "nand", "set" };
+    log_msg(NOTIFY_MSG, moi, "bool oper: %#o =b%d%d%d%d (%s), fill: %d\n", bolr, (bolr>>3)&1, (bolr>>2)&1, (bolr>>1)&1, bolr&1, ops[bolr], fill);
 
     t_uint64 word1, word2;
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
@@ -3864,8 +3863,8 @@ static int op_csl(const instr_t* ip)
     eis_bit_desc_t desc2;
     parse_eis_bit_desc(word2, &mf2, &desc2);
 
-    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_bit_desc_to_text(&desc1));
-    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_bit_desc_to_text(&desc2));
+    log_msg(NOTIFY_MSG, moi, "desc1: %s\n", eis_bit_desc_to_text(&desc1));
+    log_msg(NOTIFY_MSG, moi, "desc2: %s\n", eis_bit_desc_to_text(&desc2));
 
     int ret = 0;
 
@@ -3884,7 +3883,7 @@ static int op_csl(const instr_t* ip)
             break;
         }
         flag_t r = (bolr >> (3 - ((bit1 << 1) | bit2))) & 1;    // like indexing into a truth table
-        log_msg(DEBUG_MSG, moi, "nbits1=%d, nbits2=%d; %d op %d => %d\n", desc1.n, desc2.n, bit1, bit2, r);
+        log_msg(NOTIFY_MSG, moi, "nbits1=%d, nbits2=%d; %d op(%#o) %d => %d\n", desc1.n, desc2.n, bit1, bolr, bit2, r);
         if (r == bit2) {
             // Do an ordinary "get" to advance the ptr
             if (get_eis_bit(&mf2, &desc2, &bit2) != 0) {

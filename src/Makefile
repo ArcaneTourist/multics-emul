@@ -45,3 +45,8 @@ opcodes.h: opcodes0.txt opcodes1.txt
 	./opcodes2c.pl | sed -ne '/^#ifndef/q' -e p > .tmpf && mv .tmpf $@
 opcode_text.c: opcodes0.txt opcodes1.txt
 	./opcodes2c.pl | sed -ne '/^#ifndef/,$$p' > .tmpf && mv .tmpf $@
+
+init_early_config.reconstructed.list: init_early_config.damaged.list init_early_config.pl1
+	nl -ba init_early_config.pl1 | sed -e 's/^/   /' > .tmp.init_early_config.list
+	tr -d '\000' < init_early_config.damaged.list | sed -e 's/^14   84 000254/     84 000254/' >> .tmp.init_early_config.list
+	mv .tmp.init_early_config.list init_early_config.reconstructed.list

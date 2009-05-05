@@ -788,10 +788,12 @@ int cmd_find(int32 arg, char *buf)
     return 0;
 }
 
-static int listing_segno = -1;
+static int listing_segno;
+static unsigned listing_offset;
 
 static int consume(int lineno, unsigned loc, const char *line)
 {
+    loc += listing_offset;
     return symtab_add_line(listing_segno, loc, loc, lineno, line);
 }
 
@@ -814,9 +816,27 @@ int cmd_load_listing(int32 arg, char *buf)
     }
     buf[n] = sv;
     s += n;
-    s += strspn(s, " \t");
     listing_segno = segno;
 
+    if (*s == '|' || *s == '$') {
+        ++s;
+        int n = strspn(s, "01234567");
+        char sv = s[n];
+        s[n] = 0;
+        unsigned offset;
+        char c;
+        if (sscanf(s, "%o %c", &offset, &c) != 1) {
+            out_msg("xlist: Expecting a octal offset, not '%s'.\n", s);
+            buf[n] = sv;
+            return 1;
+        }
+        s[n] = sv;
+        s += n;
+        listing_offset = offset;
+    } else
+        listing_offset = 0;
+
+    s += strspn(s, " \t");
     FILE *f;
     if ((f = fopen(s, "r")) == NULL) {
         perror(s);
