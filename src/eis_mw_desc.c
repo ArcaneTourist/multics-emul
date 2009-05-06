@@ -616,8 +616,7 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
         }
         // reverse sequential
         if (descp->cn || descp->bitno) {
-            log_msg(WARN_MSG, moi, "Non zero CN for reverse string access.  Untested.\n");
-            cancel_run(STOP_WARN);
+            log_msg(NOTIFY_MSG, moi, "Non zero CN for reverse string access.  Lightly tested.\n");
         }
         int nparts = 36 / descp->nbits; // "chars" per word
         // ndx is the offset in chars from the first word, e.g. a ptr to the

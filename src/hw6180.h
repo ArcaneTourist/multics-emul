@@ -77,6 +77,8 @@ enum log_level { DEBUG_MSG, NOTIFY_MSG, WARN_MSG, ERR_MSG };
 
 #define ARRAY_SIZE(a) ( sizeof(a) / sizeof((a)[0]) )
 
+enum { seg_bits = 15};  // number of bits in a segment number
+enum { n_segments = 1 << seg_bits} ;    // why does c89 treat enums as more constant than consts?
 
 // ============================================================================
 // === Struct typdefs
@@ -622,9 +624,11 @@ extern void out_msg(const char* format, ...);
 
 extern void restore_from_simh(void);    // SIMH has a different form of some internal variables
 extern int cmd_dump_history(int32 arg, char *buf);
+extern int cmd_xdebug(int32 arg, char *buf);
 extern int cmd_find(int32 arg, char *buf);
 extern int cmd_load_listing(int32 arg, char *buf);
 extern void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic);
+extern char *ir2text(const IR_t *irp);
 
 extern void cancel_run(enum sim_stops reason);
 extern void fault_gen(enum faults);

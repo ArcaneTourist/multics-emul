@@ -60,12 +60,13 @@ const char *sim_stop_messages[] = {
 
 extern CTAB *sim_vm_cmd;
 static struct sim_ctab sim_cmds[] =  {
-    { "XSYMTAB",  cmd_symtab_parse, 0, "xsymtab                  define symtab entries\n" },
+    { "XSYMTAB",  cmd_symtab_parse, 0, "xsymtab [...]            define symtab entries\n" },
     { "XVMDUMP",  cmd_dump_vm, 0,      "xvmdump                  dump virtual memory caches\n" },
     { "XHISTORY", cmd_dump_history, 0, "xhistory                 display recent instruction counter values\n" },
-    { "XSEGINFO", cmd_seginfo, 0,      "xseginfo                 walk segment linkage table\n" },
-    { "XFIND",    cmd_find, 0,         "xfind                    search memory for string\n" },
-    { "XLIST",    cmd_load_listing, 0, "xlist                    load pl1 listing\n" },
+    { "XSEGINFO", cmd_seginfo, 0,      "xseginfo <seg>           walk segment linkage table\n" },
+    { "XFIND",    cmd_find, 0,         "xfind <string> <range>   search memory for string\n" },
+    { "XLIST",    cmd_load_listing, 0, "xlist <addr> <source>    load pl1 listing\n" },
+    { "XDEBUG",   cmd_xdebug, 0,       "xdebug seg <#> {on|off}  finer grained debugging\n" },
     { 0, 0, 0, 0}
 };
 
@@ -88,6 +89,11 @@ int bootimage_loaded = 0;
         write_flag -- indicates whether to load or write
     
 */
+
+// The following are set by parse_addr() and used by fprint_sym()
+static int last_parsed_seg;
+static int last_parsed_offset;
+static t_addr last_parsed_addr;
 
 t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
 {
@@ -374,6 +380,14 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
         // note that parse_addr() was called by SIMH to determine the absolute addr.
         if (sw & SWMASK('M')) {
             // M -> instr
+            int offset = last_parsed_offset + addr - last_parsed_addr;
+            if (offset >= 0) {
+                t_symtab_ent *source_line = symtab_find(last_parsed_seg, offset, symtab_line);
+                if (source_line != NULL) {
+                    fprintf(ofile, "Line %d: %s\n", source_line->line_no, source_line->line);
+                    fprintf(ofile, "%06o:\t", addr);
+                }
+            }
             char *instr = print_instr(M[addr]);
             fprintf(ofile, "%012llo %s", M[addr], instr);
         } else if (sw & SWMASK('L')) {
@@ -428,23 +442,7 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
             fprintf(ofile, "%s", bin2text(*val, 18));
             IR_t ir;
             load_IR(&ir, *val);
-            fprintf(ofile, " [");
-            if (ir.zero) fprintf(ofile, " zero");
-            if (ir.neg) fprintf(ofile, " neg");
-            if (ir.carry) fprintf(ofile, " carry");
-            if (ir.overflow) fprintf(ofile, " overflow");
-            if (ir.exp_overflow) fprintf(ofile, " exp-overflow");
-            if (ir.exp_underflow) fprintf(ofile, " exp-underflow");
-            if (ir.overflow_mask) fprintf(ofile, " overflow-mask");
-            if (ir.tally_runout) fprintf(ofile, " tally-run-out");
-            if (ir.parity_error) fprintf(ofile, " parity-error");
-            if (ir.parity_mask) fprintf(ofile, " parity-mask");
-            if (ir.not_bar_mode) fprintf(ofile, " not-bar-mode");
-            if (ir.truncation) fprintf(ofile, " truncation");
-            if (ir.mid_instr_intr_fault) fprintf(ofile, " mid-instr-intr-fault");
-            if (ir.abs_mode) fprintf(ofile, " abs-mode");
-            if (ir.hex_mode) fprintf(ofile, " hex-mode");
-            fprintf(ofile, " ]");
+            fprintf(ofile, " %s", ir2text(&ir));
             fflush(ofile);
             return SCPE_OK;
         } else
@@ -585,6 +583,9 @@ out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
     if (force_abs || (seg == -1 && get_addr_mode() == ABSOLUTE_mode)) {
         *optr = cptr;
         addr = offset;
+        last_parsed_seg = -1;
+        last_parsed_offset = offset;
+        last_parsed_addr = addr;
     } else {
         uint saved_seg = -1;
         if (seg != -1) {
@@ -602,6 +603,9 @@ out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
         fault_gen_no_fault = 0;
         if (saved_seg != -1)
             TPR.TSR = saved_seg;
+        last_parsed_seg = seg;
+        last_parsed_offset = offset;
+        last_parsed_addr = addr;
         *optr = cptr;
     }
 

@@ -222,6 +222,10 @@ scu_t scu;  // only one for now
 iom_t iom;  // only one for now
 flag_t fault_gen_no_fault;
 
+// *** Other variables -- These do not need to be part of save/restore
+
+static int seg_debug[n_segments];
+
 //-----------------------------------------------------------------------------
 // ***  Other Externs
 int opt_debug;
@@ -409,6 +413,7 @@ if(0) {
     calendar_a = 0xdeadbeef;
     calendar_q = 0xdeadbeef;
 
+    memset(seg_debug, 0, sizeof(seg_debug));
     return 0;
 }
 
@@ -570,8 +575,6 @@ if (0)
 void restore_from_simh(void)
 {
 
-    opt_debug = (cpu_dev.dctrl != 0);   // todo: should CPU control all debug settings?
-
     PPR.IC = saved_IC;
     load_IR(&IR, saved_IR);
 
@@ -586,6 +589,16 @@ void restore_from_simh(void)
     cpup->DSBR.u = (saved_DSBR >> 12) & 1;
     cpup->DSBR.bound = (saved_DSBR >> 13) & MASKBITS(14);
     cpup->DSBR.addr = (saved_DSBR >> 27) & MASKBITS(24);
+
+    opt_debug = (cpu_dev.dctrl != 0);   // todo: should CPU control all debug settings?
+    // Check for a per-segment debug override
+    if (get_addr_mode() == APPEND_mode)
+        if (PPR.PSR >= 0 && PPR.PSR < ARRAY_SIZE(seg_debug)) {
+            if (seg_debug[PPR.PSR] == -1)
+                opt_debug = 0;
+            else if (seg_debug[PPR.PSR] == 1)
+                opt_debug = 1;
+        }
 }
 
 void load_IR(IR_t *irp, t_uint64 word)
@@ -1856,7 +1869,7 @@ static void hist_dump()
     if (memcmp(&hist.IR, &IR, sizeof(hist.IR)) != 0) {
         t_uint64 ir;
         save_IR(&ir);
-        log_msg(DEBUG_MSG, "HIST", "IR: %s\n", bin2text(ir, 18));
+        log_msg(DEBUG_MSG, "HIST", "IR: %s %s\n", bin2text(ir, 18), ir2text(&hist.IR));
     }
     if (memcmp(hist.AR_PR, AR_PR, sizeof(hist.AR_PR)) != 0) {
         for (int i = 0; i < ARRAY_SIZE(AR_PR); ++i)
@@ -2108,4 +2121,81 @@ static void show_location(int show_source_lines)
             if (opt_debug)
                 log_msg(DEBUG_MSG, "MAIN", "IC: %s\n", icbuf);  // source unchanged
     }
+}
+
+//=============================================================================
+
+int cmd_xdebug(int32 arg, char *buf)
+{
+    char *s = buf;
+    s += strspn(s, " \t");
+    if (*s == 0) {
+        out_msg("USAGE xdebug seg <segment number> { on | off }\n");
+        return 1;
+    }
+
+    if (strncmp(s, "seg", strlen("seg")) == 0)
+        s += strlen("seg");
+    else if (strncmp(s, "segment", strlen("segment")) == 0)
+        s += strlen("segment");
+    else {
+        out_msg("xdebug: expecting the word 'seg' or 'segment'\n");
+        return 1;
+    }
+    s += strspn(s, " \t");
+    unsigned segno;
+    char c;
+    int n;
+    if (sscanf(s, "%o", &segno) != 1) {
+        out_msg("xdebug: Expecting a octal segment number.\n");
+        return 1;
+    }
+    s += strspn(s, "01234567 \t");
+    int state;
+    if (strcmp(s, "on") == 0)
+        state = 1;
+    else if (strcmp(s, "cpu") == 0 || strcmp(s, "default") == 0 || strcmp(s, "def") == 0)
+        state = 0;
+    else if (strcmp(s, "off") == 0)
+        state = -1;
+    else {
+        out_msg("xdebug: Expecting 'on', 'off', or 'cpu', not: %s\n", s);
+        return 1;
+    }
+
+    if (segno >= n_segments) {
+        out_msg("xdebug: Maximum segment number is %#o\n", n_segments - 1);
+        return 1;
+    }
+
+    seg_debug[segno] = state;
+    return 0;
+}
+
+//=============================================================================
+
+char *ir2text(const IR_t *irp)
+{
+    static char buf[256];
+
+    char *s = buf;
+    *s++ = '[';
+
+    if (irp->zero) { strcpy(s, " zero"); s += strlen(s); }
+    if (irp->neg) { strcpy(s, " neg"); s += strlen(s); }
+    if (irp->carry) { strcpy(s, " carry"); s += strlen(s); }
+    if (irp->overflow) { strcpy(s, " overflow"); s += strlen(s); }
+    if (irp->exp_overflow) { strcpy(s, " exp-overflow"); s += strlen(s); }
+    if (irp->exp_underflow) { strcpy(s, " exp-underflow"); s += strlen(s); }
+    if (irp->overflow_mask) { strcpy(s, " overflow-mask"); s += strlen(s); }
+    if (irp->tally_runout) { strcpy(s, " tally-run-out"); s += strlen(s); }
+    if (irp->parity_error) { strcpy(s, " parity-error"); s += strlen(s); }
+    if (irp->parity_mask) { strcpy(s, " parity-mask"); s += strlen(s); }
+    if (irp->not_bar_mode) { strcpy(s, " not-bar-mode"); s += strlen(s); }
+    if (irp->truncation) { strcpy(s, " truncation"); s += strlen(s); }
+    if (irp->mid_instr_intr_fault) { strcpy(s, " mid-instr-intr-fault"); s += strlen(s); }
+    if (irp->abs_mode) { strcpy(s, " abs-mode"); s += strlen(s); }
+    if (irp->hex_mode) { strcpy(s, " hex-mode"); s += strlen(s); }
+    strcpy(s, " ]");
+    return buf;
 }

@@ -749,8 +749,20 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_ada:
                 return op_add(ip, &reg_A);
+
             // adaq unimplemented
-            // adl unimplemented
+
+            case opcode0_adl: { // Add low to AQ
+                t_uint64 word1, word2;
+                int ret = fetch_word(TPR.CA, &word2);
+                if (ret == 0) {
+                    // BUG: ignoring 18bit math
+                    word1 = bit36_is_neg(word2) ? MASK36 : 0;
+                    ret = add72(word1, word2, &reg_A, &reg_Q, 0);
+                }
+                return ret;
+            }
+
             case opcode0_adla: {
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
@@ -1540,7 +1552,17 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
-            // _ersq unimplemented
+            case opcode0_ersq: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    word ^= reg_Q;
+                    ret = store_word(TPR.CA, word);
+                    IR.zero = word == 0;
+                    IR.neg = bit36_is_neg(word);
+                }
+                return ret;
+            }
             case opcode0_ersx0:     // XOR to Index Register N
             case opcode0_ersx1:
             case opcode0_ersx2:
@@ -3542,7 +3564,6 @@ static int get_table_char(uint addr, uint index, uint *charp)
 
 static int op_tct(const instr_t* ip, int fwd)
 {
-
     const char* moi = (fwd) ? "OPU::tct" : "OPU::tctr";
 
     uint fill = ip->addr >> 9;
@@ -3597,8 +3618,7 @@ static int op_tct(const instr_t* ip, int fwd)
                 //if (!fwd) { --opt_debug; -- cpu_dev.dctrl; }
                 return 1;
             }
-            //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
-            //cancel_run(STOP_IBKPT);
+            IR.tally_runout = 0;
             PPR.IC += 4;        // BUG: when should we bump IC?  probably not for seg faults, but probably yes for overflow
             return 0;
         }
@@ -3611,6 +3631,9 @@ static int op_tct(const instr_t* ip, int fwd)
 
     //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
     //cancel_run(STOP_IBKPT);
+
+    IR.tally_runout = 1;
+    log_msg(DEBUG_MSG, moi, "No non-zero entry found; setting TRO.\n");
     log_msg(NOTIFY_MSG, moi, "finished.\n");
     PPR.IC += 4;        // BUG: when should we bump IC?  probably not for seg faults, but probably yes for overflow
     return 0;
@@ -3824,7 +3847,7 @@ static int op_scm(const instr_t* ip)
         IR.tally_runout = i == n;
         // t_uint64 word = setbits36(0, 12, 24, i);
         t_uint64 word = i;
-        log_msg(WARN_MSG, moi, "TRO=%d; writing %#o(%+d) to abs addr %#o\n", IR.tally_runout, i, i, y3);
+        log_msg(NOTIFY_MSG, moi, "TRO=%d; writing %#o(%+d) to abs addr %#o\n", IR.tally_runout, i, i, y3);
         ret = store_abs_word(y3, word);
     }
 
