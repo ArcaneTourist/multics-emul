@@ -17,7 +17,7 @@
 #include "hw6180.h"
 #include <ctype.h>  // for isprint
 
-int do_18bit_math;  // diag tape seems to want this, probably inappropriately
+static int do_18bit_math;   // diag tape seems to want this, probably inappropriately
 
 #define XED_NEW 1
 
@@ -108,8 +108,8 @@ static int do_op(instr_t *ip)
 {
     // Wrapper for do_an_op() with detection of change in address mode (for debugging).
 
-    //do_18bit_math = (switches.FLT_BASE != 2); // diag tape seems to want this, probably inappropriately
     do_18bit_math = 0;
+    // do_18bit_math = (switches.FLT_BASE != 2);    // diag tape seems to want this, probably inappropriately
 
     addr_modes_t orig_mode = get_addr_mode();
 #if 0
@@ -934,6 +934,7 @@ static int do_an_op(instr_t *ip)
                         ret = add36(reg_A, word, &reg_A);
                         log_msg(DEBUG_MSG, "OPU::sba", "adding one yields %012llo with carry=%c.\n", reg_A, IR.carry ? 'Y' : 'N');
                         IR.carry |= carry;
+#if 0
                         if (do_18bit_math && TPR.is_value == 7 && (a>>18) == 0) {
                             // arithmetic on "dl" constant
                             if (opt_debug || (a>>18) != 0 || (w >> 18) != 0 || (reg_A>>18) != 0)
@@ -951,6 +952,7 @@ static int do_an_op(instr_t *ip)
                                 cancel_run(STOP_WARN);
                             }
                         }
+#endif
                     }
 #endif
                 }
@@ -1033,6 +1035,7 @@ static int do_an_op(instr_t *ip)
                         ret = add36(reg_Q, word, &reg_Q);
                         log_msg(DEBUG_MSG, "OPU::sbq", "adding one yields %012llo with carry=%c.\n", reg_Q, IR.carry ? 'Y' : 'N');
                         IR.carry |= carry;
+#if 0
                         if (do_18bit_math && TPR.is_value == 7 && (q>>18) == 0) {
                             // arithmetic on "dl" constant
                             if (opt_debug || (q>>18) != 0 || (w >> 18) != 0 || (reg_Q>>18) != 0)
@@ -1048,6 +1051,7 @@ static int do_an_op(instr_t *ip)
                                 cancel_run(STOP_WARN);
                             }
                         }
+#endif
                     }
 #endif
                 }
@@ -1762,6 +1766,8 @@ static int do_an_op(instr_t *ip)
                 PPR.PRR = max3(getbits36(word0, 18, 3), TPR.TRR, SDWp->r1);
                 PPR.IC = word1 >> 18;
                 PPR.P = priv;
+                if (priv == 0)
+                    log_msg(DEBUG_MSG, "OPU::rtcd", "Flagging PPR with priv=0.\n");
                 for (int i = 0; i < 8; ++i) {
                     AR_PR[i].PR.rnr = PPR.PRR;
                 }
@@ -3080,6 +3086,7 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
     *dest = result;
 
     // see comments at opcode0_sba
+#if 0
     if (do_18bit_math && TPR.is_value == 7) {
         // arithmetic on "dl" constant
         if ((a>>18) == 0 && (b>>18) == 0) {
@@ -3104,6 +3111,7 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
             }
         }
     }
+#endif
 
     return 0;
 }

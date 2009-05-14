@@ -270,6 +270,7 @@ static void save_to_simh(void);
 static void save_PR_registers(void);
 static void restore_PR_registers(void);
 static void show_location(int show_source_lines);
+static void check_seg_debug(void);
 
 void tape_block(unsigned char *p, uint32 len, uint32 addr);
 
@@ -475,7 +476,12 @@ ninstr = 0;
         // debug mode is slow, so be more responsive to keyboard interrupt
         sim_interval = 32;
     }
+    int prev_seg = PPR.PSR;
     while (reason == 0) {   /* loop until halted */
+        if (PPR.PSR != prev_seg) {
+            check_seg_debug();
+            prev_seg = PPR.PSR;
+        }
         if (sim_interval <= 0) { /* check clock queue */
             // process any SIMH timed events including keyboard halt
             if ((reason = sim_process_event()) != 0) break;
@@ -590,8 +596,16 @@ void restore_from_simh(void)
     cpup->DSBR.bound = (saved_DSBR >> 13) & MASKBITS(14);
     cpup->DSBR.addr = (saved_DSBR >> 27) & MASKBITS(24);
 
+    // Set default debug and check for a per-segment debug override
+    check_seg_debug();
+}
+
+
+static void check_seg_debug()
+{
+    // Set debug flags, but check for per-segment override to global debug setting
+
     opt_debug = (cpu_dev.dctrl != 0);   // todo: should CPU control all debug settings?
-    // Check for a per-segment debug override
     if (get_addr_mode() == APPEND_mode)
         if (PPR.PSR >= 0 && PPR.PSR < ARRAY_SIZE(seg_debug)) {
             if (seg_debug[PPR.PSR] == -1)
@@ -2068,7 +2082,7 @@ static void show_location(int show_source_lines)
     int source_changed;
     char *old = (source == NULL) ? NULL : (source->ename) ? source->ename : source->fname;
     if (source) {
-        source_changed = source->seg != seg || source->addr_lo > PPR.IC || PPR.IC > source->addr_hi;
+        source_changed = source->seg != seg || source->addr_lo > PPR.IC || source->addr_hi < 0 || PPR.IC > source->addr_hi;
         if (source_changed)
             source = symtab_find(seg, PPR.IC, symtab_file | symtab_proc);
     } else {
