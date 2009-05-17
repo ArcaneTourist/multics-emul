@@ -101,7 +101,7 @@ typedef struct {
             uint pr_bit;    // 1 bit at 29; use offset[0..2] as pointer reg
             uint tag;       /* 6 bits at 30..35 */
         } single;
-        eis_mf_t mf1;
+        eis_mf_t mf1;       // from bits 29..35 of EIS instructions
     } mods;
     flag_t is_eis_multiword;    // set true for relevent opcodes
 } instr_t;
@@ -149,6 +149,9 @@ typedef struct {
         flag_t poa;     // prepare operand address
         uint opcode;    // currently executing opcode
     addr_modes_t orig_mode_BUG;
+    struct {
+        flag_t  fhld;   // An access violation or directed fault is waiting.   AL39 mentions that the APU has this flag, but not where scpr stores it
+    } apu_state;
 } cpu_state_t;
 
 
@@ -427,33 +430,39 @@ typedef struct {
 typedef struct {
     // int interrupts[32];
     // uint mem_base;   // zero on boot scu
-    // mode reg: see AN87 2-2 -- 2 bit ID
+    // mode reg: not stored here; returned by scu_get_mode_register()
 #if 0
     struct {
-        unsigned mode_a:3;  // online, test, or offline
-        unsigned bdry_a:3;  // size of memory
-        unsigned mode_a:3;
-        unsigned bdry_b:3;
+        unsigned mask_a_assign:9;
+        unsigned a_online:1;    // bank a online?
+        unsigned a1_online:1;
+        unsigned b_online:1;
+        unsigned b1_online:1;
+        unsigned port_no:4;
+        unsigned mode:1;    // program or manual
+        unsigned nea_enabled:1;
+        unsigned nea:7;
         unsigned interlace:1;
         unsigned lwr:1;     // controls whether A or B is low order memory
-        unsigned addr_offset:2;
-        unsigned port_no:4; // port from which rscr instr was received
-        struct {
-            unsigned flag:2;
-        } port_enabled[8];
-        struct {
-            unsigned value:9;
-        } pima[4];      // each bit indicates an assigned port (matches 4 rotary switches [initally?])
+        unsigned port_mask_0_3:4;
+        unsigned cyclic_prio:7;
+        unsigned port_mask_4_7:4;
     } config_switches;
 #endif
     uint ports[8];  // CPU/IOM connectivity; designated 0..7; negative to disable
-    t_uint64 masks[4];  // 32bit masks
-    uint mask_assign[4];    //  Bit masks.  Which port(s) is each PIMA reg assigned to?
+    //t_uint64 masks[4];    // 32bit masks
+    //uint mask_assign[4];  //  Bit masks.  Which port(s) is each PIMA reg assigned to?
+    struct {
+        unsigned raw;       // 9 bits; raw mask; decoded below
+        flag_t avail;       // does mask exist?
+        flag_t assigned;    // is it assigned to a port?
+        uint port;          // 3 bits; port to which mask is assigned
+    } eima_data[4];
     
 } scu_t;
 
 typedef struct {
-    uint ports[8];  // CPU/IOM connectivity; designated a..; negative to disable
+    uint ports[8];  // CPU/IOM connectivity; designated a..h; negative to disable
     int scu_port;   // which port on the SCU(s) are we connected to?
     enum dev_type channels[64];
     DEVICE* devices[64];

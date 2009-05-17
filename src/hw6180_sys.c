@@ -172,11 +172,20 @@ static void hw6180_init(void)
     init_memory_iom();      // IOX includes unknown instr ldo and has an undocumented mailbox architecture
     //init_memory_iox();
 
+    // Only two of the four SCU masks are used; these correspond to the "A" and "B" rotary switches
+    scu.eima_data[0].avail = 1;
+    scu.eima_data[1].avail = 1;
+
     // CPU port 'b'(1) connected to SCU port '7' -- arbitrary
+    int cpu_port = 1;
     cpu_ports.scu_port = 7;
-    cpu_ports.ports[1] = cpu_ports.scu_port;    // port B connected to SCU
-    scu.ports[cpu_ports.scu_port] = 1;  // SCU port '7' connected to CPU port 'b'
-    scu.mask_assign[0] = 1 << cpu_ports.scu_port;       // GB61, page 9-1
+    cpu_ports.ports[cpu_port] = cpu_ports.scu_port; // port B connected to SCU
+    scu.ports[cpu_ports.scu_port] = cpu_port;   // SCU port '7' connected to CPU port 'b'
+    // GB61, pages 9-1 and A-2: Set Mask A to port that the bootload CPU is connected to; Set Mask B to off
+    // scu.mask_assign[0] = 1 << cpu_ports.scu_port;
+    scu.eima_data[0].raw = 1 << (8 - cpu_ports.scu_port);
+    scu.eima_data[0].assigned = 1;
+    scu.eima_data[0].port = cpu_ports.scu_port;
 
     // IOM port 'a'(0) connected to SCU port 0
     iom.scu_port = 0;

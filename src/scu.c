@@ -14,6 +14,7 @@ SC and SCU -- System Controller Unit (GB61 and AN70)
     Versions
         SCU -- Series 60 Level66 Controller
         SC -- Level 68 System Controller
+        4MW SCU -- A later version of the L68 SC
     SCUs control access to memory.
         Each SCU owns a certain range of absolute memory.
     SCUs contain clocks.
@@ -144,12 +145,13 @@ extern scu_t scu;   // BUG: we'll need more than one for max memory.  Unless we 
 void scu_dump()
 {
     int pima;
-    for (pima = 0; pima < 4; ++pima)
+    for (pima = 0; pima < array_size(scu.mask_assign); ++pima)
         log_msg(DEBUG_MSG, "SCU", "PIMA %d: mask assign = 0%o\n", pima, scu.mask_assign[pima]);
 }
 #endif
 
-static int scu_hw_arg_check(const char *tag, t_uint64 addr, int port) {
+static int scu_hw_arg_check(const char *tag, t_uint64 addr, int port)
+{
     // Sanity check args
     // Verify that HW could have received signal
 
@@ -197,35 +199,18 @@ int scu_set_mask(t_uint64 addr, int port)
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
-    // find mask reg assigned to processer
-    int pima;
+    // Find mask reg assigned to processer
+    int pima = 0;
     int found = 0;
-    int err = 0;
-    for (pima = 0; pima < 4; ++pima) {
-        // todo: if only one pima per cpu, follwing can be simplified
-        if (scu.mask_assign[pima] & (1 << cpu_no)) {
+    for (int p = 0; p < ARRAY_SIZE(scu.eima_data); ++p) {
+        if (! scu.eima_data[p].avail)
+            continue;
+        if (! scu.eima_data[p].assigned)
+            continue;
+        if (scu.eima_data[p].port == cpu_no) {
+            pima = p;
+            log_msg(NOTIFY_MSG, "SCU", "MASK %d is assigned to cpu %d\n", p, cpu_no);
             ++found;
-            // AN87, 2-6
-            // we use the 32 low bits 
-            int maskno = -1;
-            int i;
-            for (i = 0; i < 4; ++i) {
-                // Find PIMA(s) assigned to requested port
-                if (scu.mask_assign[i] & (1 << port)) {
-                    maskno = i;
-                    t_uint64 old = scu.masks[maskno];
-                    scu.masks[maskno] = (getbits36(reg_A, 0, 16) << 16) | getbits36(reg_Q, 0, 16);
-                    log_msg(WARN_MSG, "SCU", "PIMA %d has CPU %d assigned; Mask[%d] was 0%o, now 0%o\n",
-                        pima, cpu_no, maskno, old, scu.masks[maskno]);
-                    cancel_run(STOP_IBKPT);
-                }
-            }
-            if (maskno == -1) {
-                // OTOH, see bootload_tape_label.alm -- SSCR will do nothing for unassigned masks
-                log_msg(DEBUG_MSG, "SCU", "PIMA %d has CPU %d assigned, but no PIMA has port %d assigned\n",
-                    pima, cpu_no, port);
-                err = 1;
-            }
         }
     }
     if (!found) {
@@ -233,11 +218,38 @@ int scu_set_mask(t_uint64 addr, int port)
         fault_gen(store_fault);
         return 1;
     } else
-        if (found > 1)
+        if (found > 1) {
             log_msg(WARN_MSG, "SCU", "Multiple masks assigned to cpu on port %d\n", cpu_no);
-    if (err) {
-        return 1;
-    }
+            cancel_run(STOP_WARN);
+        }
+        else if (pima > 1) {
+            log_msg(ERR_MSG, "SCU", "Cannot write to masks other than zero and one: %d\n", pima);
+            cancel_run(STOP_BUG);
+            return 1;
+        } else {
+            // See AN87
+            for (int pima = 0; pima < 2; ++pima) {
+                char name = (pima == 0) ? 'A' : 'B';
+                scu.eima_data[pima].raw = (pima == 0) ? getbits36(reg_A, 0, 9) : getbits36(reg_Q, 0, 9);
+                int found = 0;
+                for (int p = 0; p < 8; ++p)
+                    if (((1<<(8-p) & scu.eima_data[pima].raw)) != 0) {
+                        ++ found;
+                        scu.eima_data[pima].assigned = 1;
+                        scu.eima_data[pima].port = p;
+                        log_msg(NOTIFY_MSG, "SCU::set-mask", "Assigning port %d to MASK %c.\n", p, name);
+                    }
+                if ((scu.eima_data[pima].raw & 1) != 0) {
+                    scu.eima_data[pima].assigned = 0;
+                    log_msg(NOTIFY_MSG, "SCU::set-mask", "Unassigning MASK %c.\n", name);
+                    ++ found;
+                }
+                if (found != 1) {
+                    log_msg(WARN_MSG, "SCU::set-mask", "%d ports enabled for MASK %c: %#o\n", found, name, scu.eima_data[pima].raw);
+                    cancel_run(STOP_WARN);
+                }
+            }
+        }
     return 0;
 }
 
@@ -255,19 +267,119 @@ int scu_set_cpu_mask(t_uint64 addr)
 }
 
 
+int scu_get_mode_register(t_uint64 addr)
+{
+    // Implements part of the sscr instruction
+    // BUG: addr should determine which SCU is selected
+
+    if (scu_hw_arg_check("get-mode-register", addr, 0) != 0)
+        return 1;
+    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
+    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+
+
+    // See scr.incl.pl1 
+    reg_A = 0;  // first 50 bits are padding
+    reg_Q = 0;
+    reg_Q |= setbits36(reg_Q, 51-36, 4, 2); // 4MW SCU
+    // reg_Q |= setbits36(reg_Q, 55-36, 2, 0);  // normal timing
+    // reg_Q |= setbits36(reg_Q, 65-36, 2, 0);  // both 00b and 10b mean normal voltage
+    // reg_Q |= setbits36(reg_Q, 70-36, 1, 0);  // SGR command
+
+    return 0;
+}
+
+
+int scu_get_config_switches(t_uint64 addr)
+{
+    // Implements part of the sscr instruction
+    // Returns info appropriate to a 4MW SCU
+    // BUG: addr should determine which SCU is selected
+
+    if (scu_hw_arg_check("get-mode-register", addr, 0) != 0)
+        return 1;
+    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
+    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+
+
+    // See scr.incl.pl1 
+    reg_A = 0;
+    // interrupt mask A port assignment
+#if 0
+    if (!scu.eima_data[0].avail)
+        reg_A |= setbits36(reg_A, 0, 9, 0);
+    else if (scu.eima_data[0].assigned)
+        reg_A |= setbits36(reg_A, 0, 9, 1);
+    else
+        reg_A |= setbits36(reg_A, 0, 9, 1<<(8 - scu.eima_data[0].port));
+#else
+    reg_A |= setbits36(reg_A, 0, 9, scu.eima_data[0].raw);
+#endif
+    reg_A |= setbits36(reg_A, 9, 3, 7); // size of lower store -- 2^(7+5) == 4096 words
+    reg_A |= setbits36(reg_A, 12, 4, 017);  // all four stores online
+    reg_A |= setbits36(reg_A, 16, 4, cpu_no);   // requester's port #
+    reg_A |= setbits36(reg_A, 21, 1, 1);    // programmable; BUG
+    reg_A |= setbits36(reg_A, 22, 1, 0);    // non-existent address logic enabled
+    reg_A |= setbits36(reg_A, 23, 7, 0);    // nea size
+    reg_A |= setbits36(reg_A, 30, 1, 1);    // internally interlaced
+    reg_A |= setbits36(reg_A, 31, 1, 0);    // store B is lower?
+    for (int i = 0; i < 4; ++ i) {
+        int enabled = scu.ports[i] >= 0;
+        reg_A |= setbits36(reg_A, 32+i, 1, enabled);    // enable masks for ports 0-3
+    }
+
+    reg_Q = 0;
+#if 0
+    // interrupt mask B port assignment; BUG
+    if (!scu.eima_data[0].avail)
+        reg_Q |= setbits36(reg_Q, 0, 9, 0);
+    else if (scu.eima_data[0].assigned)
+        reg_Q |= setbits36(reg_Q, 0, 9, 1);
+    else
+        reg_Q |= setbits36(reg_Q, 0, 9, 1<<(8 - scu.eima_data[0].port));
+#else
+    reg_Q |= setbits36(reg_Q, 0, 9, scu.eima_data[0].raw);
+#endif
+    reg_Q |= setbits36(reg_Q, 57-36, 7, 0); // cyclic port priority switches; BUG
+    for (int i = 0; i < 4; ++ i) {
+        int enabled = scu.ports[i+4] >= 0;
+        reg_Q |= setbits36(reg_Q, 68-36+i, 1, enabled); // enable masks for ports 4-7
+    }
+
+    return 0;
+}
+
+
 int scu_get_mask(t_uint64 addr, int port)
 {
     // BUG: addr should determine which SCU is selected
-    // Implements part of the sscr instruction
+    // Implements part of the rscr instruction
 
     if (scu_hw_arg_check("getmask", addr, port) != 0)
         return 1;
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
-    // Upper 16 bits of each register gets half of the flags
-    reg_A = (scu.masks[port] >> 16) << 20;
-    reg_Q = (scu.masks[port] & MASKBITS(16)) << 20;
+
+    // Find which of the 4 masks are assigned to the specified port
+    int pima = 0;
+    int found = 0;
+    for (int p = 0; p < ARRAY_SIZE(scu.eima_data); ++p) {
+        if (! scu.eima_data[pima].avail)
+            continue;
+        if (! scu.eima_data[pima].assigned)
+            continue;
+        if (scu.eima_data[pima].port == port) {
+            pima = p;
+            ++found;
+        }
+    }
+
+    // BUG: we need to return two masks, each of which is assigned to some port
+    if (pima % 2 == 1)
+        -- pima;
+    reg_A = setbits36(0, 0, 9, scu.eima_data[pima].raw);
+    reg_Q = setbits36(0, 0, 9, scu.eima_data[pima+1].raw);
     return 0;
 }
 
@@ -276,7 +388,7 @@ int scu_get_calendar(t_uint64 addr)
 {
     // BUG: addr should determine which SCU is selected
 
-    if (scu_hw_arg_check("getmask", addr, 0) != 0)
+    if (scu_hw_arg_check("get-calendar", addr, 0) != 0)
         return 1;
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU

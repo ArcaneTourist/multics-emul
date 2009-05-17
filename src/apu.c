@@ -58,6 +58,18 @@ static int32 sign15(uint x)
         return x;
 }
 
+#if  0
+static int32 signbits(int nbits, t_uint64 x)
+{
+    if (bit_is_neg(nbits, x)) {
+        int32 r = - ((1<<nbits) - (x&MASKBITS(nbits)));
+        return r;
+    }
+    else
+        return x;
+}
+#endif
+
 #if 0
 static int32 sign12(uint x)
 {
@@ -135,6 +147,11 @@ int is_priv_mode()
         return 1;
     SDW_t *SDWp = get_sdw();    // Get SDW for TPR.TSR
     if (SDWp == NULL) {
+        if (cpu.apu_state.fhld) {
+            // Do we need to check cu.word1flags.oosb and other flags to know what kind of fault to gen?
+            fault_gen(acc_viol_fault);
+            cpu.apu_state.fhld = 0;
+        }
         log_msg(WARN_MSG, "APU::is-priv-mode", "Segment does not exist?!?\n");
         cancel_run(STOP_BUG);
         return 0;   // arbitrary
@@ -964,8 +981,9 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         if (SDWp == NULL) {
             // BUG 12/05/2008 -- bootload_1.alm, instr 17 triggers this via an epp instr
             // BUG: it seems odd that we should ignore this fault
-            log_msg(WARN_MSG, "APU:ITS/ITP", "Segment is missing.\n");
-            cancel_run(STOP_BUG);
+            log_msg(WARN_MSG, "APU:ITS", "Segment %#o is missing.\n", TPR.TSR);
+            if (! cpu.apu_state.fhld)
+                cancel_run(STOP_BUG);
             sdw_r1 = 7;
             ret = 1;
         } else
@@ -1175,6 +1193,11 @@ static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uin
     // ERROR: Validate that all PTWAM & SDWAM entries are always "full" and that use fields are always sane
     SDWAM_t* SDWp = page_in_sdw();
     if (SDWp == NULL) {
+        if (cpu.apu_state.fhld) {
+            // Do we need to check cu.word1flags.oosb and other flags to know what kind of fault to gen?
+            fault_gen(acc_viol_fault);
+            cpu.apu_state.fhld = 0;
+        }
         log_msg(WARN_MSG, moi, "SDW not loaded\n");
         return 1;
     }
@@ -1249,8 +1272,9 @@ static SDWAM_t* page_in_sdw()
 #endif
         {
             cu.word1flags.oosb = 1;         // ERROR: nothing clears
-            log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault\n", cpup->DSBR.bound, cpup->DSBR.bound);
-            fault_gen(acc_viol_fault);
+            log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault now pending.\n", cpup->DSBR.bound, cpup->DSBR.bound);
+            // fault_gen(acc_viol_fault);
+            cpu.apu_state.fhld = 1;
             return NULL;
         }
         if(1) log_msg(DEBUG_MSG, "APU::append", "Fetching SDW for unpaged descriptor table from 0%o\n", cpup->DSBR.addr + 2 * segno);
@@ -1260,10 +1284,11 @@ static SDWAM_t* page_in_sdw()
         // Descriptor table is paged
         if (segno * 2 >= 16 * (cpup->DSBR.bound + 1)) {
             // BUG 12/05/2008 -- bootload_1.alm, instr 17 triggers this
-            log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside paged DSBR bound of 0%o(%u) -- OOSB fault\n", cpup->DSBR.bound, cpup->DSBR.bound);
+            log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside paged DSBR bound of 0%o(%u) -- OOSB fault now pending.\n", cpup->DSBR.bound, cpup->DSBR.bound);
             cu.word1flags.oosb = 1;         // ERROR: nothing clears
-            fault_gen(acc_viol_fault);
-            cancel_run(STOP_WARN);
+            // fault_gen(acc_viol_fault);
+            cpu.apu_state.fhld = 1;
+            // cancel_run(STOP_WARN);
             return NULL;
         }
 

@@ -54,6 +54,7 @@ static int op_mlr(const instr_t* ip);
 static int op_tct(const instr_t* ip, int fwd);
 static int op_mvt(const instr_t* ip);
 static int op_cmpc(const instr_t* ip);
+static int op_cmpb(const instr_t* ip);
 // static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, int nargs);    // BUG: temp
 static int do_spbp(int n);
 static int op_csl(const instr_t* ip);
@@ -64,6 +65,8 @@ static uint saved_tro;
 // BUG: move externs to hdr file
 extern switches_t switches;
 extern int scu_cioc(t_uint64 addr);
+extern int scu_get_mode_register(t_uint64 addr);
+extern int scu_get_config_switches(t_uint64 addr);
 extern int scu_set_mask(t_uint64 addr, int port);
 extern int scu_get_mask(t_uint64 addr, int port);
 extern int scu_set_cpu_mask(t_uint64 addr);
@@ -198,27 +201,17 @@ static int do_an_op(instr_t *ip)
             case opcode1_a4bd + 0:  // BUG: this construct just used to allow counting how many opcodes are implemented
             case opcode1_a6bd + 0:
             case opcode1_a9bd + 0:
+            case opcode1_abd + 0:
                 addr_mod_eis_addr_reg(ip);
                 break;
             case opcode1_epp1 + 0:
             case opcode1_epp3 + 0:
             case opcode1_epp5 + 0:
             case opcode1_epp7 + 0:
-                if (TPR.TSR ==  0427) {
-                    // BUG: horrid hack to allow: eppbp =its(-2,2),*
-                    log_msg(WARN_MSG, "OPU", "Disabling faults for special case instr.\n");
-                    fault_gen_no_fault = 1;
-                    addr_mod(ip);       // note that ip == &cu.IR
+                addr_mod(ip);       // note that ip == &cu.IR
 #if 0
-                    if (cpu.orig_mode_BUG != get_addr_mode())
-                        log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
-#endif
-                    fault_gen_no_fault = 0;
-                } else
-                    addr_mod(ip);       // note that ip == &cu.IR
-#if 0
-                    if (cpu.orig_mode_BUG != get_addr_mode())
-                        log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
+                if (cpu.orig_mode_BUG != get_addr_mode())
+                    log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
 #endif
                 break;
             default:
@@ -1191,6 +1184,8 @@ static int do_an_op(instr_t *ip)
                         IR.carry = 1;
                     }
                 }
+                if (opt_debug)
+                    log_msg(DEBUG_MSG, "OPU::cmpa", "IR: zero=%d, negative=%d, carry=%d\n", IR.zero, IR.neg, IR.carry);
                 return ret;
             }
             case opcode0_cmpaq: {
@@ -1268,6 +1263,8 @@ static int do_an_op(instr_t *ip)
                         IR.carry = 1;
                     }
                 }
+                if (opt_debug)
+                    log_msg(DEBUG_MSG, "OPU::cmpq", "IR: zero=%d, negative=%d, carry=%d\n", IR.zero, IR.neg, IR.carry);
                 return ret;
             }
             case opcode0_cmpx0:
@@ -1755,7 +1752,7 @@ static int do_an_op(instr_t *ip)
                     priv = 0;
 
                 // AL39 says to check for fault while getting SDW -- however if a fault had occured, we
-                // would not failed to fetch the y-pair.  Thus, we'd be putting garbage in the IC.
+                // would have failed to fetch the y-pair.  Thus, we'd be putting garbage in the IC.
                 if (! SDWp || fault_check_group(6)) {
                     log_msg(WARN_MSG, "OPU::rtcd", "Failed to get SDW and/or a fault occured even though operand fetch was successful.\n");
                     cancel_run(STOP_BUG);
@@ -2083,7 +2080,12 @@ static int do_an_op(instr_t *ip)
             case opcode0_adwp4:
             case opcode0_adwp6:
             case opcode0_adwp7: {
-                int n = (op & 03) + (op >= opcode0_adwp4) ? 4 : 0;
+                int bug_n = (op & 03) + (op >= opcode0_adwp4) ? 4 : 0;
+                int n = (op & 03) + ((op >= opcode0_adwp4) ? 4 : 0);
+                if (bug_n != n) {
+                    char opname[30];
+                    log_msg(NOTIFY_MSG, "OPU::opcode::adwpx(%d)", "Bug fix: prior version would have updated PR[%d] instead of PR[%d].\n", bug_n, n);
+                }
                 int ret;
                 t_uint64 word;
                 if ((ret = fetch_op(ip, &word)) == 0) {
@@ -2373,7 +2375,7 @@ static int do_an_op(instr_t *ip)
                 return 0;
             }
             case opcode0_ldt: { // load timer reg (priv)
-                if (get_addr_mode() != ABSOLUTE_mode && ! is_priv_mode()) {
+                if (get_addr_mode() == BAR_mode || ! is_priv_mode()) {
                     log_msg(WARN_MSG, "OPU::ldt", "Privileged\n");
                     fault_gen(illproc_fault);
                     return 1;
@@ -2449,18 +2451,12 @@ static int do_an_op(instr_t *ip)
                     log_msg(WARN_MSG, "OPU::cams", "Unknown enable/disable mode %06o=>%#o\n", TPR.CA, enable);
                     cancel_run(STOP_WARN);
                 }
-                // AL-39 says this instr can't be used in absolute mode, but the bootload tape does
-                // exactly that.  Perhaps it's only enabling and disabling during appending mode that
-                // is actually illegal.  There has to be some means of invalidating the cache and switching
-                // into absolute mode to do so may have been deemed clumsy.
-                if (enable == 1 || enable == 2)
-                    if (get_addr_mode() != ABSOLUTE_mode) {
-                        log_msg(ERR_MSG, "OPU::cams", "cams executed when mode is not absolute.\n");
-                        // log_msg(ERR_MSG, "OPU::cams", "This should be a fault, but we're ignoring it...\n");
-                        fault_gen(illproc_fault);
-                        cancel_run(STOP_WARN);
-                        return 1;
-                    }
+                if (get_addr_mode() == BAR_mode || ! is_priv_mode()) {
+                    log_msg(ERR_MSG, "OPU::cams", "fault.\n");
+                    fault_gen(illproc_fault);
+                    cancel_run(STOP_WARN);
+                    return 1;
+                }
                 int i;
                 for (i = 0; i < 16; ++i) {
                     cpup->SDWAM[i].assoc.is_full = 0;
@@ -2494,14 +2490,11 @@ static int do_an_op(instr_t *ip)
                 if ((TPR.CA & ~7) == ea) {
                     ; // SC mode reg
                     log_msg(NOTIFY_MSG, "OPU::opcode::rscr", "mode register selected\n");
-                    log_msg(ERR_MSG, "OPU::opcode::rscr", "unimplemented\n");
-                    cancel_run(STOP_BUG);
-                    ret = 1;
+                    ret = scu_get_mode_register(TPR.CA);
                 } else if ((TPR.CA & ~7) == ea + 0010) {
                     ; // SC config reg
-                    log_msg(WARN_MSG, "OPU::opcode::rscr", "sys config switches unimplemented\n");
-                    cancel_run(STOP_BUG);
-                    ret = 1;
+                    log_msg(NOTIFY_MSG, "OPU::opcode::rscr", "sys config switches selected\n");
+                    ret = scu_get_config_switches(TPR.CA);
                 } else if ((TPR.CA & ~7) == ea + 0020) {
                     log_msg(DEBUG_MSG, "OPU::opcode::rscr", "port zero selected\n");
                     ret = scu_get_mask(TPR.CA, 0);
@@ -2530,13 +2523,9 @@ static int do_an_op(instr_t *ip)
                 } else if ((TPR.CA & ~7) == ea + 0050) {
                     ret = scu_get_calendar(TPR.CA);
                     show_q = 0;
-                } else if ((TPR.CA & ~7) == ea + 0060) {
-                    // store unit mode reg
-                    log_msg(WARN_MSG, "OPU::opcode::rscr", "store unit mode reg unimplemented\n");
-                    cancel_run(STOP_BUG);
-                    ret = 1;
-                } else if ((TPR.CA & ~7) == ea + 0070) {
-                    log_msg(WARN_MSG, "OPU::opcode::rscr", "store unit mode reg unimplemented\n");
+                } else if ((TPR.CA & ~7) == ea + 0060 || (TPR.CA & ~7) == ea + 0070) {
+                    // get store unit mode reg
+                    log_msg(WARN_MSG, "OPU::opcode::rscr", "get store unit mode reg unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else {
@@ -2560,6 +2549,24 @@ static int do_an_op(instr_t *ip)
                         // not considered to be part of the "data" switches.
                         reg_A = (t_uint64) 024000717200; // switches: 4, 6, 18, 19, 20, 23, 24, 25, 26, 28
                         break;
+                    case 1: // Config switches for ports A, B, C, D
+                        // ADR:3, c, d, e, MEM:3
+                        // ADR: addr assignment; c: port enabled; d: sys init enabled; interlace enabled; coded mem size 111b->4k
+                        reg_A = 0;
+extern cpu_ports_t cpu_ports;
+                        for (int port = 0; port < 4; ++port) {
+                            int adr = 0; // Only one SCU, so ADR is 000b for lowest memory
+                            int byte = adr << 6;
+                            int enabled = cpu_ports.ports[port] > 0;    // port enabled?
+                            byte |= enabled << 5;   // port enabled?
+                            byte |= enabled << 4;   // sys init enabled? -- yes because we only have one CPU
+                            byte |= enabled << 3;   // interlace enabled
+                            if (enabled)
+                                byte |= 7;          // BUG: assume max memory size
+                            reg_A = (reg_A << 9) | byte;
+                        }
+                        log_msg(NOTIFY_MSG, "OPU::opcode::rsw", "function xxx%o sets A=%012llo.\n", low, reg_A);
+                        break;
                     case 2:
 #if 0
                         // from start_cpu.pl1
@@ -2578,6 +2585,10 @@ static int do_an_op(instr_t *ip)
                         reg_A = setbits36(reg_A, 23, 11, 016);  // 1110b=>L68 re start_cpu.pl1
                         reg_A = setbits36(reg_A, 34, 2, switches.cpu_num);
 #endif
+                        log_msg(NOTIFY_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012llo.\n", low, reg_A);
+                        break;
+                    case 4:
+                        reg_A = 0;  // see AL-39, configuration switch data; 0 is full memory with 4 word interlace
                         log_msg(NOTIFY_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012llo.\n", low, reg_A);
                         break;
                     default:
@@ -2615,8 +2626,8 @@ static int do_an_op(instr_t *ip)
             // smic unimplemented
             case opcode0_sscr: { // priv
                 // set system controller register (to value in AQ)
-                if (get_addr_mode() != ABSOLUTE_mode && ! is_priv_mode()) {
-                    log_msg(ERR_MSG, "OPU::sscr", "Not in absolute mode\n");
+                if (get_addr_mode() == BAR_mode || ! is_priv_mode()) {
+                    log_msg(ERR_MSG, "OPU::sscr", "fault.\n");
                     fault_gen(illproc_fault);
                     return 1;
                 }
@@ -2861,7 +2872,8 @@ static int do_an_op(instr_t *ip)
             // ssdr unimplemented
 
             case opcode1_camp: {    // Clear Associative Memory Pages
-                if (get_addr_mode() != ABSOLUTE_mode) {
+                if (get_addr_mode() == BAR_mode || ! is_priv_mode()) {
+                    log_msg(WARN_MSG, "OPU::camp", "faulting.\n");
                     fault_gen(illproc_fault);
                     return 1;
                 }
@@ -2874,6 +2886,8 @@ static int do_an_op(instr_t *ip)
                 } else if (enable == 1) {
                     cu.PT_ON = 0;
                     log_msg(NOTIFY_MSG, "OPU::camp", "Disabling PTWAM\n");
+                } else if (enable == 0) {
+                    // Don't change enabled/disabled status
                 } else {
                     log_msg(WARN_MSG, "OPU::camp", "Unknown enable/disable mode %06o=>%#o\n", TPR.CA, enable);
                     cancel_run(STOP_WARN);
@@ -2918,11 +2932,14 @@ static int do_an_op(instr_t *ip)
 
             // a4bd unimplemented -- add 4 bit displacement to addr register
             // a6bd
-            case opcode1_a9bd:
+            case opcode1_a9bd:  // add 9 bit displacement to addr register
                 log_msg(DEBUG_MSG, "OPU::a9bd", "APU does our work for us\n");
                 return 0;
 
-            // abd unimplemented -- add bit displacement to addr register
+            case opcode1_abd:   // add bit displacement to addr register
+                log_msg(DEBUG_MSG, "OPU::a9bd", "APU does our work for us\n");
+                return 0;
+
             // awd unimplemented
             // s4bd unimplemented
             // s6bd unimplemented
@@ -2973,7 +2990,10 @@ static int do_an_op(instr_t *ip)
             }
             
             // csr unimplemented -- combine bit strings right
-            // cmpb unimplemented -- compare bit strings
+
+            case opcode1_cmpb:
+                return op_cmpb(ip);
+
             // sztl unimplemented -- similar to csl?
             // sztr unimplemented -- similar to csr?
             // btd unimplemented --  binary to decimal convert
@@ -3791,6 +3811,74 @@ static int op_cmpc(const instr_t* ip)
 
 // ============================================================================
 
+static int op_cmpb(const instr_t* ip)
+{
+    const char* moi = "OPU::cmpb";
+
+    uint fill = ip->addr >> 17;
+    uint trunc_enable = (ip->addr >> 8) & 1;
+    uint mf2bits = ip->addr & MASKBITS(7);
+    eis_mf_t mf2;
+    (void) parse_mf(mf2bits, &mf2);
+    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+
+    t_uint64 word1, word2;
+    if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
+        return 1;
+
+    cpu.irodd_invalid = 1;
+
+    eis_bit_desc_t desc1;
+    parse_eis_bit_desc(word1, &ip->mods.mf1, &desc1);
+    eis_bit_desc_t desc2;
+    parse_eis_bit_desc(word2, &mf2, &desc2);
+
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_bit_desc_to_text(&desc1));
+    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_bit_desc_to_text(&desc2));
+
+    int ret = 0;
+
+    flag_t nib1, nib2;  // for this instruction, these are bit valued
+    int zero = 1;
+    int carry = 1;
+    while (desc1.n > 0 || desc2.n > 0) {
+        if (desc1.n == 0)
+            nib1 = fill & MASKBITS(desc1.nbits);
+        else
+            if (get_eis_bit(&ip->mods.mf1, &desc1, &nib1) != 0) {   // must fetch when needed
+                ret = 1;
+                break;
+            }
+        if (desc2.n == 0)
+            nib2 = fill & MASKBITS(desc2.nbits);
+        else
+            if (get_eis_bit(&mf2, &desc2, &nib2) != 0) {    // must fetch when needed
+                ret = 1;
+                break;
+            }
+        if (nib1 < nib2) {
+            zero = 0;
+            carry = 0;
+            break;
+        } else if (nib1 > nib2) {
+            zero = 0;
+            break;
+        }
+    }
+    if (ret == 0) {
+        IR.zero = zero;
+        IR.carry = carry;
+    }
+
+    //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
+    //cancel_run(STOP_WARN);
+    log_msg(DEBUG_MSG, moi, "finished.\n");
+    PPR.IC += 3;        // BUG: when should we bump IC?  probably not for seg faults, but probably yes for overflow
+    return ret;
+}
+
+// ============================================================================
+
 static int op_scm(const instr_t* ip)
 {
     const char* moi = "OPU::scm";
@@ -3801,7 +3889,7 @@ static int op_scm(const instr_t* ip)
     uint mf2bits = ip->addr & MASKBITS(7);
     eis_mf_t mf2;
     (void) parse_mf(mf2bits, &mf2);
-    log_msg(NOTIFY_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
 
     t_uint64 word1, word2, word3;
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, &word3) != 0)
@@ -3822,10 +3910,10 @@ static int op_scm(const instr_t* ip)
     //uint y3_indir = (word3 & 0100) != 0;
     //uint y3_reg = word3 & 017;
     
-    log_msg(NOTIFY_MSG, moi, "mask = %03o\n", mask);
-    log_msg(NOTIFY_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
-    log_msg(NOTIFY_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
-    log_msg(NOTIFY_MSG, moi, "y3: %06o\n", y3);
+    log_msg(DEBUG_MSG, moi, "mask = %03o\n", mask);
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
+    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
+    log_msg(DEBUG_MSG, moi, "y3: %06o\n", y3);
 
     int ret = 0;
 
@@ -3835,9 +3923,9 @@ static int op_scm(const instr_t* ip)
         return 1;
     }
     if (isprint(test_nib))
-        log_msg(NOTIFY_MSG, moi, "test char: %03o '%c'\n", test_nib, test_nib);
+        log_msg(DEBUG_MSG, moi, "test char: %03o '%c'\n", test_nib, test_nib);
     else
-        log_msg(NOTIFY_MSG, moi, "test char: %03o\n", test_nib);
+        log_msg(DEBUG_MSG, moi, "test char: %03o\n", test_nib);
     uint n = desc1.n;
     uint i;
     for (i = 0; i < n; ++i) {
@@ -3847,7 +3935,7 @@ static int op_scm(const instr_t* ip)
             break;
         }
         uint z = ~mask & (nib ^ test_nib);
-        log_msg(NOTIFY_MSG, moi, "compare nibble %#o(%+d): value %03o yields %#o\n", i, i, nib, z);
+        log_msg(DEBUG_MSG, moi, "compare nibble %#o(%+d): value %03o yields %#o\n", i, i, nib, z);
         if (z == 0)
             break;
     }
@@ -3855,12 +3943,10 @@ static int op_scm(const instr_t* ip)
         IR.tally_runout = i == n;
         // t_uint64 word = setbits36(0, 12, 24, i);
         t_uint64 word = i;
-        log_msg(NOTIFY_MSG, moi, "TRO=%d; writing %#o(%+d) to abs addr %#o\n", IR.tally_runout, i, i, y3);
+        log_msg(DEBUG_MSG, moi, "TRO=%d; writing %#o(%+d) to abs addr %#o\n", IR.tally_runout, i, i, y3);
         ret = store_abs_word(y3, word);
     }
 
-    //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
-    //cancel_run(STOP_IBKPT);
     PPR.IC += 4;        // BUG: check other eis mw instr to make sure IC update is after op fetches (affects ic addr mode and prob restart)
     return ret;
 }

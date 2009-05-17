@@ -521,7 +521,7 @@ ninstr = 0;
             log_ignore_ic_change();
             hist_dump();
             log_notice_ic_change();
-            hist_save();
+            hist_save();    // no stack, single backup but all regs, not just ic history
         }
         if (cancel) {
             if (reason == 0)
@@ -1883,7 +1883,7 @@ static void hist_dump()
     if (memcmp(&hist.IR, &IR, sizeof(hist.IR)) != 0) {
         t_uint64 ir;
         save_IR(&ir);
-        log_msg(DEBUG_MSG, "HIST", "IR: %s %s\n", bin2text(ir, 18), ir2text(&hist.IR));
+        log_msg(DEBUG_MSG, "HIST", "IR: %s %s\n", bin2text(ir, 18), ir2text(&IR));
     }
     if (memcmp(hist.AR_PR, AR_PR, sizeof(hist.AR_PR)) != 0) {
         for (int i = 0; i < ARRAY_SIZE(AR_PR); ++i)
@@ -2062,6 +2062,7 @@ static void show_location(int show_source_lines)
     // Segment 0400 is the first used segment and shows a lot of bouncing between source
     // files that's no longer of interest   
     const int show_source_changes = PPR.PSR != 0400 || (source && source->seg != 0400);
+    //const int show_source_changes = 0;
 
     static int seg_scanned[512];
     if (! opt_debug && ! show_source_changes && ! show_source_lines)
@@ -2083,8 +2084,11 @@ static void show_location(int show_source_lines)
     char *old = (source == NULL) ? NULL : (source->ename) ? source->ename : source->fname;
     if (source) {
         source_changed = source->seg != seg || source->addr_lo > PPR.IC || source->addr_hi < 0 || PPR.IC > source->addr_hi;
-        if (source_changed)
+        if (source_changed) {
+            t_symtab_ent *osource = source;
             source = symtab_find(seg, PPR.IC, symtab_file | symtab_proc);
+            source_changed = osource != source;
+        }
     } else {
         // Note that we don't expect to have both a "file" entry and a "proc" entry
         source = symtab_find(seg, PPR.IC, symtab_file | symtab_proc);

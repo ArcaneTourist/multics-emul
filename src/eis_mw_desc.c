@@ -277,7 +277,7 @@ void parse_eis_bit_desc(t_uint64 word, const eis_mf_t* mfp, eis_bit_desc_t* desc
         log_msg(ERR_MSG, "EIS", "Bit String Operand String has illegal bitno.\n");
         cancel_run(STOP_BUG);
     }
-    descp->ta = 9;
+    descp->ta = 7;  // arbitrary impossible value for 2 bit field
     descp->n_orig = getbits36(word, 24, 12);
     descp->n = descp->n_orig;
     descp->nbits = 1;
@@ -884,6 +884,17 @@ int addr_mod_eis_addr_reg(instr_t *ip)
     int bit27 = op % 2;
     op >>= 1;
 
+    int nbits;
+    switch (op) {
+        case opcode1_a9bd: nbits = 9; break;
+        case opcode1_a6bd: nbits = 6; break;
+        case opcode1_a4bd: nbits = 4; break;
+        case opcode1_abd: nbits = 1; break;
+        default:
+            log_msg(ERR_MSG, "APU", "internal error: opcode %03o(%d) not implemented for EIS address register arithmetic\n", op, bit27);
+            cancel_run(STOP_BUG);
+    }
+
     uint ar = ip->addr >> 15;
     int soffset = sign15(ip->addr & MASKBITS(15));
     uint a = ip->mods.single.pr_bit;
@@ -892,7 +903,7 @@ int addr_mod_eis_addr_reg(instr_t *ip)
     // enum atag_tm tm = atag_r;
     uint td = ip->mods.single.tag & MASKBITS(4);
     TPR.CA = 0;         // BUG: what does reg mod mean for these instr?
-    reg_mod(td, 0);     // BUG: what does reg mod mean for these instr?
+    reg_mod(td, 0);     // BUG: Do we need to use the same width special cases as for MF fields? (prob not)
     if (td != 0) {
         if (TPR.is_value)
             log_msg(DEBUG_MSG, "APU", "Reg mod for EIS yields value %#llo\n", TPR.value);
@@ -904,7 +915,7 @@ int addr_mod_eis_addr_reg(instr_t *ip)
     switch (op) {
         case opcode1_a9bd: {
             int oops = sign18(TPR.CA) < 0;
-            // if (oops) {
+            // if (oops)
             {
                 if (oops) ++ opt_debug;
                 if (oops) log_msg(DEBUG_MSG, "APU::eis-addr-reg", "Enabling debug for negative CA.\n");
@@ -915,20 +926,13 @@ int addr_mod_eis_addr_reg(instr_t *ip)
             if (a == 0) {
                 AR_PR[ar].wordno = soffset + sign18(TPR.CA) / 4;
                 AR_PR[ar].AR.charno = TPR.CA % 4;
-                if (AR_PR[ar].AR.bitno != 0) {
-                    // BUG: AL39 doesn't say to clear bitno, but it seems we'd want to
-                    log_msg(WARN_MSG, "APU::eis-addr-reg", "a9bd: AR bitno is non zero\n");
-                    cancel_run(STOP_WARN);
-                }
-                // handle anomaly (AL39 AR description)
-                AR_PR[ar].PR.bitno = AR_PR[ar].AR.charno * 9;   // 0, 9, 18, 27
             } else {
                 AR_PR[ar].wordno += soffset + (sign18(TPR.CA) + AR_PR[ar].AR.charno) / 4;
                 AR_PR[ar].AR.charno = (TPR.CA + AR_PR[ar].AR.charno) % 4;
-                AR_PR[ar].AR.bitno = 0;
-                // handle anomaly (AL39 AR description)
-                AR_PR[ar].PR.bitno = AR_PR[ar].AR.charno * 9;   // 0, 9, 18, 27
             }
+            AR_PR[ar].AR.bitno = 0;
+            // handle anomaly (AL39 AR description)
+            AR_PR[ar].PR.bitno = AR_PR[ar].AR.charno * 9;   // 0, 9, 18, 27
             if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Addr mod: AR[%d]: wordno = %#o, charno=%#o, bitno=%#o; PR bitno=%d\n",
                 ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
 if (AR_PR[ar].wordno == 010000005642) {
@@ -939,10 +943,44 @@ if (AR_PR[ar].wordno == 010000005642) {
             if (oops) -- opt_debug;
             return 0;
         }
+#if 1
+        case opcode1_abd: {
+            int oops = sign18(TPR.CA) < 0;
+            {
+                if (oops) ++ opt_debug;
+                if (oops) log_msg(DEBUG_MSG, "APU::eis-addr-reg", "Enabling debug for negative CA.\n");
+                if (opt_debug>0) log_msg(DEBUG_MSG, "APU::eis-addr-reg", "CA = %#o => %#o =>%d\n", TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
+                if (opt_debug>0) log_msg(DEBUG_MSG, "APU::eis-addr-reg", "Initial AR[%d]:   wordno = %#o, charno=%#o, bitno=%#o; PR bitno=%d\n",
+                    ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
+            }
+            if (a == 0) {
+                int creg = sign18(TPR.CA);
+                AR_PR[ar].wordno = soffset + creg / 36;
+                AR_PR[ar].AR.charno = (creg % 36) / 9;
+                AR_PR[ar].AR.bitno = creg % 9;
+            } else {
+                int creg = sign18(TPR.CA);
+                AR_PR[ar].wordno += soffset + (9 *  AR_PR[ar].AR.charno + 36 * creg + AR_PR[ar].AR.bitno) / 36;
+                AR_PR[ar].AR.charno = (9 * AR_PR[ar].AR.charno + 36 * creg + AR_PR[ar].AR.bitno % 36) / 9;
+                AR_PR[ar].AR.bitno = (9 * AR_PR[ar].AR.charno + 36 * creg + AR_PR[ar].AR.bitno) % 9;
+            }
+            // handle anomaly (AL39 AR description)
+            AR_PR[ar].PR.bitno = AR_PR[ar].AR.charno * 9;   // 0, 9, 18, 27
+            if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Addr mod: AR[%d]: wordno = %#o, charno=%#o, bitno=%#o; PR bitno=%d\n",
+                ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
+if (AR_PR[ar].wordno == 010000005642) {
+                log_msg(WARN_MSG, "APU", "a=%d; CA is %#o\n", a, TPR.CA);
+                log_msg(WARN_MSG, "APU", "soffset is %d\n", soffset);
+                cancel_run(STOP_BUG);
+}
+            if (oops) -- opt_debug;
+            return 0;
+        }
+#endif
         case opcode1_a4bd:
         case opcode1_a6bd:
         default:
-            log_msg(ERR_MSG, "APU", "internal error: opcode %03o(%d) not valid for EIS address register arithmetic\n", op, bit27);
+            log_msg(ERR_MSG, "APU", "internal error: opcode %03o(%d) not implemented for EIS address register arithmetic\n", op, bit27);
             cancel_run(STOP_BUG);
     }
     return 1;
