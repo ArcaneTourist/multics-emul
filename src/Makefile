@@ -32,8 +32,8 @@ listing.o: *.h
 bit-test.o: *.h
 bit-test: bit-test.o bits.o
 scan-tape: scan-tape.o bits.o opcode_text.o
-mtst: mtst.o math.o
-	$(CC) $(CFLAGS) $(LDFLAGS) -lgmp -o $@ mtst.o math.o 
+mtst: mtst.o math.o misc.o
+	$(CC) $(CFLAGS) $(LDFLAGS) -lgmp -o $@ mtst.o math.o misc.o
 tst: tst.o misc.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ tst.o misc.o
 

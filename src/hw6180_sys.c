@@ -387,8 +387,9 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
     if (uptr == &cpu_unit) {
         // memory request -- print memory specified by SIMH absolute M[addr].  However
         // note that parse_addr() was called by SIMH to determine the absolute addr.
+        /* First print matching source line if we're dumping instructions */
         if (sw & SWMASK('M')) {
-            // M -> instr
+            // M -> instr -- print matching source line if we have one
             int offset = last_parsed_offset + addr - last_parsed_addr;
             if (offset >= 0) {
                 t_symtab_ent *source_line = symtab_find(last_parsed_seg, offset, symtab_line);
@@ -397,35 +398,54 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
                     fprintf(ofile, "%06o:\t", addr);
                 }
             }
+        }
+        /* Next, we always output the numeric value */
+        t_addr alow = addr;
+        t_addr ahi = addr;
+        fprintf(ofile, "%012llo", M[addr]);
+        if (sw & SWMASK('S')) {
+            // SDWs are two words
+            ++ ahi;
+            fprintf(ofile, " %012llo", M[ahi]);
+        }
+        /* User may request (A)scii in addition to another format */
+        if (sw & SWMASK('A')) {
+            for (t_addr a = alow; a <= ahi; ++ a) {
+                t_uint64 word = M[a];
+                fprintf(ofile, " ");
+                for (int i = 0; i < 4; ++i) {
+                    uint c = word >> 27;
+                    word = (word << 9) & MASKBITS(36);
+                    if (c <= 0177 && isprint(c)) {
+                        fprintf(ofile, "  '%c'", c);
+                    } else {
+                        fprintf(ofile, " \\%03o", c);
+                    }
+                }
+            }
+        }
+        /* See if any other format was requested (but don't bother honoring multiple formats */
+        if (sw & SWMASK('M')) {
+            // M -> instr
             char *instr = print_instr(M[addr]);
-            fprintf(ofile, "%012llo %s", M[addr], instr);
+            fprintf(ofile, " %s", instr);
         } else if (sw & SWMASK('L')) {
             // L -> LPW
-            fprintf(ofile, "%012llo %s", M[addr], print_lpw(addr));
+            fprintf(ofile, " %s", print_lpw(addr));
         } else if (sw & SWMASK('P')) {
             // P -> PTW
             char *s = print_ptw(M[addr]);
-            fprintf(ofile, "%012llo %s", M[addr], s);
+            fprintf(ofile, " %s", s);
         } else if (sw & SWMASK('S')) {
             // S -> SDW
             char *s = print_sdw(M[addr], M[addr+1]);
-            fprintf(ofile, "%012llo %012llo %s", M[addr], M[addr+1], s);
+            fprintf(ofile, " %s", s);
         } else if (sw & SWMASK('A')) {
-            t_uint64 word = M[addr];
-            fprintf(ofile, "%012llo ", word);
-            for (int i = 0; i < 4; ++i) {
-                uint c = word >> 27;
-                word = (word << 9) & MASKBITS(36);
-                if (c <= 0177 && isprint(c)) {
-                    fprintf(ofile, " '%c'", c);
-                } else {
-                    fprintf(ofile, " \\%03o", c);
-                }
-            }
+            // already done
         } else if (sw) {
             return SCPE_ARG;
         } else {
-            fprintf(ofile, "%012llo", M[addr]);
+            // we already printed the numeric value, so nothing else to do
         }
         fflush(ofile);
         return SCPE_OK;

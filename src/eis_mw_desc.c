@@ -315,11 +315,11 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
                 else {
                     // impossible
                     *np = reg_A;
+                    log_msg(WARN_MSG, "APU", "MF len: nbits=%d; expecting 1,4,6, or 9.\n", nbits);
                     cancel_run(STOP_BUG);
                 }
                 if (nbits != 9) {
-                    log_msg(WARN_MSG, "APU", "MF len: nbits=%d, reg modifier 05: A=%#llo => %#o\n", nbits, reg_A, *np);
-                    cancel_run(STOP_IBKPT);
+                    log_msg(DEBUG_MSG, "APU", "MF len: nbits=%d, reg modifier 05: A=%#llo => %#o\n", nbits, reg_A, *np);
                 }
                 return;
             case 06: // q
@@ -334,11 +334,11 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
                 else {
                     // impossible
                     *np = reg_Q;
+                    log_msg(WARN_MSG, "APU", "MF len: nbits=%d; expecting 1,4,6, or 9.\n", nbits);
                     cancel_run(STOP_BUG);
                 }
                 if (nbits != 9) {
-                    log_msg(WARN_MSG, "APU", "MF len: nbits=%d, reg modifier 06: A=%#llo => %#o\n", nbits, reg_A, *np);
-                    cancel_run(STOP_IBKPT);
+                    log_msg(DEBUG_MSG, "APU", "MF len: nbits=%d, reg modifier 06: A=%#llo => %#o\n", nbits, reg_A, *np);
                 }
                 return;
             case 010:

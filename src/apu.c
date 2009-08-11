@@ -494,8 +494,14 @@ static int temp_addr_mod(const instr_t *ip)
     int op = ip->opcode;
     int bit27 = op % 2;
     op >>= 1;
-    if (bit27 == 0 && op == opcode0_stca)
-        return 0;
+    if (bit27 == 0) {
+        if (op == opcode0_stca || op == opcode0_stcq)
+            return 0;
+        if (op == opcode0_stba || op == opcode0_stbq)
+            return 0;
+        if (op == opcode0_lcpr)
+            return 0;
+    }
 
 #if 0
     ???
@@ -507,6 +513,7 @@ static int temp_addr_mod(const instr_t *ip)
 
     ca_temp.more = 1;
     int mult = 0;
+
     while (ca_temp.more) {
         if (compute_addr(ip, &ca_temp) != 0) {
             // if (ca_temp.more) log_msg(NOTIFY_MSG, moi, "Final (incomplete) CA: 0%0o\n", TPR.CA);

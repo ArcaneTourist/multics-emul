@@ -604,7 +604,7 @@ static inline t_uint64 setbits36(t_uint64 x, int p, unsigned n, t_uint64 val)
 extern int opt_debug;
 extern t_uint64 reg_A;      // Accumulator, 36 bits
 extern t_uint64 reg_Q;      // Quotient, 36 bits
-extern t_uint64 reg_E;      // Quotient, 36 bits
+extern uint8 reg_E;         // Floating Point exponent, 8 bits
 extern uint32 reg_X[8];     // Index Registers, 18 bits; SIMH expects data type to be no larger than needed
 extern IR_t IR;             // Indicator Register
 extern BAR_reg_t BAR;       // Base Address Register (BAR); 18 bits
@@ -675,7 +675,9 @@ extern int fetch_yblock(uint addr, int aligned, uint n, t_uint64 *wordsp);
 extern int fetch_yblock8(uint addr, t_uint64 *wordsp);
 extern int store_yblock16(uint addr, const t_uint64 *wordsp);
 
-extern void mpy(t_int64 a, t_int64 b, t_uint64* hip, t_uint64 *lowp);
+extern void mpy(t_uint64 a, t_uint64 b, t_uint64* hip, t_uint64 *lowp);
+extern void div72(t_uint64 hi, t_uint64 low, t_uint64 divisor, t_uint64* quotp, t_uint64* remp);
+extern void mpy72fract(t_uint64 ahi, t_uint64 alow, t_uint64 b, t_uint64* hip, t_uint64 *lowp);
 
 extern int cmd_dump_vm(int32 arg, char *buf);
 extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);

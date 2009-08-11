@@ -269,7 +269,7 @@ int scu_set_cpu_mask(t_uint64 addr)
 
 int scu_get_mode_register(t_uint64 addr)
 {
-    // Implements part of the sscr instruction
+    // Implements part of the rscr instruction
     // BUG: addr should determine which SCU is selected
 
     if (scu_hw_arg_check("get-mode-register", addr, 0) != 0)
@@ -278,13 +278,16 @@ int scu_get_mode_register(t_uint64 addr)
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
 
-    // See scr.incl.pl1 
+    // See scr.incl.pl1 and AN87
     reg_A = 0;  // first 50 bits are padding
     reg_Q = 0;
-    reg_Q |= setbits36(reg_Q, 51-36, 4, 2); // 4MW SCU
-    // reg_Q |= setbits36(reg_Q, 55-36, 2, 0);  // normal timing
-    // reg_Q |= setbits36(reg_Q, 65-36, 2, 0);  // both 00b and 10b mean normal voltage
-    // reg_Q |= setbits36(reg_Q, 70-36, 1, 0);  // SGR command
+    reg_Q |= setbits36(reg_Q, 50-36, 4, 2); // 4MW SCU (level 66 SCU)
+    /*
+        remaining bits are only for T&D test and diagnostics
+    */
+        // reg_Q |= setbits36(reg_Q, 54-36, 2, 0);  // TS strobe normal timing
+        // reg_Q |= setbits36(reg_Q, 64-36, 2, 0);  // both 00b and 10b mean normal voltage
+        // reg_Q |= setbits36(reg_Q, 70-36, 1, 0);  // SGR accepted
 
     return 0;
 }

@@ -80,7 +80,7 @@ extern int32 sim_switches;
 t_uint64 reg_A; // Accumulator, 36 bits
 t_uint64 reg_Q; // Quotient, 36 bits
 // Note: AQ register is just a combination of the A and Q registers
-t_uint64 reg_E; // Exponent
+uint8 reg_E;    // Exponent
 // Note: EAQ register is just a combination of the E, A, and Q registers
 uint32 reg_X[8];    // Index Registers, 18 bits; SIMH expects data type to be no larger than needed
 IR_t IR;        // Indicator register
@@ -122,7 +122,7 @@ REG cpu_reg[] = {
     { GRDATA (IR, saved_IR, 2, 18, 0), REG_RO | REG_VMIO | REG_USER1},
     { ORDATA (A, reg_A, 36) },
     { ORDATA (Q, reg_Q, 36) },
-    { ORDATA (E, reg_E, 36) },
+    { ORDATA (E, reg_E, 8) },
     { BRDATA (X, reg_X, 8, 18, 8) },
     { ORDATA (TR, reg_TR, 27), REG_RO },
     { BRDATA (PR, saved_ar_pr, 8, 42, 8), REG_VMIO | REG_USER2 },
@@ -1026,9 +1026,11 @@ static t_stat control_unit(void)
 
             flag_t do_odd = 0;
 
-            if (cu.xde)
+            int doing_xde = cu.xde;
+            int doing_xdo = cu.xdo;
+            if (doing_xde)
                 log_msg(NOTIFY_MSG, "CU", "XDE-EXEC even\n");
-            else if (cu.xdo) {
+            else if (doing_xdo) {
                 log_msg(NOTIFY_MSG, "CU", "XDE-EXEC odd\n");
                 do_odd = 1;
             } else if (! cpu.ic_odd) {
@@ -1078,8 +1080,8 @@ static t_stat control_unit(void)
             if (is_fault) {
                 // faulted
                 log_msg(WARN_MSG, "CU", "Probable fault detected after instruction execution\n");
-                if (cu.xde || cu.xdo) {
-                    char *which = cu.xde ? "even" : "odd";
+                if (doing_xde || doing_xdo) {
+                    char *which = doing_xde ? "even" : "odd";
                     log_msg(WARN_MSG, "CU", "XED %s instruction terminated by fault.\n", which);
                     // Note that we don't clear xde and xdo because they might be about to be stored by scu. Since we'll be in a FAULT cycle next, both flags will be set as part of the fault handler's xed
                 }
@@ -1164,7 +1166,7 @@ static t_stat control_unit(void)
                 // Retest cu.rpt -- we might have just finished repeating
                 if (cu.rpt) {
                     // Don't do anything
-                } else if (cu.xde) {
+                } else if (doing_xde) {
                     cu.xde = 0;
                     if (cpu.trgo) {
                         log_msg(NOTIFY_MSG, "CU", "XED even instruction was a transfer\n");
@@ -1172,9 +1174,11 @@ static t_stat control_unit(void)
                         cu.xdo = 0;
                         events.xed = 0;
                         cpu.cycle = FETCH_cycle;
-                    } else
+                    } else {
                         log_msg(NOTIFY_MSG, "CU", "Resetting XED even flag\n");
-                } else if (cu.xdo) {
+                        // BUG? -- do we need to reset events.xed if cu.xdo isn't set?  -- but xdo must be set unless xed doesn't really mean double...
+                    }
+                } else if (doing_xdo) {
                     log_msg(NOTIFY_MSG, "CU", "Resetting XED odd flag\n");
                     cu.xdo = 0;
                     if (events.xed) {
@@ -1190,11 +1194,12 @@ static t_stat control_unit(void)
                     if (!cpu.trgo) {
                         if (PPR.IC != IC_temp)
                             log_msg(NOTIFY_MSG, "CU", "No transfer instruction in XED, but IC changed from %#o to %#o\n", IC_temp, PPR.IC);
-                        ++ PPR.IC;
+                        // ++ PPR.IC;       // this happens after executing the xde; we don't need to do it again
                     }
                 } else if (! cpu.ic_odd) {
                     // Performed non-repeat instr at even loc (or finished last repetition)
                     if (cpu.cycle == EXEC_cycle) {
+                            // After an xde, we'll increment PPR.IC.   Setting cpu.ic_odd will be ignored.
                             if (!cpu.trgo) {
                                 if (PPR.IC == IC_temp) {
                                     cpu.ic_odd = 1; // execute odd instr of current pair
@@ -1212,6 +1217,7 @@ static t_stat control_unit(void)
                     }
                 } else {
                     // Performed non-repeat instr at odd loc (or finished last repetition)
+                    // After an xde, we'll increment PPR.IC.   Setting cpu.ic_odd will be ignored.
                     if (cpu.cycle == EXEC_cycle) {
                         if (!cpu.trgo) {
                             if (PPR.IC == IC_temp) {
@@ -1824,7 +1830,7 @@ static void init_ops()
 typedef struct {
     t_uint64 reg_A;
     t_uint64 reg_Q;
-    t_uint64 reg_E;
+    uint8 reg_E;
     uint32 reg_X[8];
     IR_t IR;
     AR_PR_t AR_PR[8];
@@ -1876,7 +1882,7 @@ static void hist_dump()
             log_msg(DEBUG_MSG, "HIST", "Reg Q: %012llo\n", reg_Q);
     }
     if (reg_E != hist.reg_E)
-        log_msg(DEBUG_MSG, "HIST", "Reg E: %012llo\n", reg_E);
+        log_msg(DEBUG_MSG, "HIST", "Reg E: %03o (%d)\n", reg_E, ((reg_E & (1<<7)) == 0) ? reg_E : (int) reg_E - 128);
     for (int i = 0; i < ARRAY_SIZE(reg_X); ++i)
         if (reg_X[i] != hist.reg_X[i])
             log_msg(DEBUG_MSG, "HIST", "Reg X[%d]: %06o\n", i, reg_X[i]);
@@ -1963,7 +1969,7 @@ void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic)
 
 //=============================================================================
 
-#define ic_hist_max 40
+#define ic_hist_max 60
 static int ic_hist_ptr;
 static int ic_hist_wrapped;
 static struct {
@@ -2013,12 +2019,12 @@ int cmd_dump_history(int32 arg, char *buf)
             t_symtab_ent *source = symtab_find((ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1, ic_hist[i].ic, symtab_file | symtab_proc);
             // BUG: do line number
             char *name = source ? (source->ename) ? source->ename : source->fname : unknown;
-            if (prior != name) {
-                t_symtab_ent *source_line = symtab_find((ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1, ic_hist[i].ic, symtab_line);
-                if (source_line) {
-                    out_msg("IC: %s: %-60s %s, line %d\n", icbuf, instr2text(&ic_hist[i].instr), name, source_line->line_no);
-                    out_msg("\tline %d: %s\n", source_line->line_no, source_line->line);
-                } else {
+            t_symtab_ent *source_line = symtab_find((ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1, ic_hist[i].ic, symtab_line);
+            if (source_line) {
+                out_msg("IC: %s: %-60s %s, line %d\n", icbuf, instr2text(&ic_hist[i].instr), name, source_line->line_no);
+                out_msg("\tline %d: %s\n", source_line->line_no, source_line->line);
+            } else {
+                if (source) {
                     int offset = (source) ? (int) ic_hist[i].ic - source->addr_lo : 0;
                     if (offset == 0 || !(source->types & symtab_proc))
                         out_msg("IC: %s: %-60s %s\n", icbuf, instr2text(&ic_hist[i].instr), name);
@@ -2028,10 +2034,10 @@ int cmd_dump_history(int32 arg, char *buf)
                             offset = - offset;
                         out_msg("IC: %s: %-60s %s %c%#o\n", icbuf, instr2text(&ic_hist[i].instr), name, sign, offset);
                     }
-                }
-                prior = name;
-            } else
-                out_msg("IC: %s: %-60s\n", icbuf, instr2text(&ic_hist[i].instr));
+                } else
+                    out_msg("IC: %s: %-60s\n", icbuf, instr2text(&ic_hist[i].instr));
+            }
+            prior = name;
         }
     }
     return 0;
@@ -2112,7 +2118,8 @@ static void show_location(int show_source_lines)
             }
             if (source) {
                 char *name = (source->types & symtab_proc) ? source->ename : source->fname;
-                out_msg("Source:  %s, %5d:  %s\n", name, source_line->line_no, source_line->line);
+                // out_msg("Source:  %s, %5d:  %s\n", name, source_line->line_no, source_line->line);
+                out_msg("Source:  %s %o|%06o %5d:  %s\n", name, seg, PPR.IC, source_line->line_no, source_line->line);
             } else
                 out_msg("Source:  Line %5d:  %s\n", source_line->line_no, source_line->line);
         }
