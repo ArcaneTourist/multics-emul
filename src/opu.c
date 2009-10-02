@@ -44,7 +44,7 @@ static int op_add(instr_t *ip, t_uint64 *operand);
 static int op_and(instr_t *ip, t_uint64 *op, t_uint64 *op2, t_uint64 *dest1, t_uint64 *dest2);
 static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest);
 static int add18(t_uint64 a, t_uint64 b, t_uint64 *dest);
-static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2, int is_unsigned);
+//int add72(t_uint64 ahi, t_uint64 alow, t_uint64* dest1, t_uint64* dest2, int is_unsigned);
 static int do_epp(int epp);
 static int do_eawp(int n);
 static int do_epbp(int n);
@@ -61,10 +61,10 @@ static int op_cmpb(const instr_t* ip);
 static int do_spbp(int n);
 static int op_csl(const instr_t* ip);
 static int op_scm(const instr_t* ip);
+
 static int op_dvf(const instr_t* ip);
 static int op_ufa(const instr_t* ip);
 static int op_ufm(const instr_t* ip);
-static int op_fno(void);
 
 static uint saved_tro;
 
@@ -1735,7 +1735,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
             case opcode0_fad: {         // floating add
                 int ret = op_ufa(ip);
                 if (ret == 0)
-                    ret = op_fno();
+                    ret = instr_fno();
                 return ret;
             }
 
@@ -1753,7 +1753,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
             case opcode0_fmp: {     // floating multiply
                 int ret = op_ufm(ip);
                 if (ret == 0)
-                    ret = op_fno();
+                    ret = instr_fno();
                 return ret;
             }
 
@@ -2208,7 +2208,20 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 reg_Q |= TPR.TBR & MASKBITS(6);
                 return 0;
 
-            // rccl unimplemented
+            case opcode0_rccl: {
+                if (get_addr_mode() == BAR_mode) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                int ret = scu_get_calendar(TPR.CA);
+                if (ret == 0) {
+                    reg_A = setbits36(reg_A, 0, 20, 0);
+                }
+                log_msg(WARN_MSG, "OPU", "Untested opcode %03o(0)\n", ip->opcode);
+                cancel_run(STOP_WARN);
+                return ret;
+            }
+
             // drl unimplemented
 
             case opcode0_xec: {
@@ -3221,18 +3234,18 @@ example: 060 plus negative one
 
 // ----------------------------------------------------------------------------
 
-static int add72(t_uint64 a, t_uint64 b, t_uint64* dest1, t_uint64* dest2, int is_unsigned)
+int add72(t_uint64 ahi, t_uint64 alow, t_uint64* dest1, t_uint64* dest2, int is_unsigned)
 {
     t_uint64 word1, word2;
 
-    uint sign1 = a >> 35;
+    uint sign1 = ahi >> 35;
     uint sign2 = *dest1 >> 35;
 
-    t_uint64 lo = b + *dest2;
+    t_uint64 lo = alow + *dest2;
     int lo_carry = (lo >> 35);
     lo &= MASK36;
 
-    t_uint64 hi = a + *dest1;
+    t_uint64 hi = ahi + *dest1;
     if (lo_carry)
         ++ hi;
     IR.carry = (hi >> 36) != 0;
@@ -4074,61 +4087,18 @@ static int op_csl(const instr_t* ip)
     PPR.IC += 3;        // BUG: when should we bump IC?  probably not for seg faults, but probably yes for overflow
     return ret;
 }
-
 // ============================================================================
 
 static int op_dvf(const instr_t* ip)
 {
+    // dvf -- divide fraction; 71-bit signed fractional dividend  is
+    // divided by a 36-bit fractional divisor
+
     t_uint64 word;
     int ret = fetch_op(ip, &word);
     if (ret != 0)
         return ret;
-
-    log_msg(NOTIFY_MSG, "opu::dvf", "AQ = {%012llo,%012llo} aka (%lld,%lld).  Divisor = %012llo aka %lld.\n", reg_A, reg_Q, reg_A, reg_Q, word, word);
-
-    int dividend_is_neg = bit36_is_neg(reg_A);
-    int divisor_is_neg = bit36_is_neg(word);
-
-    if (dividend_is_neg)
-        negate72(&reg_A, &reg_Q);
-    if (divisor_is_neg)
-        word = negate36(word);
-
-    if (reg_A >= word) { // We're comparing fractions, so we can ignore the less significant bits of the bigger word
-    // if (reg_A || reg_Q >= word) -- treg_As expression would be for integers, not fractions
-        log_msg(WARN_MSG, "opu::dvf", "Numerator larger than denominator -- not generating fault though.\n");
-    }
-    // if (reg_A >= word || word == 0)
-    if (word == 0) {
-        fault_gen(div_fault);
-        IR.neg = dividend_is_neg;
-        IR.zero = word == 0;
-        return 1;
-    }
-
-    // shift AQ right one
-    reg_Q = setbits36(reg_Q>>1, 0, 1, reg_A&1); 
-    reg_A >>= 1;
-
-    t_uint64 quot;
-    t_uint64 rem;
-    // printf("Calling div72 {%012llo,%012llo}/%012llo\n", reg_A, reg_Q, word); 
-    div72(reg_A, reg_Q, word, &quot, &rem);
-    // printf("Div72 returns %012llo rem %012llo -- %lld rem %lld\n", quot, rem, quot, rem);
-    if (rem != 0)
-        if (dividend_is_neg)
-            rem = negate36(rem);
-    if (dividend_is_neg != divisor_is_neg)
-        quot = negate36(quot);
-    //double q = convert(quot, 0, 1);
-    //double r = convert(rem, 0, 1);
-    //printf("Result: %#012llo rem %012llo -- decimal %lld rem %lld.  Representing %g rem %g\n", quot, rem, quot, rem, q, r);
-
-    reg_A = quot;
-    reg_Q = rem;
-    IR.zero = reg_A == 0;
-    IR.neg = bit36_is_neg(reg_A);
-    return 0;
+    return instr_dvf(word);
 }
 
 // ============================================================================
@@ -4139,44 +4109,10 @@ static int op_ufa(const instr_t* ip)
     int ret = fetch_op(ip, &word);
     if (ret != 0)
         return ret;
-
-    log_msg(NOTIFY_MSG, "opu::ufa", "E = %03o(%d) AQ = {%012llo,%012llo} aka (%lld,%lld).\n", reg_E, reg_E, reg_A, reg_Q, reg_A, reg_Q);
-
-    // int aq_neg = bit36_is_neg(reg_A);
-    uint8 op_exp = getbits36(word, 0, 8);
-    uint32 op_mant = getbits36(word, 8, 28);    // 36-8=28 bits
-    log_msg(NOTIFY_MSG, "opu::ufa", "op = %012llo => exp %03o(%d) and mantissa %010o (%d)\n", word, op_exp, (int8) op_exp, op_mant, op_mant);
-
-    if (op_mant == 0) {
-        // short circuit the addition of zero
-        IR.zero = reg_A == 0 && reg_Q == 0;
-        IR.neg = bit36_is_neg(reg_A);
-        IR.exp_overflow = 0;
-        IR.exp_underflow = 0;
-        IR.carry = 0;
-        log_msg(NOTIFY_MSG, "opu::ufa", "addition of zero, short circuiting otherwise unimplemented code.\n");
-        return 0;
-    }
-
-    if ((int8) op_exp < (int8) reg_E) {
-        // operand has the smaller exponent
-        int n =(int8) reg_E - (int8) op_exp;
-        op_mant >>= n;
-        log_msg(NOTIFY_MSG, "opu::ufa", "exp diff is %d; op mantissa now %010o\n", n, op_mant);
-    } else {
-        // AQ has the smaller exponent
-        int n = (int8) op_exp - (int8) reg_E;
-        reg_Q = setbits36(reg_Q >> n, 0, n, reg_A);
-        reg_A >>= n;
-        log_msg(NOTIFY_MSG, "opu::ufa", "exp diff is %d; AQ mantissa now {%012llo, %012llo} (%lld,%lld)\n", n, reg_A, reg_Q, reg_A, reg_Q);
-        reg_E = op_exp;
-    }
-    int op_is_neg = (op_mant >> 27) != 0;
-    // ret = add72(s, op_mant, &reg_A, &reg_Q, 0);
-
-    log_msg(ERR_MSG, "OPU", "Unimplemented opcode %03o(0)\n", ip->opcode);
-    cancel_run(STOP_BUG);
-    return 1;
+    ret = instr_ufa(word);
+    log_msg(WARN_MSG, "OPU", "Untested opcode %03o(0)\n", ip->opcode);
+    cancel_run(STOP_WARN);
+    return ret;
 }
 
 // ============================================================================
@@ -4187,137 +4123,10 @@ static int op_ufm(const instr_t* ip)
     int ret = fetch_op(ip, &word);
     if (ret != 0)
         return ret;
-
+    ret = instr_ufm(word);
     log_msg(ERR_MSG, "OPU::ufm", "Auto Breakpoint\n");
     cancel_run(STOP_IBKPT);
-
-    log_msg(NOTIFY_MSG, "opu::ufm", "E = %03o(%d) AQ = {%012llo,%012llo} aka (%lld,%lld).\n", reg_E, reg_E, reg_A, reg_Q, reg_A, reg_Q);
-
-    // int aq_neg = bit36_is_neg(reg_A);
-    uint8 op_exp = getbits36(word, 0, 8);
-    t_uint64 op_mant = getbits36(word, 8, 28) << 8; // 36-8=28 bits
-    log_msg(NOTIFY_MSG, "opu::ufm", "op = %012llo => exp %03o(%d) and mantissa %012llo (%lld)\n", word, op_exp, (int8) op_exp, op_mant, op_mant);
-
-    IR.exp_underflow = 0;
-    IR.exp_overflow = 0;
-    int exp = (int8) reg_E + op_exp;
-    // BUG: Do we need to generate faults?
-    if (exp < -128) {
-        IR.exp_underflow = 1;
-        log_msg(NOTIFY_MSG, "opu::ufm", "exp underflow.\n");
-        // ret = 1;
-    } else if (exp > 127) {
-        IR.exp_overflow = 1;
-        log_msg(NOTIFY_MSG, "opu::ufm", "exp overflow.\n");
-        // ret = 1;
-    }
-    reg_E = (unsigned) exp & MASKBITS(8);
-    log_msg(NOTIFY_MSG, "opu::ufm", "new exp is %d aka %#o\n", exp, reg_E);
-
-    if (reg_A == ((t_uint64) 1 << 35) && reg_Q == 0 && op_mant == ((t_uint64) 1 << 35)) {
-        log_msg(NOTIFY_MSG, "opu::ufm", "Need to normalize operands....\n");
-        cancel_run(STOP_BUG);
-        // BUG: the following probably isn't the proper way to normalize...
-        reg_A = ((t_uint64) 1 << 34);   // 0.5
-        if (reg_E == 127) {
-            reg_E = 128;
-            IR.exp_overflow = 1;
-            log_msg(NOTIFY_MSG, "opu::ufm", "exp overflow.\n");
-            // ret = 1;
-        } else
-            ++ reg_E;
-    } else {
-        t_uint64 a = reg_A;
-        t_uint64 q = reg_Q;
-        mpy72fract(reg_A, reg_Q, op_mant, &reg_A, &reg_Q);
-        log_msg(NOTIFY_MSG, "opu::ufm", "Multiplying {%012llo,%012llo} by {%012llo} yields {%012llo,%012llo}\n", a, q, op_mant, reg_A, reg_Q);
-    }
-
     return ret;
 }
 
-// ============================================================================
 
-static int op_fno()
-{
-    if (IR.overflow) {
-        reg_Q = setbits36(reg_Q >> 1, 0, 1, reg_A & 1);
-        int sign = bit36_is_neg(reg_A);
-        reg_A >>= 1;
-        reg_A = setbits36(reg_A, 0, 1, ! sign);
-        IR.overflow = 0;
-    }
-    if ((IR.zero = reg_A == 0 && reg_Q == 0) != 0)
-        reg_E = 0200;   // -128
-    IR.neg = bit36_is_neg(reg_A);
-    IR.exp_overflow = 0;
-    IR.exp_underflow = 0;
-
-    if (IR.zero) {
-        log_msg(NOTIFY_MSG, "OPU::fno", "Result is zero.\n");
-        return 0;
-    }
-
-    // BUG: we don't normalize
-    log_msg(ERR_MSG, "OPU::fno", "Normalize not implemented.\n");
-    cancel_run(STOP_BUG);
-    return 1;
-}
-
-#if 0
-static void normalize(t_uint64 word)
-{
-}
-#endif
-
-
-/*
- * Normalized Numbers -- AL39, Chapter 2
- * A floating-point binary number is said to be normalized if the relation
- * -0.5 > M > -1 or 0.5 <= M < 1 or [M=0 and E=-128]
- *  is satisfied. This is a result of using a 2's complement mantissa. Bits 8 and 9 are different unless
- *  the number is zero. The presence of unnormalized numbers in any finite mantissa arithmetic can
- *  only degrade the accuracy of results. For example, in an arithmetic allowing only two digits in the
- *  mantissa, the number 0.005x102 has the value zero instead of the value one-half.
- *  Normalization is a process of shifting the mantissa and adjusting the exponent until the
- *  relation above is satisfied. Normalization may be used to recover some or all of the extra bits of
- *  the overlength AQ-register after a floating-point operation.
- *  There are cases where the limits of the registers force the use of unnormalized numbers.
- *  For example, in an arithmetic allowing three digits of mantissa and one digit of exponent, the
- *  calculation 0.3x10-10 - 0.1x10-11 (the normalized case) may not be made, but 0.03x10-9 -
- *  0.001x10-9 = 0.029x10-9 (the unnormalized case) is a valid result.
-*/
-
-/*
-NOTES: The ufa instruction is executed as follows:
-The mantissas are aligned by shifting the mantissa of the operand
-having the algebraically smaller exponent to the right the number of
-places equal to the absolute value of the difference in the two
-exponents. Bits shifted beyond the bit position equivalent to AQ71 are
-lost.
-The algebraically larger exponent replaces C(E).
-The sum of the mantissas replaces C(AQ).
-If an overflow occurs during addition, then;
-C(AQ) are shifted one place to the right.
-C(AQ)0 is inverted to restore the
-*/
-
-/*
- * fno
-NOTES: The fno instruction normalizes the number in C(EAQ) if C(AQ) ? 0 and the
-overflow indicator is OFF.
-A normalized floating number is defined as one whose mantissa lies in the
-interval [0.5,1.0] such that
-0.5 <= | C(AQ) | < 1.0
-which, in turn, requires that C(AQ)0 ? C(AQ)1.
-If the overflow indicator is ON, then C(AQ) is shifted one place to the right,
-C(AQ)0 is inverted to reconstitute the actual sign, and the overflow
-indicator is set OFF. This action makes the fno instruction useful in
-correcting overflows that occur with fixed point numbers.
-Normalization is performed by shifting C(AQ)1,71 one place to the left and
-reducing C(E) by 1, repeatedly, until the conditions for C(AQ)0 and C(AQ)1
-are met. Bits shifted out of AQ1 are lost.
-If C(AQ) = 0, then C(E) is set to -128 and the zero indicator is set ON.
-Attempted repetition with the rpl instruction causes an illegal procedure
-fault.
-*/

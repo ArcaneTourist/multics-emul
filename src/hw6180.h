@@ -1,4 +1,10 @@
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 #include "sim_defs.h"
+
 
 /* These are from SIMH, but not listed in sim_defs.h */
 extern t_addr (*sim_vm_parse_addr)(DEVICE *, char *, char **);
@@ -675,9 +681,16 @@ extern int fetch_yblock(uint addr, int aligned, uint n, t_uint64 *wordsp);
 extern int fetch_yblock8(uint addr, t_uint64 *wordsp);
 extern int store_yblock16(uint addr, const t_uint64 *wordsp);
 
+extern int add72(t_uint64 ahi, t_uint64 alow, t_uint64* dest1, t_uint64* dest2, int is_unsigned);
+
 extern void mpy(t_uint64 a, t_uint64 b, t_uint64* hip, t_uint64 *lowp);
 extern void div72(t_uint64 hi, t_uint64 low, t_uint64 divisor, t_uint64* quotp, t_uint64* remp);
 extern void mpy72fract(t_uint64 ahi, t_uint64 alow, t_uint64 b, t_uint64* hip, t_uint64 *lowp);
+
+extern int instr_dvf(t_uint64 word);
+extern int instr_ufa(t_uint64 word);
+extern int instr_ufm(t_uint64 word);
+extern int instr_fno(void);
 
 extern int cmd_dump_vm(int32 arg, char *buf);
 extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
@@ -729,3 +742,7 @@ extern int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 
 #include "opcodes.h"
 #include "symtab.h"
+
+#ifdef __cplusplus
+}
+#endif

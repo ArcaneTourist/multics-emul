@@ -1,5 +1,14 @@
-// typedef enum symtab_type { symtab_any = -1, symtab_none = 0, symtab_file=1, symtab_proc=2, symtab_line=4  } t_symtab_type;
 typedef enum symtab_type { symtab_none = 0, symtab_file=1, symtab_proc=2, symtab_line=4  } t_symtab_type;
+
+/*
+    A t_symtab_ent represents a segment address or range of addresses.
+    Those address(es) may have one or more of the following associated
+    with it:
+        file -- Source file that provides this code
+        ename -- entry point name
+        line_no -- line number within source file above
+        line -- text of the source line
+*/
 
 typedef struct {
     int seg;

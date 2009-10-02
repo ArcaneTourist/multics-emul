@@ -208,6 +208,8 @@ int fetch_acc(uint addr, char bufp[513]);
 
 t_stat cmd_seginfo(int32 arg, char *buf)
 {
+    // See descripton at _scan_seg().
+
     if (*buf == 0) {
         out_msg("USAGE xseginfo <segment number>\n");
         return 1;
@@ -225,6 +227,8 @@ t_stat cmd_seginfo(int32 arg, char *buf)
 
 int scan_seg(uint segno, int msgs)
 {
+    // See descripton at _scan_seg().
+
     uint saved_seg = TPR.TSR;
     fault_gen_no_fault = 1;
     addr_modes_t amode = get_addr_mode();
@@ -245,6 +249,13 @@ int scan_seg(uint segno, int msgs)
 
 static int _scan_seg(uint segno, int msgs)
 {
+
+    // Dump the linkage info for an in-memory segment.
+    // Can be invoked by an interactive command.
+    // Also invoked by the CPU to discover entrypoint names and locations so
+    // that the CPU can display location information.
+    // Any entrypoints found are passed to symtab_add_entry().
+
     t_uint64 word0, word1;
 
     if (msgs) {
@@ -791,7 +802,7 @@ int cmd_find(int32 arg, char *buf)
 static int listing_segno;
 static unsigned listing_offset;
 
-static int consume(int lineno, unsigned loc, const char *line)
+static int consume_line(int lineno, unsigned loc, const char *line)
 {
     loc += listing_offset;
     return symtab_add_line(listing_segno, loc, loc, lineno, line);
@@ -799,6 +810,8 @@ static int consume(int lineno, unsigned loc, const char *line)
 
 int cmd_load_listing(int32 arg, char *buf)
 {
+    // Implements the "xlist" interactive command
+
     if (*buf == 0) {
         out_msg("USAGE xlist <segment number> <pathname>\n");
         return 1;
@@ -843,10 +856,12 @@ int cmd_load_listing(int32 arg, char *buf)
         return 1;
     }
 
-    int ret = listing_parse(f, consume);
+    int ret = listing_parse(f, consume_line);
     if (fclose(f) != 0) {
         perror(s);
         ret = -1;
     }
+    if (ret != 0)
+        out_msg("xlist: Problems loading listing %s for segment %o|%o.\n", s, listing_segno, listing_offset);
     return ret;
 }

@@ -387,6 +387,7 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
     if (uptr == &cpu_unit) {
         // memory request -- print memory specified by SIMH absolute M[addr].  However
         // note that parse_addr() was called by SIMH to determine the absolute addr.
+
         /* First print matching source line if we're dumping instructions */
         if (sw & SWMASK('M')) {
             // M -> instr -- print matching source line if we have one
@@ -450,6 +451,7 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
         fflush(ofile);
         return SCPE_OK;
     } else if (sw & SIM_SW_REG) {
+        // Print register
         REG* regp = (void*) uptr;
         if (regp && (regp->flags&REG_USER2)) {
             // PR registers
@@ -479,6 +481,7 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
     } else 
         return SCPE_ARG;
 }
+
 
 t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
 {
@@ -547,6 +550,14 @@ static int inline is_octal_digit(char x)
 
 static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
 {
+
+    // SIMH calls this function to parse an address.   SIMH wants the
+    // absolute address.   However, SIMH may pass the resulting address
+    // to fprint_sym() or other simulator functions that need to know
+    // the segment and offset.   So, we set the following globals to in
+    // order to communicate that info:
+    //      int last_parsed_seg, int last_parsed_offset, t_addr last_parsed_addr
+
     *optr = cptr;
     int force_abs = 0;
     int force_seg = 0;
@@ -649,6 +660,7 @@ out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
 #endif
     return addr;
 }
+
 
 static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr addr)
 {
