@@ -393,9 +393,10 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
             // M -> instr -- print matching source line if we have one
             int offset = last_parsed_offset + addr - last_parsed_addr;
             if (offset >= 0) {
-                t_symtab_ent *source_line = symtab_find(last_parsed_seg, offset, symtab_line);
-                if (source_line != NULL) {
-                    fprintf(ofile, "Line %d: %s\n", source_line->line_no, source_line->line);
+                where_t where;
+                seginfo_find_all(last_parsed_seg, offset, &where);
+                if (where.line != NULL) {
+                    fprintf(ofile, "Line %d: %s\n", where.line_no, where.line);
                     fprintf(ofile, "%06o:\t", addr);
                 }
             }

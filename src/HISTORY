@@ -500,3 +500,9 @@ Apr 27, 2009
             short_return
         So, the issue is that the simulator is not preparing a config deck to be loaded
         into the SCS segment.
+
+Oct 2, 2009 -- Pre-Version 68, Oct 2, 2009
+    General
+        Move some fixed point instruction support to fixed_real.c and update.
+        Update listing.c to track automatic (stack) variables.  No support in symtab/syminfo though.
+        Use C++ for re-work of symtab/seginfo

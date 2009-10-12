@@ -2002,7 +2002,7 @@ static void ic_history_add()
 
 int cmd_dump_history(int32 arg, char *buf)
 {
-    char *prior = 0;
+    // char *prior = 0;
     char *unknown = "unknown";
     for (int wrapped = ic_hist_wrapped; wrapped >= 0; --wrapped) {
         int start, end;
@@ -2016,28 +2016,28 @@ int cmd_dump_history(int32 arg, char *buf)
         for (int i = start; i < end; ++i) {
             char icbuf[80];
             ic2text(icbuf, ic_hist[i].addr_mode, ic_hist[i].seg, ic_hist[i].ic);
-            t_symtab_ent *source = symtab_find((ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1, ic_hist[i].ic, symtab_file | symtab_proc);
-            // BUG: do line number
-            char *name = source ? (source->ename) ? source->ename : source->fname : unknown;
-            t_symtab_ent *source_line = symtab_find((ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1, ic_hist[i].ic, symtab_line);
-            if (source_line) {
-                out_msg("IC: %s: %-60s %s, line %d\n", icbuf, instr2text(&ic_hist[i].instr), name, source_line->line_no);
-                out_msg("\tline %d: %s\n", source_line->line_no, source_line->line);
-            } else {
-                if (source) {
-                    int offset = (source) ? (int) ic_hist[i].ic - source->addr_lo : 0;
-                    if (offset == 0 || !(source->types & symtab_proc))
+            int segno = (ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1;
+            where_t where;
+            if (seginfo_find_all(segno, ic_hist[i].ic, &where) != 0)
+                out_msg("IC: %s: %-60s\n", icbuf, instr2text(&ic_hist[i].instr));
+            else {
+                const char *name = where.entry ? where.entry : where.file_name ? where.file_name : unknown;
+                if (where.line_no >= 0) {
+                    out_msg("IC: %s: %-60s %s, line %d\n", icbuf, instr2text(&ic_hist[i].instr), name, where.line_no);
+                    out_msg("\tline %d: %s\n", where.line_no, where.line);
+                } else {
+                    if (where.entry_offset < 0)
                         out_msg("IC: %s: %-60s %s\n", icbuf, instr2text(&ic_hist[i].instr), name);
                     else {
+                        int offset = (int) ic_hist[i].ic - where.entry_offset;
                         char sign = (offset < 0) ? '-' : '+';
                         if (sign == '-')
                             offset = - offset;
                         out_msg("IC: %s: %-60s %s %c%#o\n", icbuf, instr2text(&ic_hist[i].instr), name, sign, offset);
                     }
-                } else
-                    out_msg("IC: %s: %-60s\n", icbuf, instr2text(&ic_hist[i].instr));
+                }
+                // prior = name;
             }
-            prior = name;
         }
     }
     return 0;
@@ -2064,10 +2064,17 @@ static void check_events()
 static void show_location(int show_source_lines)
 {
 
-    static t_symtab_ent *source = 0;        // WARNING: re-init this if (re)init() is ever implemented for symtab pkg
+    // WARNING: re-init the following two varibles if (re)init() is ever implemented for symtab pkg
+    static int have_source = 0;
+    static where_t where;
+    static int prev_segno = -1;
+
+    static const char *old;
+    static int old_line_no = -1;
+
     // Segment 0400 is the first used segment and shows a lot of bouncing between source
     // files that's no longer of interest   
-    const int show_source_changes = PPR.PSR != 0400 || (source && source->seg != 0400);
+    const int show_source_changes = PPR.PSR != 0400 || prev_segno != 0400;
     //const int show_source_changes = 0;
 
     static int seg_scanned[512];
@@ -2077,7 +2084,7 @@ static void show_location(int show_source_lines)
     // Scan segments for entry points to procedures
     addr_modes_t amode = get_addr_mode();
     int seg = (amode == APPEND_mode) ? PPR.PSR : -1;
-    if (seg > 0 && seg < ARRAY_SIZE(seg_scanned) && ! seg_scanned[seg]) {
+    if (seg >= 0 && seg < ARRAY_SIZE(seg_scanned) && ! seg_scanned[seg]) {
         scan_seg(seg, 0);
         seg_scanned[seg] = 1;
     }
@@ -2085,56 +2092,71 @@ static void show_location(int show_source_lines)
     if (opt_debug)
         log_msg(DEBUG_MSG, NULL, "\n", NULL);
 
-    // Did we just change from source file or procedure to another?
+    // Did we just change from one source file or procedure to another?
     int source_changed;
-    char *old = (source == NULL) ? NULL : (source->ename) ? source->ename : source->fname;
-    if (source) {
-        source_changed = source->seg != seg || source->addr_lo > PPR.IC || source->addr_hi < 0 || PPR.IC > source->addr_hi;
+    if (have_source) {
+        source_changed = prev_segno != seg || where.entry_offset > PPR.IC || where.entry_hi < 0 || PPR.IC > where.entry_hi;
         if (source_changed) {
-            t_symtab_ent *osource = source;
-            source = symtab_find(seg, PPR.IC, symtab_file | symtab_proc);
-            source_changed = osource != source;
+            where_t owhere = where;
+            have_source = seginfo_find_all(seg, PPR.IC, &where) == 0;
+            if (have_source) {
+                source_changed = where.file_name != owhere.file_name || where.entry != owhere.entry;
+                // if (source_changed) log_msg(NOTIFY_MSG, "MAIN", "src changed: '%s' vs '%s' and '%s' vs '%s;\n", where.file_name, owhere.file_name, where.entry, owhere.entry);   // DEBUG:
+            } else {
+                source_changed = 1;
+// src changed: lost source on 0427|0
+                log_msg(NOTIFY_MSG, "MAIN", "src changed: lost source on %#o|%#o\n", seg, PPR.IC);
+            }
+        } else {
+            have_source = seginfo_find_all(seg, PPR.IC, &where) == 0;
+            if (! have_source) {
+                source_changed = 1;
+                log_msg(NOTIFY_MSG, "MAIN", "src changed: lost source (but within prior range?)\n");
+            }
         }
     } else {
-        // Note that we don't expect to have both a "file" entry and a "proc" entry
-        source = symtab_find(seg, PPR.IC, symtab_file | symtab_proc);
-        source_changed = source != NULL;
+        source_changed = have_source = seginfo_find_all(seg, PPR.IC, &where) == 0;
+        // if (source_changed) log_msg(NOTIFY_MSG, "MAIN", "src changed: found one.\n");
     }
 
+    prev_segno = seg;
+
+    // Display source line
     if (show_source_lines && (opt_debug || cpu.cycle != FETCH_cycle)) {
-        t_symtab_ent *source_line = symtab_find(seg, PPR.IC, symtab_line);
-        if (source_line != NULL) {
+        if (where.line_no >= 0) {
             // Note that if we have a source line, we also expect to have a "proc" entry
-            // and do not expect to have a "file" entry.
             if (source_changed) {
-                if (source) {
-                    if ((source->types & symtab_proc) != 0)
-                        log_msg(DEBUG_MSG, "MAIN", "%s: %s\n", "Procedure", source->ename);
-                    else if ((source->types & symtab_file) != 0)
-                        log_msg(DEBUG_MSG, "MAIN", "%s: %s\n", "Source file", source->fname);
-                } else {
-                        log_msg(DEBUG_MSG, "MAIN", "Source unknown\n");
-                }
+                if (where.entry)
+                    log_msg(DEBUG_MSG, "MAIN", "%s: %s\n", "Procedure", where.entry);
+                else if (where.file_name)
+                    log_msg(DEBUG_MSG, "MAIN", "%s: %s\n", "Source file", where.file_name);
+                else
+                    log_msg(DEBUG_MSG, "MAIN", "Source unknown\n");
             }
-            if (source) {
-                char *name = (source->types & symtab_proc) ? source->ename : source->fname;
-                // out_msg("Source:  %s, %5d:  %s\n", name, source_line->line_no, source_line->line);
-                out_msg("Source:  %s %o|%06o %5d:  %s\n", name, seg, PPR.IC, source_line->line_no, source_line->line);
-            } else
-                out_msg("Source:  Line %5d:  %s\n", source_line->line_no, source_line->line);
+            if (source_changed || old_line_no != where.line_no) {
+                if (have_source) {
+                    const char *name = where.entry ? where.entry : where.file_name;
+                    out_msg("Source:  %s %o|%06o %5d:  %s\n", name, seg, PPR.IC, where.line_no, where.line);
+                } else
+                    out_msg("Source:  Line %5d:  %s\n", where.line_no, where.line);
+            }
         }
+        old_line_no = where.line_no;
     }
 
+    // Display IC
     if (opt_debug || (source_changed && show_source_changes)) {
-        char *name = (source == NULL) ? NULL : (source->ename) ? source->ename : source->fname;
+        const char *name = where.entry ? where.entry : where.file_name;
         char icbuf[80];
         ic2text(icbuf, amode, PPR.PSR, PPR.IC);
         if (source_changed) {
-            if (source) {
-                int offset = (int) PPR.IC - source->addr_lo;
-                if (offset == 0 || !(source->types & symtab_proc))
+            if (have_source) {
+                if (! where.entry || where.entry_offset < 0 || where.entry_offset == (int) PPR.IC) {
+                    if (name == NULL)
+                        log_msg(WARN_MSG, "MAIN", "name is null; offset = %#o; e-name = %s, f-name = %s.\n", where.entry_offset, where.entry, where.file_name);
                     log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: %s\n", icbuf, name);
-                else {
+                } else {
+                    int offset = (int) PPR.IC - where.entry_offset;
                     char sign = (offset < 0) ? '-' : '+';
                     if (sign == '-')
                         offset = - offset;
@@ -2142,6 +2164,7 @@ static void show_location(int show_source_lines)
                 }
             } else if (old != NULL)
                 log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: Unknown (leaving %s)\n", icbuf, old);
+            old = name;
         } else
             if (opt_debug)
                 log_msg(DEBUG_MSG, "MAIN", "IC: %s\n", icbuf);  // source unchanged

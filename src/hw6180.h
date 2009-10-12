@@ -551,6 +551,7 @@ extern void log_forget_ic(void);
 
 extern int scan_seg(uint segno, int msgs);  // scan definitions section for procedure entry points
 t_stat cmd_seginfo(int32 arg, char *buf);   // display segment info
+extern int cmd_symtab_parse(int32 arg, char *buf);
 
 /*  Extract (i)th bit of a 36 bit word (held in a uint64). */
 #define bitval36(word,i) ( ((word)>>(35-i)) & (uint64_t) 1 )
@@ -741,7 +742,8 @@ extern int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 // ============================================================================
 
 #include "opcodes.h"
-#include "symtab.h"
+// #include "symtab.h"
+#include "seginfo.h"
 
 #ifdef __cplusplus
 }

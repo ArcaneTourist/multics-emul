@@ -1,5 +1,5 @@
 /*
-    listing.c -- parse PL1 compiler listings for location info that the
+    listing.cpp -- parse PL1 compiler listings for location info that the
     simulator can use for displaying the source lines associated with
     the assembly being executed or displayed.
 
@@ -17,6 +17,8 @@
             END PROCEDURE (may nest)
 */
 
+using namespace std;
+#include "seginfo.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -24,6 +26,9 @@
 
 #include "sim_defs.h"
 #include "symtab.h"
+extern "C" void out_msg(const char* format, ...);
+
+int listing_parse(FILE *f, source_file &src);
 
 #if 0
 static int consume(int lineno, unsigned loc, const char *line)
@@ -39,7 +44,75 @@ int main()
 }
 #endif
 
-static int add_line(char ***pool, size_t *max, int lineno, const char *line)
+// ============================================================================
+
+// static unsigned listing_offset;
+// static int listing_segno;
+
+extern "C" int cmd_load_listing(int32 arg, char *buf)
+{
+    // Implements the "xlist" interactive command
+
+    if (*buf == 0) {
+        out_msg("USAGE xlist <segment number> <pathname>\n");
+        return 1;
+    }
+    char *s = buf + strspn(buf, " \t");
+    int n = strspn(buf, "01234567");
+    char sv = buf[n];
+    buf[n] = 0;
+    unsigned segno;
+    char c;
+    if (sscanf(s, "%o %c", &segno, &c) != 1) {
+        out_msg("xlist: Expecting a octal segment number.\n");
+        buf[n] = sv;
+        return 1;
+    }
+    buf[n] = sv;
+    s += n;
+
+    // listing_segno = segno;
+
+    int offset;
+    if (*s == '|' || *s == '$') {
+        ++s;
+        int n = strspn(s, "01234567");
+        char sv = s[n];
+        s[n] = 0;
+        char c;
+        if (sscanf(s, "%o %c", (unsigned*) &offset, &c) != 1) {
+            out_msg("xlist: Expecting a octal offset, not '%s'.\n", s);
+            buf[n] = sv;
+            return 1;
+        }
+        s[n] = sv;
+        s += n;
+    } else
+        offset = 0;
+
+    s += strspn(s, " \t");
+    FILE *f;
+    if ((f = fopen(s, "r")) == NULL) {
+        perror(s);
+        return 1;
+    }
+
+    // BUG: we require the user to tell us the relocation info
+    source_file& src = seginfo_add_source_file(segno, s, offset);
+
+    int ret = listing_parse(f, src);
+    if (fclose(f) != 0) {
+        perror(s);
+        ret = -1;
+    }
+    if (ret != 0)
+        out_msg("xlist: Problems loading listing %s for segment %o|%o.\n", s, segno, offset);
+    return ret;
+}
+
+// ============================================================================
+
+static int add_line(char ***pool, int *max, int lineno, const char *line)
 {
     // Maintains an array of source lines.   Used by listing_parse() which sees
     // all the source lines before it sees the mapping of line numbers to
@@ -51,7 +124,7 @@ static int add_line(char ***pool, size_t *max, int lineno, const char *line)
         return -1;
     }
     if (lineno >= *max) {
-        char **newpool = calloc(*max * 2, sizeof(*newpool));
+        char **newpool = (char**) calloc(*max * 2, sizeof(*newpool));
         if (newpool == NULL)
             return -1;
         memcpy(newpool, *pool, *max * sizeof(*newpool));
@@ -70,6 +143,7 @@ static int add_line(char ***pool, size_t *max, int lineno, const char *line)
     return 0;
 }
 
+// ============================================================================
 
 static int str_pmatch(const char *buf, const char *s)
 {
@@ -80,39 +154,24 @@ static int str_pmatch(const char *buf, const char *s)
 }
 
 
-int listing_parse(FILE *f, int(*consumer)(int lineno, unsigned loc, const char *line))
+// ============================================================================
+
+int listing_parse(FILE *f, source_file &src)
 {
-    // Scans input.  Calls (*consumer)() for each source line.
+    // Scans input.  Adds lines to source_file object.
     // Works by first seeing all the source lines and saving them in a list.
     // Next, while reading the mapping of source line number to code offset,
-    // the (*consumer)() is called and passed the appropriate previously saved line.
-
-    // TODO: expand consumer to accept
-    //      int loc, enum {line,automatic,entry} type, char * str, int lineno
-    //  struct {
-    //      enum {line, automatic, entry} type;
-    //      union {
-    //          struct {
-    //                  int lineno; int loc; char * str;
-    //          } line;
-    //          struct {
-    //                  int loc, char *name;
-    //          } automatic;
-    //          struct {
-    //                  int loc, char *name;
-    //          } entry;
-    //      } details;
-    //  }
+    // saved lines are added to the source_file object.
 
     char lbuf[500];
     char **lines;
-    size_t maxlines;
+    int maxlines;
     unsigned nlines;
     
     int ret = 0;
 
     maxlines = 400;
-    if ((lines = calloc(maxlines, sizeof(*lines))) == NULL) {
+    if ((lines = (char**) calloc(maxlines, sizeof(*lines))) == NULL) {
         int e = errno;
         fprintf(stderr, "listing_parse: malloc error.\n");
         errno = e;
@@ -219,8 +278,8 @@ int listing_parse(FILE *f, int(*consumer)(int lineno, unsigned loc, const char *
                     errno = EINVAL;
                     return -1;
                 }
-                if ((*consumer)(lineno, loc, lines[lineno]) != 0)
-                    return -1;
+                // BUG: doing relocation here instead of deferring
+                src.lines[loc+src.lo] = source_line(loc+src.lo, lineno, lines[lineno]);
                 lineno = -1;
                 any = 1;
             }
@@ -252,8 +311,8 @@ int listing_parse(FILE *f, int(*consumer)(int lineno, unsigned loc, const char *
                 unsigned loc;
                 (void) sscanf(lbuf, "%o", &loc);
                 if (asm_consume_next) {
-                    if ((*consumer)(alm_lineno, loc, lines[alm_lineno]) != 0)
-                        return -1;
+                    // BUG: doing relocation here instead of deferring
+                    src.lines[loc+src.lo] = source_line(loc+src.lo, alm_lineno, lines[alm_lineno]);
                     asm_consume_next = 0;
                 }
             } else {
@@ -407,4 +466,6 @@ int listing_parse(FILE *f, int(*consumer)(int lineno, unsigned loc, const char *
     }
     return ret;
 }
+
+// ============================================================================
 

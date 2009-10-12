@@ -14,6 +14,7 @@ extern FILE *sim_deb, *sim_log;
 
 static void msg(enum log_level level, const char *who, const char* format, va_list ap);
 static int _scan_seg(uint segno, int msgs);
+static int seginfo_show_all(int seg, int first);
 uint ignore_IC = 0;
 uint last_IC;
 uint last_IC_seg;
@@ -202,6 +203,8 @@ static void msg(enum log_level level, const char *who, const char* format, va_li
     }
 }
 
+// ============================================================================
+
 static void word2pr(t_uint64 word, AR_PR_t *prp);
 static int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp);
 int fetch_acc(uint addr, char bufp[513]);
@@ -225,6 +228,8 @@ t_stat cmd_seginfo(int32 arg, char *buf)
 }
 
 
+// ============================================================================
+
 int scan_seg(uint segno, int msgs)
 {
     // See descripton at _scan_seg().
@@ -247,6 +252,7 @@ int scan_seg(uint segno, int msgs)
     return ret;
 }
 
+
 static int _scan_seg(uint segno, int msgs)
 {
 
@@ -254,10 +260,11 @@ static int _scan_seg(uint segno, int msgs)
     // Can be invoked by an interactive command.
     // Also invoked by the CPU to discover entrypoint names and locations so
     // that the CPU can display location information.
-    // Any entrypoints found are passed to symtab_add_entry().
+    // Any entrypoints found are passed to seginfo_add_linkage().
 
     t_uint64 word0, word1;
 
+log_msg(NOTIFY_MSG, "scan-seg", "Starting for seg %#o\n", segno);   // TODO: remove DEBUG:
     if (msgs) {
         /* Get last word of segment -- but in-memory copy may be larger than original, so search for last non-zero word */
         TPR.TSR = segno;
@@ -407,10 +414,16 @@ static int _scan_seg(uint segno, int msgs)
                 //}
                 //uint off = tmp_word >> 18;
                 if (class == 0) {
+                    // Example: bound_active1 has a class 3 definitio for Segment "wire_proc",
+                    // followed by class 0 definitions for: wire_proc$unwire_proc and unwire_proc
                     if (msgs)
                         out_msg("Text %s: link %o|%#o\n", buf, segno, thing_relp);
-                    strcpy(entryp, buf);
-                    symtab_add_entry(segno, thing_relp, -1, entryname);
+                    if (strncmp(entryname, buf, entryp-entryname) == 0)
+                        seginfo_add_linkage(segno, thing_relp, buf);
+                    else {
+                        strcpy(entryp, buf);
+                        seginfo_add_linkage(segno, thing_relp, entryname);
+                    }
                 } else if (class == 2) {
                     if (msgs)
                         out_msg("Name is %s; offset is %#o within %s section\n", buf, thing_relp, sect);
@@ -500,6 +513,8 @@ static int _scan_seg(uint segno, int msgs)
     return 0;
 }
 
+// ============================================================================
+
 int fetch_acc(uint addr, char bufp[513])
 {
     // Fetch an "ACC" string which is a string with a 9bit length prefix
@@ -524,6 +539,8 @@ int fetch_acc(uint addr, char bufp[513])
     return 0;
 }
 
+// ============================================================================
+
 static void word2pr(t_uint64 word, AR_PR_t *prp)
 {
     // same as lprpN -- BUG
@@ -539,6 +556,8 @@ static void word2pr(t_uint64 word, AR_PR_t *prp)
     prp->wordno = getbits36(word, 18, 18);
 }
 
+// ============================================================================
+
 static int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp)
 {
     if ((word1 & MASKBITS(6)) != 043) {
@@ -552,6 +571,8 @@ static int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp)
     prp->AR.bitno = prp->PR.bitno % 9;
     return 0;
 }
+
+// ============================================================================
 
 #if 0
 int get_addr(uint segno, uint offset, uint *addrp)
@@ -590,6 +611,8 @@ static char *bytes2text(const unsigned char *s, int n)
     return buf;
 }
 #endif
+
+// ============================================================================
 
 int cmd_find(int32 arg, char *buf)
 {
@@ -799,69 +822,66 @@ int cmd_find(int32 arg, char *buf)
     return 0;
 }
 
-static int listing_segno;
-static unsigned listing_offset;
+// ============================================================================
 
-static int consume_line(int lineno, unsigned loc, const char *line)
+int cmd_symtab_parse(int32 arg, char *buf)
 {
-    loc += listing_offset;
-    return symtab_add_line(listing_segno, loc, loc, lineno, line);
+    if (*buf == 0)
+        seginfo_dump();
+    else if (strcmp(buf, "dump") == 0)
+        seginfo_dump();
+    else {
+        char *p = buf;
+        char fname[1024];   // BUG: WARNING: buffer overflow possible
+        int first, last;
+        char dummy;
+        int seg;
+        if (sscanf(buf, "source %s %i %i %c", fname, &first, &last, &dummy) == 3) {
+            seginfo_add_source_file(-1, first, last, fname);
+        } else if (sscanf(buf, "source %s %i|%i %i %c", fname, &seg, &first, &last, &dummy) == 4) {
+            seginfo_add_source_file(seg, first, last, fname);
+#if 0
+        } else if (sscanf(buf, "entry %s %i %i %c", fname, &first, &last, &dummy) == 3) {
+            symtab_add_entry(-1, first, last, fname);
+        } else if (sscanf(buf, "entry %s %i|%i %i %c", fname, &seg, &first, &last, &dummy) == 4) {
+            symtab_add_entry(seg, first, last, fname);
+#endif
+        } else if (strncmp(buf, "dump", 4) == 0 && sscanf(buf, "dump %c", &dummy) == 0) {
+            seginfo_dump();
+        } else if (sscanf(buf, "where %i %c", &first, &dummy) == 1) {
+            seginfo_show_all(-1, first);
+        } else if (sscanf(buf, "where %i|%i %c", &seg, &first, &dummy) == 2) {
+            seginfo_show_all(seg,first);
+        } else if (sscanf(buf, "find %i %c", &first, &dummy) == 1) {
+            seginfo_show_all(-1, first);
+        } else if (sscanf(buf, "find %i|%i %c", &seg, &first, &dummy) == 2) {
+            seginfo_show_all(seg,first);
+        } else
+            fprintf(stderr, "procs: cannot parse '%s'\n", buf);
+    }
+    return 0;
 }
 
-int cmd_load_listing(int32 arg, char *buf)
+// ============================================================================
+
+static int seginfo_show_all(int seg, int first)
 {
-    // Implements the "xlist" interactive command
-
-    if (*buf == 0) {
-        out_msg("USAGE xlist <segment number> <pathname>\n");
-        return 1;
+    where_t where;
+    if (seginfo_find_all(seg, first, &where) != 0) {
+        out_msg("Cannot find anything.\n");
+        return -1;
     }
-    char *s = buf + strspn(buf, " \t");
-    int n = strspn(buf, "01234567");
-    char sv = buf[n];
-    buf[n] = 0;
-    unsigned segno;
-    char c;
-    if (sscanf(s, "%o %c", &segno, &c) != 1) {
-        out_msg("xlist: Expecting a octal segment number.\n");
-        buf[n] = sv;
-        return 1;
-    }
-    buf[n] = sv;
-    s += n;
-    listing_segno = segno;
-
-    if (*s == '|' || *s == '$') {
-        ++s;
-        int n = strspn(s, "01234567");
-        char sv = s[n];
-        s[n] = 0;
-        unsigned offset;
-        char c;
-        if (sscanf(s, "%o %c", &offset, &c) != 1) {
-            out_msg("xlist: Expecting a octal offset, not '%s'.\n", s);
-            buf[n] = sv;
-            return 1;
-        }
-        s[n] = sv;
-        s += n;
-        listing_offset = offset;
-    } else
-        listing_offset = 0;
-
-    s += strspn(s, " \t");
-    FILE *f;
-    if ((f = fopen(s, "r")) == NULL) {
-        perror(s);
-        return 1;
-    }
-
-    int ret = listing_parse(f, consume_line);
-    if (fclose(f) != 0) {
-        perror(s);
-        ret = -1;
-    }
-    if (ret != 0)
-        out_msg("xlist: Problems loading listing %s for segment %o|%o.\n", s, listing_segno, listing_offset);
-    return ret;
+    if (where.file_name)
+        out_msg("File name: %s\n", where.file_name);
+    else
+        out_msg("File name unknown.\n");
+    if (where.entry)
+        out_msg("Entry point: %s\n", where.entry);
+    else
+        out_msg("Entry point unknown.\n");
+    if (where.line_no >= 0)
+        out_msg("Line number %d: %s\n", where.line_no, where.line ? where.line : "<no text>");
+    return 0;
 }
+
+// ============================================================================
