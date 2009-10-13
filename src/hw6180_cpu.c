@@ -2101,22 +2101,19 @@ static void show_location(int show_source_lines)
             have_source = seginfo_find_all(seg, PPR.IC, &where) == 0;
             if (have_source) {
                 source_changed = where.file_name != owhere.file_name || where.entry != owhere.entry;
-                // if (source_changed) log_msg(NOTIFY_MSG, "MAIN", "src changed: '%s' vs '%s' and '%s' vs '%s;\n", where.file_name, owhere.file_name, where.entry, owhere.entry);   // DEBUG:
             } else {
                 source_changed = 1;
-// src changed: lost source on 0427|0
-                log_msg(NOTIFY_MSG, "MAIN", "src changed: lost source on %#o|%#o\n", seg, PPR.IC);
+                // log_msg(NOTIFY_MSG, "MAIN", "src changed: lost source on %#o|%#o\n", seg, PPR.IC);
             }
         } else {
             have_source = seginfo_find_all(seg, PPR.IC, &where) == 0;
             if (! have_source) {
                 source_changed = 1;
-                log_msg(NOTIFY_MSG, "MAIN", "src changed: lost source (but within prior range?)\n");
+                // log_msg(NOTIFY_MSG, "MAIN", "src changed: lost source (but within prior range?)\n");
             }
         }
     } else {
         source_changed = have_source = seginfo_find_all(seg, PPR.IC, &where) == 0;
-        // if (source_changed) log_msg(NOTIFY_MSG, "MAIN", "src changed: found one.\n");
     }
 
     prev_segno = seg;
@@ -2153,7 +2150,7 @@ static void show_location(int show_source_lines)
             if (have_source) {
                 if (! where.entry || where.entry_offset < 0 || where.entry_offset == (int) PPR.IC) {
                     if (name == NULL)
-                        log_msg(WARN_MSG, "MAIN", "name is null; offset = %#o; e-name = %s, f-name = %s.\n", where.entry_offset, where.entry, where.file_name);
+                        log_msg(WARN_MSG, "MAIN", "name is null; offset = %#o; e-name = %s, f-name = %s.\n", where.entry_offset, where.entry, where.file_name); // impossible
                     log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: %s\n", icbuf, name);
                 } else {
                     int offset = (int) PPR.IC - where.entry_offset;

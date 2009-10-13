@@ -484,8 +484,8 @@ History of pre-release versions
     General
         Examining the name table and pre-linking.
         Display IR symbolically.  Allow SIMH to display PR registers.
-
-Apr 27, 2009
+=== Pre-Version 59, Apr 27, 2009
+=== Pre-Version 60, Apr 29, 2009
     General
         After adding commands to dump the linkage sections, found that the xec to an empty
         word is from bound_priv_1$read_mask.  That's a very short ALM routine, all of
@@ -500,9 +500,58 @@ Apr 27, 2009
             short_return
         So, the issue is that the simulator is not preparing a config deck to be loaded
         into the SCS segment.
-
-Oct 2, 2009 -- Pre-Version 68, Oct 2, 2009
+=== Pre-Version 60, Apr 29, 2009
+=== Pre-Version 61, May  3, 2009
+=== Pre-Version 62, May  3, 2009
+=== Pre-Version 63, May  4, 2009
+=== Pre-Version 64, May  6, 2009
+    Log file
+        -rw-r--r--  1 mdm mdm       401276 May  6 00:03 log66
     General
-        Move some fixed point instruction support to fixed_real.c and update.
+        Explore crash near cv_config_card_
+        Add per-segment debugging
+        Add source line debugging
+        Add opcodes: adl, ersq
+        Fix to TRO for tct
+=== Pre-Version 65, May 14, 2009
+    General
+        Explore initializer$initializer call to collection_1
+        Minor update to per-segment debugging
+=== Pre-Version 66, May 17, 2009
+    Log file
+        -rw-r--r--  1 mdm mdm      1613303 May 17 11:09 .ltmp15
+        -rw-r--r--  1 mdm mdm      2105344 May 29 02:21 .l.old
+    General
+        Explore attempt to use null ptr after failure of config_$find to find
+        previously created "mem" card.
+        Handle opcode abd.
+        Fix adwpxN to update correct PR.
+        Minor update to cams.
+        Implement opcodes rscr, rsw, cmpb
+=== Pre-Version 67, May 29 2009 (with minor mod on Aug  1, 2009)
+    Log file
+         -rw-r--r--  1 mdm mdm      2105344 May 29 02:21 .l.old
+    General
+        Fix usage of tag bits for opcode stcq
+        Fix rscr bit 50/51
+        Handle addressing of stcq, stba, stbq, and lcpr
+        Fix register E to be 8 bits wide
+        Fix to execution of xed
+        Updates to source level debugging
+        Updates to type flag handling of memory dumps
+        Updates to math.c: fixes to mpy(), add mpy72fract(), div72()
+        Implement or partially implement: lcxN, stba, stbq, adaq, dvf, fad, ufa, fmp, lde
+        Fix to negate72()
+        Update sscr
+
+=== Pre-Version 68, Sep 17
+    Log file
+        -rw-r--r--  1 mdm mdm      2109207 Sep 17 22:31 .ltmp37new
+    General
+        Move some fixed point instruction support from opu.c to math_real.c and update.
+            instr_dvf(), instr_ufa(), instr_ufm(), instr_fno(), multics_to_double()
+
+=== Pre-Version 69, Oct  2, 2009
+    General
         Update listing.c to track automatic (stack) variables.  No support in symtab/syminfo though.
         Use C++ for re-work of symtab/seginfo

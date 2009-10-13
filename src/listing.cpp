@@ -23,6 +23,7 @@ using namespace std;
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <vector>
 
 #include "sim_defs.h"
 #include "symtab.h"
@@ -112,39 +113,6 @@ extern "C" int cmd_load_listing(int32 arg, char *buf)
 
 // ============================================================================
 
-static int add_line(char ***pool, int *max, int lineno, const char *line)
-{
-    // Maintains an array of source lines.   Used by listing_parse() which sees
-    // all the source lines before it sees the mapping of line numbers to
-    // code offset.
-
-    line += strspn(line, " \t");
-    if (lineno <= 0) {
-        errno = EINVAL;
-        return -1;
-    }
-    if (lineno >= *max) {
-        char **newpool = (char**) calloc(*max * 2, sizeof(*newpool));
-        if (newpool == NULL)
-            return -1;
-        memcpy(newpool, *pool, *max * sizeof(*newpool));
-        *max *= 2;
-        free(*pool);
-        *pool = newpool;
-    }
-    if ((*pool)[lineno] != NULL) {
-        fflush(stdout);
-        fprintf(stderr, "Line # %d already seen once.  Prior: %s.  New: %s.\n", lineno, (*pool)[lineno], line);
-        errno = EINVAL;
-        return -1;
-    }
-    if (((*pool)[lineno] = strdup(line)) == NULL)
-        return -1;
-    return 0;
-}
-
-// ============================================================================
-
 static int str_pmatch(const char *buf, const char *s)
 {
         // Prefix match -- Ignoring initial white space, does s match the beginning of buf?
@@ -164,19 +132,12 @@ int listing_parse(FILE *f, source_file &src)
     // saved lines are added to the source_file object.
 
     char lbuf[500];
-    char **lines;
-    int maxlines;
+    vector<string> lines;           // index is line_no
     unsigned nlines;
     
     int ret = 0;
 
-    maxlines = 400;
-    if ((lines = (char**) calloc(maxlines, sizeof(*lines))) == NULL) {
-        int e = errno;
-        fprintf(stderr, "listing_parse: malloc error.\n");
-        errno = e;
-        return -1; 
-    }
+    lines.reserve(400);
 
     int seen_ll_hdr = 0;    // Seen the "LINE LOC LINE LOC ..." header ?
     int seen_line_locs = 0;     // Seen all of the actual line locations that follow the ll header
@@ -189,6 +150,7 @@ int listing_parse(FILE *f, source_file &src)
     int auto_join_next = 0; // Stat flag for automatic varibles re line continuation
     int seen_explicit_dcl = 0;  // Seen header for names declared by explicit dcls
     // using strcmp and strspn is very portable, but not as pretty as other approaches...
+    string seg_name;
     for (nlines = 0; fgets(lbuf, sizeof(lbuf), f) != NULL; ++ nlines) {
         // check for buffer too small
         size_t n = strlen(lbuf);
@@ -201,43 +163,57 @@ int listing_parse(FILE *f, source_file &src)
         // chomp
         if (lbuf[n-1] == '\n')
             lbuf[n-1] = 0;
+        char *lbufp = lbuf;
+        if (*lbufp == '\f')
+            ++lbufp;
         if (*lbuf == 0)
             continue;
+        if (str_pmatch(lbufp, "COMPILATION LISTING OF SEGMENT") == 0) {
+            lbufp += strspn(lbufp, " \t");
+            seg_name = lbufp;
+        }
+
         if (!source_finished) {
-            if (str_pmatch(lbuf, "SOURCE FILES USED") == 0) {
+            if (str_pmatch(lbufp, "SOURCE FILES USED") == 0) {
                 source_finished = 1;
                 continue;
             }
             // Check for a source line
-            if (strspn(lbuf, " \t0123456789") >= 9) {
-                char c = lbuf[9];
+            if (strspn(lbufp, " \t0123456789") >= 9) {
+                char c = lbufp[9];
                 if (c >= '0' && c <= '9') {
                     fflush(stdout);
-                    fprintf(stderr, "Line %u has unexpected 10th char after source number: %s\n", nlines + 1, lbuf);
+                    fprintf(stderr, "Line %u has unexpected 10th char after source number: %s\n", nlines + 1, lbufp);
                     errno = EINVAL;
                     return -1;
                 }
-                lbuf[9] = 0;
-                int lineno;
+                lbufp[9] = 0;
+                unsigned lineno;
                 char dummy;
-                if (sscanf(lbuf, "%d %c", &lineno, &c) == 1) {
-                    lbuf[9] = c;
-                    if (add_line(&lines, &maxlines, lineno, lbuf + 9) == -1) {
-                        int e = errno;
-                        fprintf(stderr, "listing_parse: error saving line.\n");
-                        errno = e;
+                if (sscanf(lbufp, "%u %c", &lineno, &c) == 1) {
+                    lbufp[9] = c;
+                    char *line = lbufp + 9;
+                    line += strspn(line, " \t");
+                    if (lineno != lines.size()+1) {
+                        if (*line == 0) {
+                            // OK, an empty line that probably represents use of an include file
+                            continue;
+                        }
+                        fprintf(stderr, "listing_parse: found line %u, expecting line %u\n", lineno, lines.size()+1);
+                        errno = EINVAL;
                         return -1;
                     }
+                    lines.push_back(line);
                 } else {
                     // probably an included line with multiple line numbers
-                    lbuf[9] = c;
+                    lbufp[9] = c;
                 }
             }
             continue;
         }
         if (!seen_ll_hdr) {
             // Look for header consisting of alternating "LINE" and "LOC"
-            char *s = lbuf;
+            char *s = lbufp;
             while (*s) {
                 s += strspn(s, " \t");
                 if (strncmp(s, "LINE", 4) != 0)
@@ -257,7 +233,7 @@ int listing_parse(FILE *f, source_file &src)
             // look for pairs of numbers -- line # and loc #
             int any = 0;
             int lineno = -1;
-            char *s = lbuf;
+            char *s = lbufp;
             while (*s) {
                 s += strspn(s, " \t");
                 int n = strspn(s, "0123456789");
@@ -272,14 +248,21 @@ int listing_parse(FILE *f, source_file &src)
                 unsigned loc;
                 (void) sscanf(s, "%o", &loc);
                 s += n;
-                if (lineno <= 0 || lineno > maxlines) {
+                if (lineno <= 0 || (unsigned) lineno > lines.size()) {
                     fflush(stdout);
-                    fprintf(stderr, "Found reference to non-existant {line %d, loc %#o} at input line %d.\n", lineno, loc, nlines + 1);
+                    fprintf(stderr, "Found reference to non-existant {line %d, loc %#o} at input line %d.  Expecting line number in range 1..%u\n", lineno, loc, nlines + 1, lines.size());
                     errno = EINVAL;
                     return -1;
                 }
                 // BUG: doing relocation here instead of deferring
-                src.lines[loc+src.lo] = source_line(loc+src.lo, lineno, lines[lineno]);
+                unsigned o = loc + src.lo;
+                if (src.lines.find(o) != src.lines.end()) {
+                    fflush(stdout);
+                    fprintf(stderr, "Found multiple lines starting at offset %u at input line %d\n", o, nlines + 1);
+                    errno = EINVAL;
+                    return -1;
+                }
+                src.lines[o] = source_line(o, lineno, lines[lineno-1]);
                 lineno = -1;
                 any = 1;
             }
@@ -297,9 +280,9 @@ int listing_parse(FILE *f, source_file &src)
             }
         }
         // Look for mixed source/assembly
-        int alm_lineno;
+        unsigned alm_lineno;
         if (!asm_seen_begin) {
-            if (str_pmatch(lbuf, "BEGIN") == 0) {
+            if (str_pmatch(lbufp, "BEGIN") == 0) {
                 asm_seen_begin = 1;
                 alm_lineno = -1;
                 asm_consume_next = 0;
@@ -307,19 +290,19 @@ int listing_parse(FILE *f, source_file &src)
             }
         } else {
             // Look for mixed source/assembly
-            if (strspn(lbuf, "01234567") == 6 && (lbuf[6] == ' ' || lbuf[6] == '\t')) {
+            if (strspn(lbufp, "01234567") == 6 && (lbufp[6] == ' ' || lbufp[6] == '\t')) {
                 unsigned loc;
-                (void) sscanf(lbuf, "%o", &loc);
+                (void) sscanf(lbufp, "%o", &loc);
                 if (asm_consume_next) {
                     // BUG: doing relocation here instead of deferring
-                    src.lines[loc+src.lo] = source_line(loc+src.lo, alm_lineno, lines[alm_lineno]);
+                    src.lines[loc+src.lo] = source_line(loc+src.lo, alm_lineno, lines[alm_lineno-1]);
                     asm_consume_next = 0;
                 }
             } else {
                 int stmt;
                 char dummy;
-                if (sscanf(lbuf, " STATEMENT %d ON LINE %d %c", &stmt, &alm_lineno, &dummy) == 2) {
-                    if (alm_lineno <= 0 || alm_lineno > maxlines) {
+                if (sscanf(lbufp, " STATEMENT %d ON LINE %u %c", &stmt, &alm_lineno, &dummy) == 2) {
+                    if (alm_lineno <= 0 || alm_lineno > lines.size()) {
                         fflush(stdout);
                         fprintf(stderr, "Found reference to non-existant {line %d} at input line %d.\n", alm_lineno, nlines + 1);
                         errno = EINVAL;
@@ -328,7 +311,7 @@ int listing_parse(FILE *f, source_file &src)
                     asm_is_end = 0;
                     asm_consume_next = 1;
                 } else {
-                    const char *s = lbuf + strspn(lbuf, " \t");
+                    const char *s = lbufp + strspn(lbufp, " \t");
                     if (!asm_is_end)
                         asm_is_end = strncmp(s, "end", 3) == 0  || strncmp(s, "END", 3) == 0;
                 }
@@ -336,23 +319,23 @@ int listing_parse(FILE *f, source_file &src)
         }
 #if 1
         if (!seen_explicit_dcl) {
-            seen_explicit_dcl = str_pmatch(lbuf, "NAMES DECLARED BY EXPLICIT CONTEXT") == 0;
+            seen_explicit_dcl = str_pmatch(lbufp, "NAMES DECLARED BY EXPLICIT CONTEXT") == 0;
         } else {
-            if (strstr(lbuf, "NAMES DECLARED BY CONTEXT") != NULL) {
+            if (strstr(lbufp, "NAMES DECLARED BY CONTEXT") != NULL) {
                 seen_explicit_dcl = 0;
                 continue;
             }
-            if (strstr(lbuf, "NAME DECLARED BY CONTEXT") != NULL) {
+            if (strstr(lbufp, "NAME DECLARED BY CONTEXT") != NULL) {
                 seen_explicit_dcl = 0;
                 continue;
             }
-            if (str_pmatch(lbuf, "STORAGE REQUIREMENTS FOR THIS PROGRAM") == 0) {
+            if (str_pmatch(lbufp, "STORAGE REQUIREMENTS FOR THIS PROGRAM") == 0) {
                 seen_explicit_dcl = 0;
                 continue;
             }
-            if (strspn(lbuf, " \t\f") > 80)
+            if (strspn(lbufp, " \t\f") > 80)
                 continue;   // continuation line listing ref locations
-            const char *s = lbuf + strspn(lbuf, " \t");
+            const char *s = lbufp + strspn(lbufp, " \t");
             int l = strcspn(s, " \t");
             char edcl_name[sizeof(lbuf)];
             strncpy(edcl_name, s, l);
@@ -360,7 +343,7 @@ int listing_parse(FILE *f, source_file &src)
             s += l;
             s += strspn(s, " \t");
             if (strspn(s, "01234567") != 6) {
-                    fprintf(stderr, "Explicit dcls: Found garbled entry at input line %d (no location): %s.\n", nlines, lbuf);
+                    fprintf(stderr, "Explicit dcls: Found garbled entry at input line %d (no location): %s.\n", nlines, lbufp);
                     errno = EINVAL;
                     ret = -1;
                     continue;
@@ -383,22 +366,37 @@ int listing_parse(FILE *f, source_file &src)
             }
             if (str_pmatch(edcl_type2, "entry") == 0) {
                 printf("Explicit dcls: Found entry %s at loc %06o\n", edcl_name, edcl_loc);
-                // TODO: Use this
+#if 1
+                // untested
+                if (! seg_name.empty()) {
+                    string entry_name = seg_name;
+                    entry_name += '$';
+                    entry_name += edcl_name;
+                    // Note: no relocation...
+                    if (src.entries.find(edcl_loc) != src.entries.end()) {
+                        fflush(stdout);
+                        fprintf(stderr, "Found multiple entry points starting at offset %u at input line %d\n", edcl_loc, nlines + 1);
+                        errno = EINVAL;
+                        return -1;
+                    }
+                    src.entries[edcl_loc] = entry_point(entry_name, edcl_loc);
+                }
+#endif
             }
         }
 #endif
 #if 1
         if (!seen_automatic) {
-            seen_automatic = str_pmatch(lbuf, "STORAGE FOR AUTOMATIC VARIABLES") == 0;
+            seen_automatic = str_pmatch(lbufp, "STORAGE FOR AUTOMATIC VARIABLES") == 0;
         } else {
-            if (str_pmatch(lbuf, "STACK FRAME") == 0)
+            if (str_pmatch(lbufp, "STACK FRAME") == 0)
                 continue;
-            if (str_pmatch(lbuf, "THE FOLLOWING") == 0) {
+            if (str_pmatch(lbufp, "THE FOLLOWING") == 0) {
                 seen_automatic = 0;
                 continue;
             }
             char auto_block[sizeof(lbuf)];
-            const char *s = lbuf + strspn(lbuf, " \t");
+            const char *s = lbufp + strspn(lbufp, " \t");
             if (strspn(s, "01234567") != 6) {
                 // Not a 6 digit location; it's either a 4 token line or a continuation line
                 int l = strcspn(s, " \t");

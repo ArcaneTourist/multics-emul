@@ -2217,7 +2217,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 if (ret == 0) {
                     reg_A = setbits36(reg_A, 0, 20, 0);
                 }
-                log_msg(WARN_MSG, "OPU", "Untested opcode %03o(0)\n", ip->opcode);
+                log_msg(WARN_MSG, "OPU", "Untested opcode %03o(%d)\n", op, ip->opcode & 1);
                 cancel_run(STOP_WARN);
                 return ret;
             }
@@ -2984,6 +2984,7 @@ extern cpu_ports_t cpu_ports;
                 // BUG: Restart of EIS instructions not yet supported, so spl is a no-op
                 t_uint64 words[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
                 log_msg(WARN_MSG, "OPU::spl", "Not storing enough info to allow EIS decimal op restart.\n");
+                cancel_run(STOP_BUG);
                 return store_yblock8(TPR.CA, words);
             }
 
@@ -4110,7 +4111,7 @@ static int op_ufa(const instr_t* ip)
     if (ret != 0)
         return ret;
     ret = instr_ufa(word);
-    log_msg(WARN_MSG, "OPU", "Untested opcode %03o(0)\n", ip->opcode);
+    log_msg(WARN_MSG, "OPU", "Untested opcode %03o(%d)\n", ip->opcode >> 1, ip->opcode & 1);
     cancel_run(STOP_WARN);
     return ret;
 }

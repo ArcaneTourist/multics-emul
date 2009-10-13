@@ -12,6 +12,7 @@
         Difference is 65.  Hand estimate was 60.
 */
 
+// BUG: int seginfo_add_entry(int seg, int first, int last, const char* fname)
 
 using namespace std;
 #include "seginfo.h"
@@ -42,11 +43,6 @@ static inline std::ostream& simh_endl(std::ostream &os )
 
 // ============================================================================
 
-// BUG: int seginfo_add_entry(int seg, int first, int last, const char* fname)
-// BUG: find
-
-// ============================================================================
-
 class range_t {
 public:
     range_t(int seg, int off_lo, int off_hi)
@@ -56,31 +52,6 @@ private:
     offset_t lo, hi;
 friend ostream& operator<<(ostream& out, const range_t& r);
 };
-
-// ============================================================================
-
-source_file& seginfo_add_source_file(int segno, const char *fname, int offset)
-{
-    int segidx = (segno == -1) ? max_seg + 1 : segno;
-    segments[segidx].source_list.push_back(source_file(fname));
-    source_file& src = segments[segidx].source_list.back();
-    src.lo = offset;
-    if (src.lo >= 0) {
-        if (segments[segidx].source_map[src.lo] != NULL)
-            cerr << "internal error: " << oct << segno << "|" << src.lo << " already has a source file listed." << simh_nl;
-        segments[segidx].source_map[src.lo] = &src;
-    }
-    return src;
-}
-
-// ============================================================================
-
-int seginfo_add_source_file(int segno, int first, int last, const char* fname)
-{
-    source_file& src = seginfo_add_source_file(segno, fname, first);
-    src.hi = last;
-    return 0;
-}
 
 // ============================================================================
 
@@ -122,20 +93,6 @@ ostream& operator<<(ostream& out, const range_t& r)
 
     return out;
 }
-
-// ============================================================================
-
-#if 0
-ostream& asm_file::print(ostream& out, int indent) const
-{
-    out << string(indent, ' ');
-    out << "ASM File " << fname << ": ";
-    out << "Range "<<  range_t(segno, lo, hi);
-    out << simh_nl;
-
-    return out;
-}
-#endif
 
 // ============================================================================
 
@@ -260,6 +217,55 @@ ostream& source_file::print(ostream& out, int indent) const
     return out;
 }
 
+
+// ============================================================================
+// ============================================================================
+// ============================================================================
+
+template<typename Map> typename Map::const_iterator 
+find_lower(Map const& m, typename Map::key_type const& k)
+{
+    typename Map::const_iterator it = m.upper_bound(k);
+    if (it == m.begin())
+        return m.end();
+    return --it;
+}
+
+
+template<typename Map> typename Map::iterator 
+find_lower(Map & m, typename Map::key_type const& k)
+{
+    typename Map::iterator it = m.upper_bound(k);
+    if (it == m.begin())
+        return m.end();
+    return --it;
+}
+
+// ============================================================================
+
+source_file& seginfo_add_source_file(int segno, const char *fname, int offset)
+{
+    int segidx = (segno == -1) ? max_seg + 1 : segno;
+    segments[segidx].source_list.push_back(source_file(fname));
+    source_file& src = segments[segidx].source_list.back();
+    src.lo = offset;
+    if (src.lo >= 0) {
+        if (segments[segidx].source_map[src.lo] != NULL)
+            cerr << "internal error: " << oct << segno << "|" << src.lo << " already has a source file listed." << simh_nl;
+        segments[segidx].source_map[src.lo] = &src;
+    }
+    return src;
+}
+
+// ============================================================================
+
+int seginfo_add_source_file(int segno, int first, int last, const char* fname)
+{
+    source_file& src = seginfo_add_source_file(segno, fname, first);
+    src.hi = last;
+    return 0;
+}
+
 // ============================================================================
 
 void seginfo_dump(void)
@@ -313,25 +319,6 @@ void seginfo_dump(void)
 // ============================================================================
 
 
-#if 0
-int seginfo_add_asm(int segno, int first, int last, const char* fname)
-{
-    if (fname == NULL)
-        return -1;
-    if (segno > max_seg)
-        return -1;
-    int idx = (segno == -1) ? max_seg + 1 : segno;
-    segments[idx].asm_files[first] = asm_file(fname, segno, first, last); 
-    return 0;
-}
-
-int seginfo_add_line(???, int lineno, int offset, const char *text)
-{
-}
-#endif
-
-// ============================================================================
-
 int seginfo_add_linkage(int segno, int offset, const char* name)
 {
     if (name == NULL)
@@ -351,8 +338,20 @@ int seginfo_add_linkage(int segno, int offset, const char* name)
     } // else cerr << "note: " << seg_addr_t(segno,offset) << " Adding linkage for '" << name << "'." << simh_nl;
 
     seg.linkage[offset] = linkage_info(name, offset);
+
     // BUG: TODO: compare linkages versus what parsing source yielded...
-    // BUG: Should scan source_map and/or source_list...
+    // Following code is just a draft...
+    // BUG: listing parser does not yet generate entry info...
+    for (list<source_file>::iterator src_it = seg.source_list.begin(); src_it != seg.source_list.end(); src_it++) {
+        source_file& src = *src_it;
+        for (map<int,entry_point>::iterator e_it = src.entries.begin(); e_it != src.entries.end(); e_it++) {
+            entry_point& ep = (*e_it).second;
+            if (ep.name == name)
+                // cout << "Linkage: " << name << " at " << seg_addr_t(segno,offset) << " matches: " << src.name << " with offset " << src.lo << "+" << ep.offset << "=" << (src.lo + ep.offset) << ".  Delta is " << (offset - ep.offset) << simh_nl;
+                cout << "Linkage: " << name << " at " << seg_addr_t(segno,offset) << " matches: " << src.fname << " with offset " << ep.offset << ".  Delta is " << (offset - ep.offset) << simh_nl;
+        }
+    }
+
     return ret;
 }
 
@@ -389,34 +388,31 @@ if (segno == 0427) cerr << "DEBUG: Seg " << segno << "is empty." << simh_endl;
         // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": No source map." << simh_endl;
     } else {
         // Find highest entry that is less than given offset
-        map<int,source_file*>::const_iterator src_it = seg.source_map.upper_bound(offset);
+        // map<int,source_file*>::const_iterator src_it = seg.source_map.upper_bound(offset);
+        map<int,source_file*>::const_iterator src_it = find_lower(seg.source_map, offset);
         if (src_it == seg.source_map.end()) {
-            // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": at end." << simh_endl;
-            // All are less than the given value, so use the last entry
-            -- src_it;
-            // Sanity Check
-            if ((*src_it).second->hi > 0) {
-                if (offset > (*src_it).second->hi)
-                    ++ src_it;
-            } else {
-                // need a sanity check -- BUG: should look at source lines to estimate highest offset related to this src
-                if (!(*src_it).second->lines.empty()) {
-                    map<int,source_line>::const_iterator ln_it = (*src_it).second->lines.end();
-                    -- ln_it;
-                    int off = (*ln_it).second.offset;
-                    if (off >= 0 && offset > off + 10) {
+            // All are larger -- nothing matches
+            // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": no match, all are larger." << simh_endl;
+        } else if (src_it == -- seg.source_map.end()) {
+            // Found last entry in list, so sanity check
+            if ((*src_it).second->lo != offset)
+                if ((*src_it).second->hi > 0) {
+                    if (offset > (*src_it).second->hi)
                         ++ src_it;
-                        // cerr << "crap, line " << dec << __LINE__ << ": source file doesn't pass sanity check." << simh_endl;
+                } else {
+                    // need a sanity check -- BUG: should look at source lines to estimate highest offset related to this src
+                    if (!(*src_it).second->lines.empty()) {
+                        map<int,source_line>::const_iterator ln_it = (*src_it).second->lines.end();
+                        -- ln_it;
+                        int off = (*ln_it).second.offset;
+                        if (off >= 0 && offset > off + 10) {
+                            ++ src_it;
+                            // cerr << "crap, line " << dec << __LINE__ << ": source file doesn't pass sanity check." << simh_endl;
+                        }
                     }
                 }
-            }
-        } else if (src_it == seg.source_map.begin()) {
-            // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": no match, all are larger." << simh_endl;
-            // All are larger -- nothing matches
-            src_it = seg.source_map.end();
         } else {
-            // Found one that's larger, so back up one
-            --src_it;
+            // Found one...
         }
         if (src_it == seg.source_map.end()) {
             // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": no match found." << simh_endl;

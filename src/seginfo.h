@@ -52,7 +52,7 @@ public:
 class source_line {
 public:
     source_line() { offset = -1; line_no = -1; }
-    source_line(int loc, int line_num, const char *ltext)
+    source_line(int loc, int line_num, const string& ltext)
         { offset = loc; line_no = line_num; text = ltext; }
     ostream& print(ostream& out, int indent) const;
     friend ostream& operator<<(ostream& out, const source_line& sl)
@@ -70,7 +70,7 @@ class stack_frame;
 class entry_point {
 public:
     entry_point() { offset = -1, last = -1; stack = NULL; };
-    entry_point(const char* nm, int off, int lst = -1)
+    entry_point(const string& nm, int off, int lst = -1)
         { name = nm; offset = off; last = lst; stack = NULL; }
     string name;
     offset_t offset;

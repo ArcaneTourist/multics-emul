@@ -42,7 +42,7 @@ static inline void negate72(t_uint64* a, t_uint64* b)
 
 int instr_dvf(t_uint64 word)
 {
-    // dvf -- divide fraction; 71-bit signed fractional dividend  is
+    // dvf -- divide fraction; 71-bit signed fractional dividend is
     // divided by a 36-bit fractional divisor
 
     log_msg(NOTIFY_MSG, "opu::dvf", "AQ = {%012llo,%012llo} aka (%lld,%lld).  Divisor = %012llo aka %lld.\n", reg_A, reg_Q, reg_A, reg_Q, word, word);
@@ -253,7 +253,8 @@ double multics_to_double(t_uint64 xhi, t_uint64 xlo, int show, int is_signed)
     t_uint64 orig_lo = xlo;
     
     xlo = setbits36(xlo, 35, 1, 0); // throw it away, use 71 bits, not 72
-    reg_Q = setbits36(reg_Q>>1, 0, 1, reg_A&1); 
+    // reg_Q = setbits36(reg_Q>>1, 0, 1, reg_A&1);  // BUG
+    xhi = setbits36(xhi>>1, 0, 1, xhi&1);   // BUG fixed
 
     int sign = 0;
     if (is_signed) {
