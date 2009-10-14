@@ -89,7 +89,7 @@ extern "C" int cmd_load_listing(int32 arg, char *buf)
         s[n] = sv;
         s += n;
     } else
-        offset = 0;
+        offset = -1;
 
     s += strspn(s, " \t");
     FILE *f;
@@ -169,6 +169,8 @@ int listing_parse(FILE *f, source_file &src)
         if (*lbuf == 0)
             continue;
         if (str_pmatch(lbufp, "COMPILATION LISTING OF SEGMENT") == 0) {
+            lbufp += strspn(lbufp, " \t");
+            lbufp += strlen("COMPILATION LISTING OF SEGMENT");
             lbufp += strspn(lbufp, " \t");
             seg_name = lbufp;
         }
@@ -255,14 +257,13 @@ int listing_parse(FILE *f, source_file &src)
                     return -1;
                 }
                 // BUG: doing relocation here instead of deferring
-                unsigned o = loc + src.lo;
-                if (src.lines.find(o) != src.lines.end()) {
+                if (src.lines.find(loc) != src.lines.end()) {
                     fflush(stdout);
-                    fprintf(stderr, "Found multiple lines starting at offset %u at input line %d\n", o, nlines + 1);
+                    fprintf(stderr, "Found multiple lines starting at offset %u at input line %d\n", loc, nlines + 1);
                     errno = EINVAL;
                     return -1;
                 }
-                src.lines[o] = source_line(o, lineno, lines[lineno-1]);
+                src.lines[loc] = source_line(loc, lineno, lines[lineno-1]);
                 lineno = -1;
                 any = 1;
             }
@@ -294,8 +295,7 @@ int listing_parse(FILE *f, source_file &src)
                 unsigned loc;
                 (void) sscanf(lbufp, "%o", &loc);
                 if (asm_consume_next) {
-                    // BUG: doing relocation here instead of deferring
-                    src.lines[loc+src.lo] = source_line(loc+src.lo, alm_lineno, lines[alm_lineno-1]);
+                    src.lines[loc] = source_line(loc, alm_lineno, lines[alm_lineno-1]);
                     asm_consume_next = 0;
                 }
             } else {

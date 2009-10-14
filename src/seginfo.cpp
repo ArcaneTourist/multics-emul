@@ -12,8 +12,6 @@
         Difference is 65.  Hand estimate was 60.
 */
 
-// BUG: int seginfo_add_entry(int seg, int first, int last, const char* fname)
-
 using namespace std;
 #include "seginfo.h"
 #include <iostream>
@@ -26,6 +24,7 @@ using namespace std;
 // ============================================================================
 
 static seginfo segments[max_seg + 2];
+static const int max_alm_per_line = 10;     // Used for estimating the location of the last machine instruction for the last source line of a file
 
 // ============================================================================
 
@@ -165,20 +164,28 @@ ostream& source_file::print(ostream& out, int indent) const
 {
     out << string(indent, ' ');
 
-    if (lo < 0)
+    if (lo() < 0)
         out << "File " << fname;
     else {
-        if (hi >= 0)
-            out << "Range  " << range_t(-1, lo, hi) << ":  " << fname;
+        if (reloc < 0)
+            out << "Tentative ";
+        if (hi() >= 0)
+            out << "Range  " << range_t(-1, lo(), hi());
         else
-            out << "Offset " << lo << ":  " << fname;
+            out << "Offset " << lo();
+        out << ":  " << fname;
+        if (reloc < 0)
+            out << "(Relocation information unavailable)";
+        else if (reloc > 0)
+            out << "(Relocated by " << reloc << ")";
+        else
+            out << "(non-relocated)" ;
     }
-
-
     if (entries.empty() && stack_frames.empty() && lines.empty()) {
         out << " -- No entry points, stack frames, or lines." << simh_nl;
         return out;
     }
+    out << simh_nl;
 
     out << simh_nl;
     indent += 2;
@@ -248,11 +255,15 @@ source_file& seginfo_add_source_file(int segno, const char *fname, int offset)
     int segidx = (segno == -1) ? max_seg + 1 : segno;
     segments[segidx].source_list.push_back(source_file(fname));
     source_file& src = segments[segidx].source_list.back();
-    src.lo = offset;
-    if (src.lo >= 0) {
-        if (segments[segidx].source_map[src.lo] != NULL)
-            cerr << "internal error: " << oct << segno << "|" << src.lo << " already has a source file listed." << simh_nl;
-        segments[segidx].source_map[src.lo] = &src;
+    if (offset < 0)
+        src._lo = -1;
+    else {
+        src._lo = 0;
+        src.reloc = offset;
+        if (segments[segidx].source_map[src.lo()] != NULL)
+            cerr << "internal error: " << oct << segno << "|" << src.lo() << " already has a source file listed." << simh_nl;
+        else
+            segments[segidx].source_map[src.lo()] = &src;
     }
     return src;
 }
@@ -262,7 +273,8 @@ source_file& seginfo_add_source_file(int segno, const char *fname, int offset)
 int seginfo_add_source_file(int segno, int first, int last, const char* fname)
 {
     source_file& src = seginfo_add_source_file(segno, fname, first);
-    src.hi = last;
+    src._hi = last;
+    src.reloc = 0;
     return 0;
 }
 
@@ -280,7 +292,7 @@ void seginfo_dump(void)
         else
             cout << "Segment " << oct << segno << ":" << simh_nl;
         if (! seg.source_map.empty()) {
-            cout << "  Sources (with location info):" << simh_nl;
+            cout << "  Sources (with re-location info):" << simh_nl;
             for (map<int,source_file*>::iterator it = seg.source_map.begin(); it != seg.source_map.end(); it++) {
                 source_file* src = (*it).second;
                 src->print(cout, 4);
@@ -301,17 +313,17 @@ void seginfo_dump(void)
             bool hdr = 0;
             for (list<source_file>::iterator it = seg.source_list.begin(); it != seg.source_list.end(); it++) {
                 source_file& src = *it;
-                if (src.lo < 0) {
+                if (src.reloc < 0) {
                     // not displayed above
                     if (!hdr) {
                         hdr = 1;;
-                        cout << "  Sources (without location info):" << simh_nl ;
+                        cout << "  Sources (without re-location info):" << simh_nl ;
                     }
                     src.print(cout, 4);
                 }
             }
             if (!hdr)
-                cout << "  All sources have location info." << simh_nl;
+                cout << "  All sources have re-location info." << simh_nl;
         }
     }
 }
@@ -339,16 +351,27 @@ int seginfo_add_linkage(int segno, int offset, const char* name)
 
     seg.linkage[offset] = linkage_info(name, offset);
 
-    // BUG: TODO: compare linkages versus what parsing source yielded...
-    // Following code is just a draft...
-    // BUG: listing parser does not yet generate entry info...
+    // TODO: Move source_file to a single list instead of requiring user to specify segments
     for (list<source_file>::iterator src_it = seg.source_list.begin(); src_it != seg.source_list.end(); src_it++) {
         source_file& src = *src_it;
         for (map<int,entry_point>::iterator e_it = src.entries.begin(); e_it != src.entries.end(); e_it++) {
             entry_point& ep = (*e_it).second;
-            if (ep.name == name)
-                // cout << "Linkage: " << name << " at " << seg_addr_t(segno,offset) << " matches: " << src.name << " with offset " << src.lo << "+" << ep.offset << "=" << (src.lo + ep.offset) << ".  Delta is " << (offset - ep.offset) << simh_nl;
-                cout << "Linkage: " << name << " at " << seg_addr_t(segno,offset) << " matches: " << src.fname << " with offset " << ep.offset << ".  Delta is " << (offset - ep.offset) << simh_nl;
+            if (ep.name == name) {
+                int delta = offset - ep.offset;
+                cout << "Linkage: " << name << " at " << seg_addr_t(segno,offset) << " matches: " << src.fname << " with offset " << ep.offset << ".  Delta is " << delta << simh_nl;
+                if (src.reloc < 0) {
+                    src.reloc = delta;
+                    if (src._lo != -1)
+                        cerr << "internal error: " << src.fname << " has _lo of " << src._lo << simh_nl;
+                    src._lo = 0;
+                    if (segments[segidx].source_map[src.lo()] != NULL)
+                        cerr << "internal error: " << oct << segno << "|" << src.lo() << " already has a source file listed." << simh_nl;
+                    else
+                        segments[segidx].source_map[src.lo()] = &src;
+                } else
+                    if (src.reloc != delta)
+                        cerr << "Linkage: Warning: Prior delta for this source file was " << src.reloc << simh_nl;
+            }
         }
     }
 
@@ -372,11 +395,11 @@ int seginfo_find_all(int segno, int offset, where_t *wherep)
     int segidx = (segno == -1) ? max_seg + 1 : segno;
     const seginfo& seg = segments[segidx];
     if (seg.empty()) {
-if (segno == 0427) cerr << "DEBUG: Seg " << segno << "is empty." << simh_endl;
+//if (segno == 0427) cerr << "DEBUG: Seg " << segno << "is empty." << simh_endl;
         return -1;
     }
 
-    // BUG: we need relocation info...
+    // BUG: we need to use relocation info...
 
     /*
         Find the correct source file
@@ -385,52 +408,63 @@ if (segno == 0427) cerr << "DEBUG: Seg " << segno << "is empty." << simh_endl;
     const source_file* srcp;
     if (seg.source_map.empty()) {
         srcp = NULL;
-        // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": No source map." << simh_endl;
+        // if (segno == 0431 && 0713 <= offset && offset <= 0720) cerr << "DEBUG(line " << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": No source map." << simh_endl;
     } else {
         // Find highest entry that is less than given offset
-        // map<int,source_file*>::const_iterator src_it = seg.source_map.upper_bound(offset);
+        // Note that all keys in the source_map are the relocated offset
         map<int,source_file*>::const_iterator src_it = find_lower(seg.source_map, offset);
         if (src_it == seg.source_map.end()) {
             // All are larger -- nothing matches
-            // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": no match, all are larger." << simh_endl;
+            if (0 && segno == 031 && 0 <= offset && offset <= 02166) {
+                cerr << "DEBUG: " << seg_addr_t(segno,offset) << " All sources have higher offsets." << simh_nl;
+                src_it = seg.source_map.begin();
+                cerr << "DEBUG: " << seg_addr_t(segno,offset) << " First source: " << (*src_it).second->fname << ": _lo = " << (*src_it).second->_lo << ", reloc = " << (*src_it).second->reloc << ", lo() = " << (*src_it).second->lo() << simh_endl;
+                src_it = -- seg.source_map.end();
+                cerr << "DEBUG: " << seg_addr_t(segno,offset) << " Last source: " << (*src_it).second->fname << ": _lo = " << (*src_it).second->_lo << ", reloc = " << (*src_it).second->reloc << ", lo() = " << (*src_it).second->lo() << simh_endl;
+                src_it = seg.source_map.end();
+            }
         } else if (src_it == -- seg.source_map.end()) {
             // Found last entry in list, so sanity check
-            if ((*src_it).second->lo != offset)
-                if ((*src_it).second->hi > 0) {
-                    if (offset > (*src_it).second->hi)
-                        ++ src_it;
+            source_file* last_src = (*src_it).second;
+            // if (segno == 031 && 0 <= offset && offset <= 02166)
+            // cerr << "DEBUG: " << seg_addr_t(segno,offset) << " Last source file (" << last_src->fname << ") matches; will sanity check." << simh_nl;
+            if (last_src->lo() != offset)
+                // Given offset is higher than anything in the list
+                if (last_src->hi() > 0) {
+                    // User has specified the highest (last) known offset used by this source file
+                    if (offset > last_src->hi())
+                        ++ src_it;  // fail to match
                 } else {
-                    // need a sanity check -- BUG: should look at source lines to estimate highest offset related to this src
-                    if (!(*src_it).second->lines.empty()) {
-                        map<int,source_line>::const_iterator ln_it = (*src_it).second->lines.end();
-                        -- ln_it;
-                        int off = (*ln_it).second.offset;
-                        if (off >= 0 && offset > off + 10) {
-                            ++ src_it;
-                            // cerr << "crap, line " << dec << __LINE__ << ": source file doesn't pass sanity check." << simh_endl;
+                    // Look at last source line to estimate highest offset related to this source file
+                    if (last_src-> reloc < 0)
+                        { cerr << "impossible at line " << __LINE__ << simh_endl; abort(); }
+                    if (! last_src->lines.empty()) {
+                        map<int,source_line>::const_iterator ln_it = -- last_src->lines.end();
+                        int off = (*ln_it).second.offset + last_src->reloc;
+                        if (offset > off + max_alm_per_line) {
+                            ++ src_it;  // fail to match
                         }
                     }
                 }
         } else {
             // Found one...
+            // if (segno == 031 && 0 <= offset && offset <= 02166)
+            // cerr << "DEBUG: " << seg_addr_t(segno,offset) << " Found a source file." << simh_nl;
         }
         if (src_it == seg.source_map.end()) {
-            // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": no match found." << simh_endl;
             srcp = NULL;
         } else {
             srcp = (*src_it).second;
-            // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": match found." << simh_endl;
-            if (srcp->lo > offset) {
+            if (srcp->lo() > offset) {
                 cerr << "impossible at line " << dec << __LINE__ << simh_endl;
                 srcp = NULL;
                 abort();
-            } else
-                if (srcp->hi > 0 && offset > srcp->hi)
+            }  else
+                if (srcp->hi() > 0 && offset > srcp->hi())
                     srcp = NULL;
         }
     }
     if (srcp != NULL) {
-        // if (segno == 0427) cerr << "DEBUG: Found src for " << seg_addr_t(segno,offset) << " with name '" << srcp->fname << ".\r\n";
         if (srcp->fname.empty())
             // impossible
             cerr << "DEBUG: Found src for " << seg_addr_t(segno,offset) << " with empty name." << simh_nl;
@@ -438,28 +472,19 @@ if (segno == 0427) cerr << "DEBUG: Seg " << segno << "is empty." << simh_endl;
         wherep->file_name = srcp->fname.c_str();
         // impossible
         if (wherep->file_name == NULL) cerr << "DEBUG: Null string on file name for " << seg_addr_t(segno,offset) << " with name '" << srcp->fname << "'.\r\n";
+        // if (segno == 031 && 0 <= offset && offset <= 02166)
+        // cerr << "DEBUG(line " << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << " Found source file " << srcp->fname << simh_nl;
     }
-//cerr << "crap, line " << dec << __LINE__ << ": done with srcp." << simh_endl;
+    //else if (segno == 031 && 0 <= offset && offset <= 02166)
+        //cerr << "DEBUG(line " << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << " No source file found." << simh_nl;
 
-#if 0
-    if (segno == 0431 && 0713 << offset && offset <= 0720)
-        if (srcp)
-            cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": We have src info." << simh_endl;
-        else
-            cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": No src info!" << simh_endl;
-#endif
 
     /*
         Find entry point
-            BUG: source entry point may not be re-located
-            BUG: linkage has good info, but won't list internal procs
-            BUG: Old version called add_entry() while scanning segs (and also allowed cmd line injection)
-            BUG: TODO: compare linkages versus what parsing source yielded...
     */
 
     // Entry points (but not files) may nest; We'll look for the highest offset
     // that's lower than our offset, but that may not be quite right...
-
     // BUG: ignoring "hi", which could have helped pick correct overlapping entry point
 
 {
@@ -487,7 +512,7 @@ if (segno == 0427) cerr << "DEBUG: Seg " << segno << "is empty." << simh_endl;
             if (li.hi() == -1) {
                 wherep->entry_hi = -1;
                 if (need_sanity_check)
-                    fail = offset - li.offset > 10;
+                    fail = offset - li.offset > max_alm_per_line;
                 // if(fail) cerr << "crap, line " << dec << __LINE__ << ": entry " << li.name << " fails sanity check." << simh_endl;
             } else if (li.hi() >= offset) {
                 wherep->entry_hi = li.entry->last;
@@ -506,94 +531,61 @@ if (segno == 0427) cerr << "DEBUG: Seg " << segno << "is empty." << simh_endl;
         }
     }
 }
-
-if (0) {
-    // Find entry, see comments above
-    // BUG: we need relocation info...
-    // BUG: not if we use linkage_info instead of source file entry points.   But they only have externals...
-    map<int,entry_point>::const_iterator e_it = srcp->entries.lower_bound(offset);
-    if (e_it != srcp->entries.end()) {
-        if (e_it != srcp->entries.begin() && (*e_it).second.offset != offset)
-            --e_it;
-        const entry_point& ep = (*e_it).second;
-        if (ep.offset <= offset)
-            if (ep.last < 0 || offset <= ep.last) {
-if (ep.name.empty()) cerr << "DEBUG: Found entry for " << seg_addr_t(segno,offset) << " with empty name.\r\n";
-                wherep->entry = ep.name.c_str();
-if (wherep->entry == NULL) cerr << "DEBUG: Null string on entry for " << seg_addr_t(segno,offset) << " with name '" << ep.name << "'.\r\n";
-                wherep->entry_offset = ep.offset;
-                wherep->entry_hi = ep.last;
-            }
+    if (0 && segno == 031 && 0 <= offset && offset <= 02166) {
+        if (wherep->entry)
+            cerr << "DEBUG(line " << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << " Found entry " << wherep->entry << simh_nl;
+        else
+            cerr << "DEBUG(line " << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << " No entry found." << simh_nl;
     }
-}
+
 
     /*
         Find Line
     */
 
-#if 0
-    if (segno == 0431 && 0713 << offset && offset <= 0720)
-        if (!srcp)
-            cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": no src info." << simh_endl;
-        else if (srcp->lines.empty())
-            cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": no lines for src" << simh_endl;
-        else
-            cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": src has lines..." << simh_endl;
-#endif
-    if (srcp && !srcp->lines.empty()) {
-        map<int,source_line>::const_iterator ln_it = srcp->lines.upper_bound(offset);
+    // BUG: use find_lower for consistency ...
+    if (srcp && !srcp->lines.empty() && srcp->reloc < 0)
+        cerr << "DEBUG(line " << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << " No relocation info." << simh_endl;
+    if (srcp && !srcp->lines.empty() && srcp->reloc >= 0) {
+        // Source lines contain and are keyed by their un-relocated offset
+        int src_offset = offset - srcp->reloc;
+        if (0 && segno == 031 && 0 <= offset && offset <= 02166) {
+            cerr << "Source: _lo = " << srcp->_lo << ", reloc = " << srcp->reloc << ", lo() = " << srcp->lo();
+            cerr << "; Line offsets range from ";
+            map<int,source_line>::const_iterator ln_it = srcp->lines.begin();
+            cerr << offset_t((*ln_it).first) << " (" << (*ln_it).second.offset << ") .. ";
+            ln_it = -- srcp->lines.end();
+            cerr << offset_t((*ln_it).first) << " (" << (*ln_it).second.offset << ")." << simh_endl;
+        }
+        map<int,source_line>::const_iterator ln_it = srcp->lines.upper_bound(src_offset);
         int need_sanity_check = 0;
         if (ln_it == srcp->lines.end()) {
-            // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": at end" << simh_endl;
             // All are less than the given value, so use the last entry
             -- ln_it;
+            //if (segno == 031 && 0 <= offset && offset <= 02166) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": at end" << simh_endl;
             need_sanity_check = 1;          // May not be a close match, need sanity test
             // Sanity Check
-            if (offset - (*ln_it).second.offset > 10) {
-                // cerr << "crap, line " << dec << __LINE__ << ": last line isn't close enough." << simh_endl;
-                ++ ln_it;
+            if (src_offset - (*ln_it).second.offset > max_alm_per_line) {
+                ++ ln_it;   // fail to match
             }
         } else if (ln_it == srcp->lines.begin()) {
             // All are larger -- nothing matches
-            // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": all larger" << simh_endl;
+            //if (segno == 031 && 0 <= offset && offset <= 02166) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": all larger" << simh_endl;
             ln_it = srcp->lines.end();
         } else {
             // Found one that's larger, so back up one
-            // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": backing up" << simh_endl;
+            // if (segno == 031 && 0 <= offset && offset <= 02166) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": backing up" << simh_endl;
             --ln_it;
         }
         if (ln_it != srcp->lines.end()) {
             const source_line& sl = (*ln_it).second;
-            if (sl.offset > offset)
+            //if (segno == 031 && 0 <= offset && offset <= 02166) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": found line " << dec << sl.line_no << simh_endl;
+            if (sl.offset > src_offset)
                 cerr << "crap, line " << dec << __LINE__ << ": impossible." << simh_endl;
             wherep->line_no = sl.line_no;
             wherep->line = sl.text.c_str();
-            // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": found" << dec << sl.line_no << simh_endl;
         }
-        // else if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": no match found." << simh_endl;
     }
-
-#if 0
-    if (srcp && !srcp->lines.empty()) {
-        map<int,source_line>::const_iterator l_it = srcp->lines.lower_bound(offset);
-        if (l_it == srcp->lines.end()) {
-            // l_it = srcp->lines.begin();
-            -- l_it;
-            // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(find line): " << seg_addr_t(segno,offset) << ": rewind" << simh_endl;
-        } else
-            if (l_it != srcp->lines.begin() && (*l_it).second.offset != offset) {
-                // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(find line): " << seg_addr_t(segno,offset) << ": backup" << simh_endl;
-                --l_it;
-            } // else if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(find line): " << seg_addr_t(segno,offset) << ": keeping" << simh_endl;
-            
-        const source_line& sl = (*l_it).second;
-        if (sl.offset <= offset) {
-            wherep->line_no = sl.line_no;
-            wherep->line = sl.text.c_str();
-            // if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(find line): " << seg_addr_t(segno,offset) << ": returning: line "  << dec << wherep->line_no << simh_endl;
-        } // else if (segno == 0431 && 0713 << offset && offset <= 0720) cerr << "DEBUG(find line): " << seg_addr_t(segno,offset) << ": *Not* returning: line " << dec << wherep->line_no << simh_endl;
-    }
-#endif
 
     return wherep->file_name == NULL && wherep->entry == NULL && wherep->line_no == -1;
 }

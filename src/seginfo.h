@@ -130,10 +130,14 @@ public:
 
 class source_file {
 public:
-    source_file(const char* name) { fname = name; }
+    source_file(const char* name) { fname = name; reloc = -1; }
     string fname;
-    offset_t lo;
-    offset_t hi;
+    offset_t reloc;     // Compiled segment may be relocated by binder
+    // Assembly sources are tracked only by file name and a range of offsets
+    offset_t _lo;
+    offset_t _hi;
+    offset_t lo() const { return (reloc < 0) ? -1 : _lo + reloc; }
+    offset_t hi() const { return (reloc < 0) ? -1 : _hi < 0 ? -1 : _hi + reloc; }
     map <int, source_line> lines;   // Key is source_line.offset
     map <int, entry_point> entries; // Key is entry_point.offset
     list <stack_frame> stack_frames;
@@ -152,7 +156,7 @@ class seginfo {
     public:
     map <int, linkage_info> linkage;        // Key is linkage_info.offset
     list <source_file> source_list;
-    map <int, source_file*> source_map; // Key is source_file.lo; sources with negative lo offsets are not entered
+    map <int, source_file*> source_map; // Key is source_file.lo(); sources with negative lo offsets are not entered
     bool empty() const {
         return linkage.empty() && source_map.empty() && source_list.empty();
     }
