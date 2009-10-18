@@ -548,6 +548,7 @@ extern void log_msg(enum log_level, const char* who, const char* format, ...);
 extern int log_ignore_ic_change(void);
 extern int log_notice_ic_change(void);
 extern void log_forget_ic(void);
+extern int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp);
 
 extern int scan_seg(uint segno, int msgs);  // scan definitions section for procedure entry points
 t_stat cmd_seginfo(int32 arg, char *buf);   // display segment info
@@ -643,6 +644,7 @@ extern int cmd_dump_history(int32 arg, char *buf);
 extern int cmd_xdebug(int32 arg, char *buf);
 extern int cmd_find(int32 arg, char *buf);
 extern int cmd_load_listing(int32 arg, char *buf);
+extern int cmd_stack_trace(int32 arg, char *buf);
 extern void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic);
 extern char *ir2text(const IR_t *irp);
 
@@ -695,6 +697,7 @@ extern int instr_fno(void);
 
 extern int cmd_dump_vm(int32 arg, char *buf);
 extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
+extern int convert_address(uint* addrp, int seg, int offset, int fault);
 extern int addr_mod(const instr_t *ip);
 extern SDW_t* get_sdw();
 extern int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp);

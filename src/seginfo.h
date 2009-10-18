@@ -1,3 +1,12 @@
+/*
+ * Support for symbolic debugging -- information about segments
+*/
+
+#ifndef _SIM_DEFS_H_
+#include <stdint.h>
+typedef uint64_t t_uint64;
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -62,7 +71,21 @@ public:
     string text;
 };
 
-class stack_frame;
+
+class entry_point;
+class automatic;
+
+class stack_frame {
+public:
+    stack_frame() { owner = NULL; size = -1; }
+    ostream& print(ostream& out, int indent) const;
+    friend ostream& operator<<(ostream& out, const stack_frame& sf)
+        { return sf.print(out, 0); }
+    entry_point *owner;
+    int size;
+    map <int, automatic> automatics;    // Key is automatic.offset
+};
+
 
 // Entry point information as loaded from a source listing.   Offsets are
 // those reported by the compiler; note that in-core offsets may differ
@@ -71,11 +94,11 @@ class entry_point {
 public:
     entry_point() { offset = -1, last = -1; stack = NULL; };
     entry_point(const string& nm, int off, int lst = -1)
-        { name = nm; offset = off; last = lst; stack = NULL; }
+        { name = nm; offset = off; last = lst; stack  = NULL; }
     string name;
     offset_t offset;
     offset_t last;              // negative if unknown
-    stack_frame* stack;     // multiple entry points may share the same stack frame
+    stack_frame* stack;
     ostream& print(ostream& out, int indent) const;
     friend ostream& operator<<(ostream& out, const entry_point& ep)
         { return ep.print(out, 0); }
@@ -96,20 +119,15 @@ public:
     ostream& print(ostream& out, int indent) const;
 };
 
+
 class automatic {
 public:
+    automatic() { offset = -1; value = 0; }
+    automatic(string& nm, int off) { name = nm; offset = off; value = 0; }
+    automatic(const char* nm, int off) { name = nm; offset = off; value = 0; }
     int offset;         // offset relative to stack pointer
     string name;
-};
-
-class stack_frame {
-public:
-    ostream& print(ostream& out, int indent) const;
-    friend ostream& operator<<(ostream& out, const stack_frame& sf)
-        { return sf.print(out, 0); }
-    entry_point *owner;
-    int size;
-    map <int, automatic> automatics;    // Key is automatic.offset
+    t_uint64 value;
 };
 
 #if 0
@@ -132,6 +150,7 @@ class source_file {
 public:
     source_file(const char* name) { fname = name; reloc = -1; }
     string fname;
+    string seg_name;
     offset_t reloc;     // Compiled segment may be relocated by binder
     // Assembly sources are tracked only by file name and a range of offsets
     offset_t _lo;
@@ -140,12 +159,15 @@ public:
     offset_t hi() const { return (reloc < 0) ? -1 : _hi < 0 ? -1 : _hi + reloc; }
     map <int, source_line> lines;   // Key is source_line.offset
     map <int, entry_point> entries; // Key is entry_point.offset
-    list <stack_frame> stack_frames;
+    map <string,stack_frame> stack_frames;  // Key is stack frame name (which should match some entry_point)
     ostream& print(ostream& out, int indent) const;
 #if 0
     friend ostream& operator<<(ostream& out, const source_file& pfile)
         { return pfile.print(out, 0); }
 #endif
+    entry_point* find_entry(const string& s);
+//private:
+    map <string, entry_point*> entries_by_name; // Key is entry_point.name, pointers point into "entries" map
 };
 
 

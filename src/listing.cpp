@@ -98,7 +98,7 @@ extern "C" int cmd_load_listing(int32 arg, char *buf)
         return 1;
     }
 
-    // BUG: we require the user to tell us the relocation info
+    // BUG: we require the user to tell us the relocation info -- fixed?
     source_file& src = seginfo_add_source_file(segno, s, offset);
 
     int ret = listing_parse(f, src);
@@ -146,11 +146,11 @@ int listing_parse(FILE *f, source_file &src)
     int asm_consume_next = 0;   // State flag for mixed source/assembly
     int asm_is_end = 0;         // State flag for mixed source/assembly
     int seen_automatic = 0;     // Seen header "STORAGE FOR AUTOMATIC VARIABLES"
+    int doing_storage_req = 0;  // Seen headers "STORAGE REQUIREMENTS" and "Object Text..."
     char auto_frame[sizeof(lbuf)] = {0};    // State for listing of automatics
     int auto_join_next = 0; // Stat flag for automatic varibles re line continuation
     int seen_explicit_dcl = 0;  // Seen header for names declared by explicit dcls
     // using strcmp and strspn is very portable, but not as pretty as other approaches...
-    string seg_name;
     for (nlines = 0; fgets(lbuf, sizeof(lbuf), f) != NULL; ++ nlines) {
         // check for buffer too small
         size_t n = strlen(lbuf);
@@ -172,7 +172,7 @@ int listing_parse(FILE *f, source_file &src)
             lbufp += strspn(lbufp, " \t");
             lbufp += strlen("COMPILATION LISTING OF SEGMENT");
             lbufp += strspn(lbufp, " \t");
-            seg_name = lbufp;
+            src.seg_name = lbufp;
         }
 
         if (!source_finished) {
@@ -256,7 +256,6 @@ int listing_parse(FILE *f, source_file &src)
                     errno = EINVAL;
                     return -1;
                 }
-                // BUG: doing relocation here instead of deferring
                 if (src.lines.find(loc) != src.lines.end()) {
                     fflush(stdout);
                     fprintf(stderr, "Found multiple lines starting at offset %u at input line %d\n", loc, nlines + 1);
@@ -317,7 +316,6 @@ int listing_parse(FILE *f, source_file &src)
                 }
             }
         }
-#if 1
         if (!seen_explicit_dcl) {
             seen_explicit_dcl = str_pmatch(lbufp, "NAMES DECLARED BY EXPLICIT CONTEXT") == 0;
         } else {
@@ -365,11 +363,9 @@ int listing_parse(FILE *f, source_file &src)
                 ret = -1;
             }
             if (str_pmatch(edcl_type2, "entry") == 0) {
-                printf("Explicit dcls: Found entry %s at loc %06o\n", edcl_name, edcl_loc);
-#if 1
-                // untested
-                if (! seg_name.empty()) {
-                    string entry_name = seg_name;
+                // printf("Explicit dcls: Found entry %s at loc %06o\n", edcl_name, edcl_loc);
+                if (! src.seg_name.empty()) {
+                    string entry_name = src.seg_name;
                     entry_name += '$';
                     entry_name += edcl_name;
                     // Note: no relocation...
@@ -380,12 +376,51 @@ int listing_parse(FILE *f, source_file &src)
                         return -1;
                     }
                     src.entries[edcl_loc] = entry_point(entry_name, edcl_loc);
+                    src.entries_by_name[edcl_name] = &src.entries[edcl_loc];    // BUG: this should be private
+                    // cout << "Entry " << entry_name << " added." << "\r\n";
                 }
-#endif
+            }
+        }
+
+#if 1
+        if (!doing_storage_req) {
+            doing_storage_req = str_pmatch(lbufp, "STORAGE REQUIREMENTS FOR THIS PROGRAM") == 0;
+        } else {
+            if (str_pmatch(lbufp, "Object\tText\tLink\tSymbol\tDefs\tStatic") == 0)
+                continue;
+            else if (str_pmatch(lbufp, "Start") == 0) {
+                int nargs;
+                char dummy;
+                unsigned obj, text, link, sym, defs, statics;
+                if ((nargs = sscanf(lbufp, "Start %o %o %o %o %o %o %c", &obj, &text, &link, &sym, &defs, &statics, &dummy)) != 6) {
+                    cerr << "Garbled storage requirement line: " << lbufp << "\r\n";
+                    doing_storage_req = 0;
+                } else {
+                    if (obj != 0 || text != 0) {
+                        cerr << "Expecting code generated to address zero." << "\r\n";
+                        doing_storage_req = 0;
+                    }
+                }
+            } else if (str_pmatch(lbufp, "Length") == 0) {
+                int nargs;
+                char dummy;
+                unsigned obj, text, link, sym, defs, statics;
+                if ((nargs = sscanf(lbufp, "Length %o %o %o %o %o %o %c", &obj, &text, &link, &sym, &defs, &statics, &dummy)) != 6) {
+                    cerr << "Garbled storage requirement line: " << lbufp << "\r\n";
+                } else {
+                    src._hi = text;
+                }
+                doing_storage_req = 0;
+            } else {
+                doing_storage_req = 0;
+                if (src._hi < 0) {
+                    cout << "Giving up on storage requirement scanning without finding text size..." << "\r\n";
+                    cout << "Killer line is: <<<" << lbufp << ">>>\r\n";
+                }
             }
         }
 #endif
-#if 1
+
         if (!seen_automatic) {
             seen_automatic = str_pmatch(lbufp, "STORAGE FOR AUTOMATIC VARIABLES") == 0;
         } else {
@@ -407,12 +442,33 @@ int listing_parse(FILE *f, source_file &src)
                     auto_frame[l] = 0;
                     s += l;
                     s += strspn(s, " \t");
+                    if (src.stack_frames.find(auto_frame) != src.stack_frames.end()) {
+                        fprintf(stderr, "Automatic variables: Duplicate stack frame '%s' at input line %d.\n", auto_frame, nlines);
+                        errno = EINVAL;
+                        ret = -1;
+                    } else {
+                        stack_frame& sframe = src.stack_frames[auto_frame];
+                        sframe.size = -1;
+                        entry_point *ep;
+                        if ((ep = src.find_entry(auto_frame)) == NULL) {
+                            cerr << "Stack Frame: Cannot find entry point for " << auto_frame << "\r\n";
+                            sframe.owner = NULL;
+                        } else {
+                            // BUG: probably need to find other entries and point them at this stack
+                            // cout << "Stack Frame: Found entry point for " << auto_frame << "\r\n";
+                            if (ep->stack != NULL)
+                                cerr << "Entry " << ep->name << " already has a stack frame!" << "\r\n";
+                            else
+                                ep->stack = &src.stack_frames[auto_frame];
+                            sframe.owner = ep;
+                        }
+                    }
                 }
             } else {
                 // Got a 6 digit location
                 if (auto_join_next) {
                     // oddity on prior line
-                    fprintf(stderr, "Automatic variabless: Found garbled stack frame listing at input line %d (too few args).\n", nlines);
+                    fprintf(stderr, "Automatic variables: Found garbled stack frame listing at input line %d (too few args).\n", nlines);
                     auto_join_next = 0;
                 }
                 if (*auto_frame == 0) {
@@ -426,28 +482,37 @@ int listing_parse(FILE *f, source_file &src)
             unsigned auto_loc;
             char auto_id[sizeof(lbuf)];
             // char dummy;
+            int have_auto = 0;
             if (auto_join_next) {
                 auto_join_next = 0;
                 strcpy(auto_block, s);
-                printf("Automatic Variables: Found (continued): Stack Frame %s, loc %06o, id %s, block %s\n", auto_frame, auto_loc, auto_id, auto_block);
-                // TODO: make use of this info
+                // printf("Automatic Variables: Found (continued): Stack Frame %s, loc %06o, id %s, block %s\n", auto_frame, auto_loc, auto_id, auto_block);
+                have_auto = 1;
             } else {
                 memset(auto_block, 0, sizeof(auto_block));
                 int nargs;
                 if ((nargs = sscanf(s, "%o %s %9999c", &auto_loc, auto_id, auto_block)) == 3) {
-                    printf("Automatic Variables: Found: Stack Frame %s, loc %06o, id %s, block %s\n", auto_frame, auto_loc, auto_id, auto_block);
-                    // TODO: make use of this info
+                    // printf("Automatic Variables: Found: Stack Frame %s, loc %06o, id %s, block %s\n", auto_frame, auto_loc, auto_id, auto_block);
+                    have_auto = 1;
                 } else if (nargs == 2) {
                     auto_join_next = 1;
                 } else {
                     fflush(stdout);
-                    fprintf(stderr, "Automatic variabless: Found garbled stack frame listing at input line %d (too few args).\n", nlines + 1);
+                    fprintf(stderr, "Automatic variables: Found garbled stack frame listing at input line %d (too few args).\n", nlines + 1);
                     errno = EINVAL;
                     ret = -1;
                 }
             }
+            if (have_auto) {
+                map<string,stack_frame>::iterator it = src.stack_frames.find(auto_frame);
+                if (it == src.stack_frames.end())
+                    printf("stack frame %s not found...\n", auto_frame);
+                else {
+                    stack_frame& sframe = (*it).second;
+                    sframe.automatics[auto_loc] = automatic(auto_id, auto_loc);
+                }
+            }
         }
-#endif
     }
 
     if (ferror(f)) {

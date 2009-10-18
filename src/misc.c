@@ -206,7 +206,6 @@ static void msg(enum log_level level, const char *who, const char* format, va_li
 // ============================================================================
 
 static void word2pr(t_uint64 word, AR_PR_t *prp);
-static int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp);
 int fetch_acc(uint addr, char bufp[513]);
 
 t_stat cmd_seginfo(int32 arg, char *buf)
@@ -558,7 +557,7 @@ static void word2pr(t_uint64 word, AR_PR_t *prp)
 
 // ============================================================================
 
-static int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp)
+int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp)
 {
     if ((word1 & MASKBITS(6)) != 043) {
         return 1;

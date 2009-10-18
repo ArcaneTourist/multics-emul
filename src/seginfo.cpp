@@ -130,6 +130,7 @@ ostream& entry_point::print(ostream& out, int indent) const
                 out << " using own stack frame";
             else
                 out << " using stack frame of " << stack->owner->name;
+        // else no known owner...
     }
     out << simh_nl;
 
@@ -173,7 +174,7 @@ ostream& source_file::print(ostream& out, int indent) const
             out << "Range  " << range_t(-1, lo(), hi());
         else
             out << "Offset " << lo();
-        out << ":  " << fname;
+        out << ":  " << fname << " ";
         if (reloc < 0)
             out << "(Relocation information unavailable)";
         else if (reloc > 0)
@@ -204,8 +205,8 @@ ostream& source_file::print(ostream& out, int indent) const
         out << string(indent, ' ') << "No stack frames." << simh_nl;
     else {
         out << string(indent, ' ') << "Stack Frames:" << simh_nl;
-        for (list<stack_frame>::const_iterator it = stack_frames.begin(); it != stack_frames.end(); it++) {
-            const stack_frame& sl = *it;
+        for (map<string,stack_frame>::const_iterator it = stack_frames.begin(); it != stack_frames.end(); it++) {
+            const stack_frame& sl = (*it).second;
             sl.print(out, indent + 2);
         }
     }
@@ -228,6 +229,15 @@ ostream& source_file::print(ostream& out, int indent) const
 // ============================================================================
 // ============================================================================
 // ============================================================================
+//
+entry_point* source_file::find_entry(const string& s)
+{
+    map<string,entry_point*>::iterator it = entries_by_name.find(s);
+    if (it == entries_by_name.end())
+        return NULL;
+    else
+        return (*it).second;
+}
 
 template<typename Map> typename Map::const_iterator 
 find_lower(Map const& m, typename Map::key_type const& k)
@@ -259,6 +269,7 @@ source_file& seginfo_add_source_file(int segno, const char *fname, int offset)
         src._lo = -1;
     else {
         src._lo = 0;
+        src._hi = -1;
         src.reloc = offset;
         if (segments[segidx].source_map[src.lo()] != NULL)
             cerr << "internal error: " << oct << segno << "|" << src.lo() << " already has a source file listed." << simh_nl;
@@ -399,7 +410,7 @@ int seginfo_find_all(int segno, int offset, where_t *wherep)
         return -1;
     }
 
-    // BUG: we need to use relocation info...
+    // BUG: we need to use relocation info... -- fixed?
 
     /*
         Find the correct source file
@@ -487,7 +498,6 @@ int seginfo_find_all(int segno, int offset, where_t *wherep)
     // that's lower than our offset, but that may not be quite right...
     // BUG: ignoring "hi", which could have helped pick correct overlapping entry point
 
-{
     // Find entry in linkage table, see comments above
     // Looking for highest entry <= given offset
     if (! seg.linkage.empty()) {
@@ -507,30 +517,25 @@ int seginfo_find_all(int segno, int offset, where_t *wherep)
         if (li_it != seg.linkage.end()) {
             // wherep->entry_hi = li.last;
             const linkage_info& li = (*li_it).second;
-            if (li.offset > offset) { cerr << "impossible at line " << dec << __LINE__ << simh_endl; abort(); }
-            int fail = 0;   // BUG: this is fucking bad code
+            int fail = 0;
             if (li.hi() == -1) {
                 wherep->entry_hi = -1;
                 if (need_sanity_check)
                     fail = offset - li.offset > max_alm_per_line;
-                // if(fail) cerr << "crap, line " << dec << __LINE__ << ": entry " << li.name << " fails sanity check." << simh_endl;
             } else if (li.hi() >= offset) {
                 wherep->entry_hi = li.entry->last;
                 need_sanity_check = 0;
             } else {
                 wherep->entry_hi = -1;
                 fail = 1;
-                // if(fail) cerr << "crap, line " << dec << __LINE__ << ": entry " << li.name << " fails bounds check -- " << "looking for " << offset << ", found " << range_t(-1,li.offset,li.hi()) << simh_endl;
             }
             if (!fail) {
-                if (li.name.empty()) cerr << "DEBUG: Found linkage for " << seg_addr_t(segno,offset) << " with empty name.\r\n";
                 wherep->entry = li.name.c_str();
-                if (wherep->entry == NULL) cerr << "DEBUG: Null string on linkage for " << seg_addr_t(segno,offset) << " with name '" << li.name << "'.\r\n";
                 wherep->entry_offset = li.offset;
             }
         }
     }
-}
+
     if (0 && segno == 031 && 0 <= offset && offset <= 02166) {
         if (wherep->entry)
             cerr << "DEBUG(line " << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << " Found entry " << wherep->entry << simh_nl;

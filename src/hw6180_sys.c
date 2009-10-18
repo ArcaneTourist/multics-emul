@@ -60,13 +60,14 @@ const char *sim_stop_messages[] = {
 
 extern CTAB *sim_vm_cmd;
 static struct sim_ctab sim_cmds[] =  {
-    { "XSYMTAB",  cmd_symtab_parse, 0, "xsymtab [...]            define symtab entries\n" },
-    { "XVMDUMP",  cmd_dump_vm, 0,      "xvmdump                  dump virtual memory caches\n" },
-    { "XHISTORY", cmd_dump_history, 0, "xhistory                 display recent instruction counter values\n" },
-    { "XSEGINFO", cmd_seginfo, 0,      "xseginfo <seg>           walk segment linkage table\n" },
-    { "XFIND",    cmd_find, 0,         "xfind <string> <range>   search memory for string\n" },
-    { "XLIST",    cmd_load_listing, 0, "xlist <addr> <source>    load pl1 listing\n" },
-    { "XDEBUG",   cmd_xdebug, 0,       "xdebug seg <#> {on|off}  finer grained debugging\n" },
+    { "XDEBUG",   cmd_xdebug, 0,       "xdebug seg <#> {on|default_off}  finer grained debugging\n" },
+    { "XFIND",    cmd_find, 0,         "xfind <string> <range>           search memory for string\n" },
+    { "XHISTORY", cmd_dump_history, 0, "xhistory                         display recent instruction counter values\n" },
+    { "XLIST",    cmd_load_listing, 0, "xlist <addr> <source>            load pl1 listing\n" },
+    { "XSEGINFO", cmd_seginfo, 0,      "xseginfo <seg>                   walk segment linkage table\n" },
+    { "XSTACK",   cmd_stack_trace, 0,  "xstack                           dump Multics procedure call stack\n" },
+    { "XSYMTAB",  cmd_symtab_parse, 0, "xsymtab [...]                    define symtab entries\n" },
+    { "XVMDUMP",  cmd_dump_vm, 0,      "xvmdump                          dump virtual memory caches\n" },
     { 0, 0, 0, 0}
 };
 

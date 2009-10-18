@@ -304,7 +304,8 @@ int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, 
     // nbits.  Nbits is the data size and is used only for reg modifications.
     // Arg ar should be negative to use current TPR or non-negative to use a
     // pointer/address register.
-    // BUG: some callers may keep results.  This isn't valid for multi-page segments.
+    // BUG: some callers may keep results.  This isn't valid for multi-page segments.  They
+    // should take care to stay within minaddrp and maxaddrp.
     
     char *moi = "APU::get-addr";
 
@@ -393,6 +394,7 @@ int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, 
 static int temp_addr_mod(const instr_t *ip);
 extern DEVICE cpu_dev;
 int addr_mod(const instr_t *ip)
+    // See commends below in temp_addr_mod()
 {
     int saved_debug = opt_debug;
     int saved_dctrl = cpu_dev.dctrl;
@@ -1054,6 +1056,7 @@ static int addr_append(t_uint64 *wordp)
     return fetch_appended(TPR.CA, wordp);
 }
 
+
 int fetch_appended(uint offset, t_uint64 *wordp)
 {
     // Fetch a word at the given offset in the current segment (if possible).
@@ -1173,11 +1176,48 @@ SDW_t* get_sdw()
     return &SDWp->sdw;
 }
 
+
+int convert_address(uint* addrp, int seg, int offset, int fault)
+{
+    // Return the 24-bit absolute address for an offset in the specified segment
+    // Disables (but reports) faults.
+    // Intended for use by debug/display code.
+
+    int saved_no_fault = fault_gen_no_fault;
+
+    uint saved_tsr = -1;
+    if (seg != -1) {
+        saved_tsr = TPR.TSR;
+        TPR.TSR = seg;
+    }
+
+    if (! fault)
+        fault_gen_no_fault = 1;
+
+    int ret = get_seg_addr(offset, 0, addrp);
+    if (saved_tsr != -1)
+        TPR.TSR = saved_tsr;
+    if (! fault)
+        fault_gen_no_fault = saved_no_fault;
+    return ret;
+}
+
+
+
+//int fetch_seg(int segno, uint offset, t_uint64 *wordp)
+//{
+//static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uint *maxaddrp)
+//}
+
+
+
 int get_seg_addr(uint offset, uint perm_mode, uint *addrp)
 {
-    // Return the absolute address of an offset in the current segment
+    // Return the 24-bit absolute address for an offset in the current segment
     // BUG: causes faults, but see fault_gen_no_fault global
 
+    if (addrp == NULL)
+        return -1;
     uint minaddr, maxaddr;  // results unneeded
     int ret = page_in(offset, perm_mode, addrp, &minaddr, &maxaddr);
     if (ret)
@@ -1188,10 +1228,18 @@ int get_seg_addr(uint offset, uint perm_mode, uint *addrp)
 static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uint *maxaddrp)
 {
     // Implements AL39, figure 5-4
-    // Returns non-zero if a fault in groups 1-6 detected
     // Note that we allow an arbitrary offset not just TPR.CA.   This is to support
     // instruction fetches.
-    // Resulting 24bit physical memory addr stored in addrp.
+    // Manipulates the SDWAM and PTWAM to setup for access to the page containing the desired address.
+    // Note that directed faults will occur if a SDW is so flagged (e.g. when the segment is on disk).
+    // Caveats:
+    //    perm_mode is currently not checked by page_in_page().
+    // Returns:
+    //    non-zero if a fault in groups 1-6 detected
+    // Results:
+    //    addrp -- Resulting 24bit physical memory address
+    //    minaddrp -- lowest 24bit physical address of the page
+    //    maxaddrp -- highest 24bit physical address of the page
 
     const char *moi = "APU::append::page-in";
     uint segno = TPR.TSR;   // Should be been loaded with PPR.PSR if this is an instr fetch...
@@ -1356,7 +1404,10 @@ static SDWAM_t* page_in_sdw()
 static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uint *maxaddrp)
 {
     // Second part of page_in()
-    uint segno = TPR.TSR;   // Should be been loaded with PPR.PSR if this is an instr fetch...
+    // 
+
+
+    uint segno = TPR.TSR;   // TSR should be been loaded with PPR.PSR if this is an instr fetch...
 
     // Following done for either paged or unpaged segments
     if (SDWp->sdw.f == 0) {
