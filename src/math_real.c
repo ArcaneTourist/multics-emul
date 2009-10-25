@@ -224,21 +224,40 @@ int instr_fno()
         reg_A = setbits36(reg_A, 0, 1, ! sign);
         IR.overflow = 0;
     }
-    if ((IR.zero = reg_A == 0 && reg_Q == 0) != 0)
-        reg_E = 0200;   // -128
+
+    // BUG: What is the exact behavior on underflow?  Do we shift or not?
+
+    while (getbits36(reg_A, 0, 1) == getbits36(reg_A, 1, 1)) {
+        // Left shift AQ
+        reg_A <<= 1;
+        reg_A &= MASK36;
+        reg_A |= getbits36(reg_Q, 0, 1);
+        reg_Q <<= 1;
+        reg_Q &= MASK36;
+        IR.zero = reg_A == 0 && reg_Q == 0;
+        if (IR.zero) {
+            reg_E = -128;
+            break;
+        }
+        // Reduce exponent
+        if (reg_E == -128) {
+            IR.exp_underflow = 1;
+            reg_E = 0;
+            break;
+        }
+        -- reg_E;
+    }
+
     IR.neg = bit36_is_neg(reg_A);
-    IR.exp_overflow = 0;
-    IR.exp_underflow = 0;
+    // IR.exp_overflow = 0;
 
     if (IR.zero) {
         log_msg(NOTIFY_MSG, "OPU::fno", "Result is zero.\n");
         return 0;
     }
 
-    // BUG: we don't normalize
-    log_msg(ERR_MSG, "OPU::fno", "Normalize not implemented.\n");
-    cancel_run(STOP_BUG);
-    return 1;
+    // BUG: results not tested
+    return 0;
 }
 
 // ============================================================================

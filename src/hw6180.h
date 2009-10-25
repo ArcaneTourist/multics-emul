@@ -1,3 +1,6 @@
+#ifndef _HW6180_H
+#define _HW6180_H   // HACK
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -38,7 +41,7 @@ typedef enum { ABSOLUTE_mode, APPEND_mode, BAR_mode } addr_modes_t;
 typedef enum { NORMAL_mode, PRIV_mode } instr_modes_t;
 typedef enum {
     ABORT_cycle, FAULT_cycle, EXEC_cycle, FAULT_EXEC_cycle, INTERRUPT_cycle,
-    FETCH_cycle,
+    FETCH_cycle
 // CA FETCH OPSTORE, DIVIDE_EXEC
 } cycles_t;
 
@@ -62,7 +65,7 @@ enum sim_stops {
     STOP_BUG,           // impossible conditions, coding error;
     STOP_WARN,          // something odd or interesting; further exec might possible
     STOP_ODD_FETCH,
-    STOP_IBKPT,         // breakpoint
+    STOP_IBKPT          // breakpoint
 };
 enum dev_type { DEV_NONE, DEV_TAPE, DEV_CON, DEV_DISK };    // devices connected to an IOM
 enum log_level { DEBUG_MSG, NOTIFY_MSG, WARN_MSG, ERR_MSG };
@@ -215,7 +218,7 @@ typedef struct {
     uint PRR;       /* Procedure ring register; 3 bits @ 0[0..2] */
     uint PSR;       /* Procedure segment register; 15 bits @ 0[3..17] */
     uint P;         /* Privileged bit; 1 bit @ 0[18] */
-    uint IC;        /* Instruction counter, 18 bits */
+    int IC;         /* Instruction counter, 18 bits */
 } PPR_t;
 
 // TPR Temporary Pointer Register (pseudo register)
@@ -293,7 +296,7 @@ typedef struct {
 
     /* word 4 */
     // IC belongs to CU
-    uint IC;        // 18 bits at 4[0..17]; instruction counter aka ilc
+    int IC;         // 18 bits at 4[0..17]; instruction counter aka ilc
     // copy of IR bits 14 bits at 4[18..31]
     // unused: 4 bits at 4[32..36];
 
@@ -548,6 +551,7 @@ extern void log_msg(enum log_level, const char* who, const char* format, ...);
 extern int log_ignore_ic_change(void);
 extern int log_notice_ic_change(void);
 extern void log_forget_ic(void);
+extern int log_any_io(int val);
 extern int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp);
 
 extern int scan_seg(uint segno, int msgs);  // scan definitions section for procedure entry points
@@ -612,7 +616,7 @@ static inline t_uint64 setbits36(t_uint64 x, int p, unsigned n, t_uint64 val)
 extern int opt_debug;
 extern t_uint64 reg_A;      // Accumulator, 36 bits
 extern t_uint64 reg_Q;      // Quotient, 36 bits
-extern uint8 reg_E;         // Floating Point exponent, 8 bits
+extern int8 reg_E;          // Floating Point exponent, 8 bits
 extern uint32 reg_X[8];     // Index Registers, 18 bits; SIMH expects data type to be no larger than needed
 extern IR_t IR;             // Indicator Register
 extern BAR_reg_t BAR;       // Base Address Register (BAR); 18 bits
@@ -647,6 +651,13 @@ extern int cmd_load_listing(int32 arg, char *buf);
 extern int cmd_stack_trace(int32 arg, char *buf);
 extern void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic);
 extern char *ir2text(const IR_t *irp);
+
+extern void state_save(void);
+extern void state_dump_changes(void);
+extern void check_seg_debug(void);
+extern void ic_history_init(void);
+extern void ic_history_add(void);
+extern void show_location(int show_source_lines);
 
 extern void cancel_run(enum sim_stops reason);
 extern void fault_gen(enum faults);
@@ -744,10 +755,12 @@ extern int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 
 // ============================================================================
 
+#ifdef __cplusplus
+}
+#endif
+
 #include "opcodes.h"
 // #include "symtab.h"
 #include "seginfo.h"
 
-#ifdef __cplusplus
-}
-#endif
+#endif  // _HW6180_H

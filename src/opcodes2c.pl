@@ -53,6 +53,11 @@ sub dump_enums {
 	my $tag = shift;
 	my @ops = @_;
 	my $i = 0;
+	my $last;
+	# hack for C++
+	foreach my $op (@ops) {
+		$last = $op unless ($op eq '-');
+	}
 	foreach my $op (@ops) {
 		# my $val = $i << 1;
 		if ($op eq '-') {
@@ -60,8 +65,9 @@ sub dump_enums {
 				printf "\t\t     // 0%03o unused (%d decimal)\n", $i, $i;
 			}
 		} else {
-			printf "\topcode%s_%s%*s = 0%03o, // (%d decimal)\n",
-				$tag, $op, 6-length($op), "", $i, $i;
+			my $comma = ($op eq $last) ? "" : ",";
+			printf "\topcode%s_%s%*s = 0%03o%s // (%d decimal)\n",
+				$tag, $op, 6-length($op), "", $i, $comma, $i;
 		}
 		++ $i;
 	}

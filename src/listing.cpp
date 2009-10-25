@@ -146,6 +146,7 @@ int listing_parse(FILE *f, source_file &src)
     int asm_consume_next = 0;   // State flag for mixed source/assembly
     int asm_is_end = 0;         // State flag for mixed source/assembly
     int seen_automatic = 0;     // Seen header "STORAGE FOR AUTOMATIC VARIABLES"
+    int seen_blocks = 0;        // Seen header "BLOCK NAME ... STACK SIZE .. WHO SHARES"
     int doing_storage_req = 0;  // Seen headers "STORAGE REQUIREMENTS" and "Object Text..."
     char auto_frame[sizeof(lbuf)] = {0};    // State for listing of automatics
     int auto_join_next = 0; // Stat flag for automatic varibles re line continuation
@@ -175,6 +176,7 @@ int listing_parse(FILE *f, source_file &src)
             src.seg_name = lbufp;
         }
 
+        // Check for a source line
         if (!source_finished) {
             if (str_pmatch(lbufp, "SOURCE FILES USED") == 0) {
                 source_finished = 1;
@@ -213,6 +215,8 @@ int listing_parse(FILE *f, source_file &src)
             }
             continue;
         }
+
+        // Check for LINE/LOC map
         if (!seen_ll_hdr) {
             // Look for header consisting of alternating "LINE" and "LOC"
             char *s = lbufp;
@@ -279,6 +283,7 @@ int listing_parse(FILE *f, source_file &src)
                 return -1;
             }
         }
+
         // Look for mixed source/assembly
         unsigned alm_lineno;
         if (!asm_seen_begin) {
@@ -316,8 +321,11 @@ int listing_parse(FILE *f, source_file &src)
                 }
             }
         }
+
+        // Look for entry point declarations
         if (!seen_explicit_dcl) {
-            seen_explicit_dcl = str_pmatch(lbufp, "NAMES DECLARED BY EXPLICIT CONTEXT") == 0;
+            seen_explicit_dcl = str_pmatch(lbufp, "NAMES DECLARED BY EXPLICIT CONTEXT") == 0 ||
+                str_pmatch(lbufp, "NAME DECLARED BY EXPLICIT CONTEXT") == 0;
         } else {
             if (strstr(lbufp, "NAMES DECLARED BY CONTEXT") != NULL) {
                 seen_explicit_dcl = 0;
@@ -377,12 +385,15 @@ int listing_parse(FILE *f, source_file &src)
                     }
                     src.entries[edcl_loc] = entry_point(entry_name, edcl_loc);
                     src.entries_by_name[edcl_name] = &src.entries[edcl_loc];    // BUG: this should be private
+                    // src.entries[edcl_name].source = &src;
+                    entry_point& ep = src.entries[edcl_loc];
+                    ep.source = &src;
                     // cout << "Entry " << entry_name << " added." << "\r\n";
                 }
             }
         }
 
-#if 1
+        // Look for storage requirements (which tells us where the last entry point ends)
         if (!doing_storage_req) {
             doing_storage_req = str_pmatch(lbufp, "STORAGE REQUIREMENTS FOR THIS PROGRAM") == 0;
         } else {
@@ -419,10 +430,71 @@ int listing_parse(FILE *f, source_file &src)
                 }
             }
         }
-#endif
 
+        // Todo: Look for block list (which indicates which blocks (entry points) share stack frames
+        if (! seen_blocks)
+            seen_blocks = str_pmatch(lbufp, "BLOCK NAME");
+        else {
+            if (!seen_automatic) {
+                seen_automatic = str_pmatch(lbufp, "STORAGE FOR AUTOMATIC VARIABLES") == 0;
+                if (seen_automatic) {
+                    seen_blocks = 0;
+                    continue;
+                }
+            }
+            if (str_pmatch(lbufp, "begin block") == 0)
+                continue;
+            const char *s = lbufp + strspn(lbufp, " \t");
+            int l = strcspn(s, " \t");
+            char block[sizeof(lbuf)];
+            strncpy(block, s, l);
+            block[l] = 0;
+            s += l;
+            s += strcspn(s, " \t");
+            if ((l = strspn(s, "01234567")) != 0) {
+                // Numeric, so it's a stack size
+                s += l;
+                s += strcspn(s, " \t");
+                continue;
+            }
+            // BUG: It turns out that we didn't really need to know that a proc shares another's
+            // stack frame because the simulator can just look at changes to pr6 and assume that
+            // if pr6 hasn't changed then whoever is running is sharing that frame.
+            const char *pat;
+            char *p;
+            if ((p = strstr(s, pat = "shares stack frame of external procedure")) == NULL)
+                p = strstr(s, pat = "shares stack frame of internal procedure");
+            if (p != NULL) {
+                char stack_owner[sizeof(lbuf)];
+                p += strlen(pat);
+                p += strspn(p, " \t");
+                strcpy(stack_owner, p);
+                for (l = strlen(stack_owner)-1; l > 0 && stack_owner[l] == ' '; --l)
+                    stack_owner[l] = 0;
+                if (stack_owner[l = strlen(stack_owner)-1] == '.')
+                    stack_owner[l] = 0;
+                entry_point *epp = src.find_entry(block);
+                if (epp == NULL) {
+                    cerr << "Listing: Cannot find entry point " << block  << ", so cannot record stack info." << "\r\n";
+                    ret = 1;
+                    errno = EINVAL;
+                } else {
+                    const entry_point *ownerp = src.find_entry(stack_owner);
+                    if (ownerp == NULL) {
+                        cerr << "Listing: Cannot find entry point " << stack_owner  << ", so cannot point" << block << "'s stack at it." << "\r\n";
+                        errno = EINVAL;
+                        ret = 1;
+                    } else
+                            epp->stack_owner = ownerp;
+                }
+            }
+        }
+
+        // Look for map of automatic locations
         if (!seen_automatic) {
             seen_automatic = str_pmatch(lbufp, "STORAGE FOR AUTOMATIC VARIABLES") == 0;
+            if (seen_automatic)
+                seen_blocks = 0;
         } else {
             if (str_pmatch(lbufp, "STACK FRAME") == 0)
                 continue;
@@ -451,15 +523,15 @@ int listing_parse(FILE *f, source_file &src)
                         sframe.size = -1;
                         entry_point *ep;
                         if ((ep = src.find_entry(auto_frame)) == NULL) {
-                            cerr << "Stack Frame: Cannot find entry point for " << auto_frame << "\r\n";
+                            cerr << "Stack Frame: Cannot find entry point for stack frame owner, " << auto_frame << "\r\n";
                             sframe.owner = NULL;
                         } else {
                             // BUG: probably need to find other entries and point them at this stack
                             // cout << "Stack Frame: Found entry point for " << auto_frame << "\r\n";
-                            if (ep->stack != NULL)
+                            if (ep->_stack != NULL)
                                 cerr << "Entry " << ep->name << " already has a stack frame!" << "\r\n";
                             else
-                                ep->stack = &src.stack_frames[auto_frame];
+                                ep->_stack = &src.stack_frames[auto_frame];
                             sframe.owner = ep;
                         }
                     }
@@ -509,7 +581,7 @@ int listing_parse(FILE *f, source_file &src)
                     printf("stack frame %s not found...\n", auto_frame);
                 else {
                     stack_frame& sframe = (*it).second;
-                    sframe.automatics[auto_loc] = automatic(auto_id, auto_loc);
+                    sframe.automatics[auto_loc] = auto_id;
                 }
             }
         }

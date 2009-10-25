@@ -21,210 +21,12 @@ using namespace std;
 // #include <map>
 // #include <vector>
 
+extern "C" void log_msg(int, const char*, ...); // BUG
+
 // ============================================================================
 
-static seginfo segments[max_seg + 2];
+segments_t segments;
 static const int max_alm_per_line = 10;     // Used for estimating the location of the last machine instruction for the last source line of a file
-
-// ============================================================================
-
-// SIMH munges UNIX output and expects a carriage return for every line feed
-
-static inline std::ostream& simh_nl(std::ostream &os )
-{
-    return os << "\r\n";
-}
-
-static inline std::ostream& simh_endl(std::ostream &os )
-{
-    return os << simh_nl << flush;
-}
-
-// ============================================================================
-
-class range_t {
-public:
-    range_t(int seg, int off_lo, int off_hi)
-        { segno = seg; lo = off_lo; hi = off_hi; }
-private:
-    int segno;
-    offset_t lo, hi;
-friend ostream& operator<<(ostream& out, const range_t& r);
-};
-
-// ============================================================================
-
-ostream& operator<<(ostream& out, const offset_t& o)
-{
-    if (o.offset >= 0)
-        out << setw(6) << setfill('0');
-    out << oct << o.offset;
-
-    return out;
-}
-
-// ============================================================================
-
-ostream& operator<<(ostream& out, const seg_addr_t& sa)
-{
-    if (sa.segno != -1)
-        out << oct << setw(3) << setfill('0') << sa.segno << "|";
-    out << sa.offset;
-
-    return out;
-}
-
-// ============================================================================
-
-ostream& operator<<(ostream& out, const range_t& r)
-{
-    // Output an address range.
-    // If seg is negative, outputs:     <offset> .. <offset>
-    // If seg is non negative, outputs: <seg>|<offset> .. <seg>|<offset>
-
-    if (r.segno < 0) {
-        out << r.lo << " .. " << r.hi;
-    } else {
-        out << seg_addr_t(r.segno, r.lo);
-        out << " .. ";
-        out << seg_addr_t(r.segno, r.hi);
-    }
-
-    return out;
-}
-
-// ============================================================================
-
-ostream& linkage_info::print(ostream& out, int indent) const
-{
-    out << string(indent, ' ');
-    out << "Offset " << offset_t(offset) << ": entry point " << name << simh_nl;
-
-    return out;
-}
-
-
-// ============================================================================
-
-ostream& source_line::print(ostream& out, int indent) const
-{
-    out << string(indent, ' ');
-    out << "Line " << dec << line_no << " at " << offset <<  ": " << text << simh_nl;
-
-    return out;
-}
-
-// ============================================================================
-
-ostream& entry_point::print(ostream& out, int indent) const
-{
-    out << string(indent, ' ');
-    out << "Entry point " << name << " at offset " << offset;
-    if (last > 0)
-        out << " .. " << last;
-    if (stack) {
-        if (stack->owner == this)
-            out << " with own stack frame";
-        else if (stack->owner)
-            if (stack->owner->name == name)
-                out << " using own stack frame";
-            else
-                out << " using stack frame of " << stack->owner->name;
-        // else no known owner...
-    }
-    out << simh_nl;
-
-    return out;
-}
-
-// ============================================================================
-
-ostream& stack_frame::print(ostream& out, int indent) const
-{
-    out << string(indent, ' ');
-    out << "Stack frame " << ((owner) ? owner->name : "unknown") << ":" << simh_nl;
-    indent += 2;
-    out << string(indent, ' ') << "Stack size: " << dec << size << simh_nl;
-    if (automatics.empty())
-        out << string(indent, ' ') << "No Automatics" << simh_nl;
-    else {
-        out << string(indent, ' ') << "Automatics:" << simh_nl;
-        indent += 2;
-        for (map<int,automatic>::const_iterator it = automatics.begin(); it != automatics.end(); it++) {
-            const automatic& a = (*it).second;
-            out << string(indent, ' ') << offset_t(a.offset) << " " << a.name << simh_nl;
-        }
-    }
-
-    return out;
-}
-
-// ============================================================================
-
-ostream& source_file::print(ostream& out, int indent) const
-{
-    out << string(indent, ' ');
-
-    if (lo() < 0)
-        out << "File " << fname;
-    else {
-        if (reloc < 0)
-            out << "Tentative ";
-        if (hi() >= 0)
-            out << "Range  " << range_t(-1, lo(), hi());
-        else
-            out << "Offset " << lo();
-        out << ":  " << fname << " ";
-        if (reloc < 0)
-            out << "(Relocation information unavailable)";
-        else if (reloc > 0)
-            out << "(Relocated by " << reloc << ")";
-        else
-            out << "(non-relocated)" ;
-    }
-    if (entries.empty() && stack_frames.empty() && lines.empty()) {
-        out << " -- No entry points, stack frames, or lines." << simh_nl;
-        return out;
-    }
-    out << simh_nl;
-
-    out << simh_nl;
-    indent += 2;
-
-    if (entries.empty())
-        out << string(indent, ' ') << "No entry points." << simh_nl;
-    else {
-        out << string(indent, ' ') << "Entry Points:" << simh_nl;
-        for (map<int,entry_point>::const_iterator it = entries.begin(); it != entries.end(); it++) {
-            const entry_point& ep = (*it).second;
-            ep.print(out, indent + 2);
-        }
-    }
-
-    if (stack_frames.empty())
-        out << string(indent, ' ') << "No stack frames." << simh_nl;
-    else {
-        out << string(indent, ' ') << "Stack Frames:" << simh_nl;
-        for (map<string,stack_frame>::const_iterator it = stack_frames.begin(); it != stack_frames.end(); it++) {
-            const stack_frame& sl = (*it).second;
-            sl.print(out, indent + 2);
-        }
-    }
-    
-    
-    if (lines.empty())
-        out << string(indent, ' ') << "No lines." << simh_nl;
-    else {
-        out << string(indent, ' ') << "Lines:" << simh_nl;
-        for (map<int,source_line>::const_iterator it = lines.begin(); it != lines.end(); it++) {
-            const source_line& sl = (*it).second;
-            sl.print(out, indent + 2);
-        }
-    }
-    
-    return out;
-}
-
 
 // ============================================================================
 // ============================================================================
@@ -262,19 +64,19 @@ find_lower(Map & m, typename Map::key_type const& k)
 
 source_file& seginfo_add_source_file(int segno, const char *fname, int offset)
 {
-    int segidx = (segno == -1) ? max_seg + 1 : segno;
-    segments[segidx].source_list.push_back(source_file(fname));
-    source_file& src = segments[segidx].source_list.back();
+    seginfo& seg = segments(segno);
+    seg.source_list.push_back(source_file(fname));
+    source_file& src = segments(segno).source_list.back();
     if (offset < 0)
         src._lo = -1;
     else {
         src._lo = 0;
         src._hi = -1;
         src.reloc = offset;
-        if (segments[segidx].source_map[src.lo()] != NULL)
+        if (segments(segno).source_map[src.lo()] != NULL)
             cerr << "internal error: " << oct << segno << "|" << src.lo() << " already has a source file listed." << simh_nl;
         else
-            segments[segidx].source_map[src.lo()] = &src;
+            segments(segno).source_map[src.lo()] = &src;
     }
     return src;
 }
@@ -293,72 +95,88 @@ int seginfo_add_source_file(int segno, int first, int last, const char* fname)
 
 void seginfo_dump(void)
 {
-    for (int segno = -1; segno <= max_seg; ++ segno) {
-        int segidx = (segno == -1) ? max_seg + 1 : segno;
-        seginfo& seg = segments[segidx];
+    for (int segno = -1; segno <= segments_t::max_segno; ++ segno) {
+        const seginfo& seg = segments(segno);
         if (seg.empty())
             continue;
         if (segno == -1)
             cout << "Absolute Memory:" << simh_nl;
         else
             cout << "Segment " << oct << segno << ":" << simh_nl;
-        if (! seg.source_map.empty()) {
-            cout << "  Sources (with re-location info):" << simh_nl;
-            for (map<int,source_file*>::iterator it = seg.source_map.begin(); it != seg.source_map.end(); it++) {
-                source_file* src = (*it).second;
-                src->print(cout, 4);
-            }
-        }
-        if (seg.linkage.empty())
-            cout << "  No Linkage." << simh_nl;
-        else {
-            cout << "  Linkage:" << simh_nl;
-            for (map<int,linkage_info>::iterator it = seg.linkage.begin(); it != seg.linkage.end(); it++) {
-                linkage_info li= (*it).second;
-                li.print(cout, 4);
-            }
-        }
-        if (seg.source_list.empty()) 
-            cout << "  No sources that don't have location info." << simh_nl;
-        else {
-            bool hdr = 0;
-            for (list<source_file>::iterator it = seg.source_list.begin(); it != seg.source_list.end(); it++) {
-                source_file& src = *it;
-                if (src.reloc < 0) {
-                    // not displayed above
-                    if (!hdr) {
-                        hdr = 1;;
-                        cout << "  Sources (without re-location info):" << simh_nl ;
-                    }
-                    src.print(cout, 4);
-                }
-            }
-            if (!hdr)
-                cout << "  All sources have re-location info." << simh_nl;
-        }
+        seg.print(cout);
     }
 }
 
 // ============================================================================
+
+#if 0
+
+extern "C" int seginfo_add_name(int segno, int offset, const char *name);   // BUG
+int seginfo_add_name(int segno, int offset, const char *name)
+    // A segment may have multiple names or aliases.   A bound segment is built from
+    // multiple individual segments.  So, while a bound segment will have multiple names,
+    // the various aliases within the bound segment are not all equivalent; only
+    // the alias equivalencies match that of the original segments.   Aliases that
+    // all refer to the same originally unbound segment will all be located at the same
+    // offset.
+    //
+    /*
+        Example:
+
+        bound_library_wired_ has the following map:
+
+        Definition header points to first entry at offset 02.   This segment provides the following:
+
+        Def entry at 20|34762 (offset 0002): class 03.  Segment Name is bound_library_wired_; first def is at offset 013.
+        Def entry at 20|34773 (offset 0013): class 02.  Name is symbol_table; offset is 0 within symbol section
+        Def entry at 20|35002 (offset 0022): class 02.  Name is bind_map; offset is 0 within symbol section
+        Def entry at 20|43036 (offset 6056): class 03.  Segment Name is clock_; first def is at offset 041.
+            Def entry at 20|35021 (offset 0041): class 0.  Text clock_: link 41|055
+        Def entry at 20|43041 (offset 6061): class 03.  Segment Name is config_; first def is at offset 044.
+        Def entry at 20|43044 (offset 6064): class 03.  Segment Name is config; first def is at offset 044.
+        Def entry at 20|43047 (offset 6067): class 03.  Segment Name is find; first def is at offset 044.
+        Def entry at 20|43052 (offset 6072): class 03.  Segment Name is find_2; first def is at offset 044.
+        Def entry at 20|43055 (offset 6075): class 03.  Segment Name is find_periph; first def is at offset 044.
+        Def entry at 20|43060 (offset 6100): class 03.  Segment Name is find_peripheral; first def is at offset 044.
+        Def entry at 20|43063 (offset 6103): class 03.  Segment Name is find_parm; first def is at offset 044.
+            Def entry at 20|35024 (offset 0044): class 0.  Text config_: link 41|0360
+            Def entry at 20|35031 (offset 0051): class 0.  Text config: link 41|0367
+            Def entry at 20|35036 (offset 0056): class 0.  Text find: link 41|0401
+
+        This yields entrypoints:
+            Segment clock_
+                41|055 clock_$clock_ 
+            Segment config_ (aka config, find, find_2, find_periph, find_periphral, find_parm)
+                41|0401 config_$find
+                    In theory, with names: config$find, find$find, find_2$find, find_periph$find, etc
+    */
+{
+}
+
+#endif
 
 
 int seginfo_add_linkage(int segno, int offset, const char* name)
 {
     if (name == NULL)
         return -1;
-    if (segno > max_seg)
+    if (segno > segments_t::max_segno)
         return -1;
-    int segidx = (segno == -1) ? max_seg + 1 : segno;
 
-    seginfo& seg = segments[segidx];
+    seginfo& seg = segments(segno);
     int ret = 0;
     if (seg.linkage.find(offset) != seg.linkage.end()) {
         const linkage_info& li = (*(seg.linkage.find(offset))).second;
         if (li.name == name && li.offset == offset)
             return 0;   // duplicate entry; see comments in _scan_seg() in misc.c
-        cerr << "internal error: " << seg_addr_t(segno,offset) << " Adding linkage for '" << name << "', but we already had '" << li.name << "'." << simh_nl;
-        ret = -1;
-    } // else cerr << "note: " << seg_addr_t(segno,offset) << " Adding linkage for '" << name << "'." << simh_nl;
+        // It seems that it's valid for multiple entries to be located at the same offset.
+        // BUG: this is mostly a non issue, but *might* mean that the stack tracking code for
+        // displaying automatic variables will refuse to handle these entry points.
+        log_msg(/*BUG*/ 0, "SEGINFO", "Entry point %s is at %03o|%o, but we already have %s recorded as being at that address.\n", name, segno, offset, li.name.c_str());
+        // cerr << "internal error: " << seg_addr_t(segno,offset) << " Adding linkage for '" << name << "', but we already had '" << li.name << "'." << simh_nl;
+        ret = -1;   // last one wins
+        // return -1;   // first one wins
+    }
 
     seg.linkage[offset] = linkage_info(name, offset);
 
@@ -369,19 +187,20 @@ int seginfo_add_linkage(int segno, int offset, const char* name)
             entry_point& ep = (*e_it).second;
             if (ep.name == name) {
                 int delta = offset - ep.offset;
-                cout << "Linkage: " << name << " at " << seg_addr_t(segno,offset) << " matches: " << src.fname << " with offset " << ep.offset << ".  Delta is " << delta << simh_nl;
+                // cout << "Linkage: " << name << " at " << seg_addr_t(segno,offset) << " matches: " << src.fname << " with offset " << ep.offset << ".  Delta is " << delta << simh_nl;
                 if (src.reloc < 0) {
                     src.reloc = delta;
                     if (src._lo != -1)
                         cerr << "internal error: " << src.fname << " has _lo of " << src._lo << simh_nl;
                     src._lo = 0;
-                    if (segments[segidx].source_map[src.lo()] != NULL)
+                    if (segments(segno).source_map[src.lo()] != NULL)
                         cerr << "internal error: " << oct << segno << "|" << src.lo() << " already has a source file listed." << simh_nl;
                     else
-                        segments[segidx].source_map[src.lo()] = &src;
+                        segments(segno).source_map[src.lo()] = &src;
                 } else
                     if (src.reloc != delta)
                         cerr << "Linkage: Warning: Prior delta for this source file was " << src.reloc << simh_nl;
+                seg.linkage[offset].entry = &ep;
             }
         }
     }
@@ -391,26 +210,120 @@ int seginfo_add_linkage(int segno, int offset, const char* name)
 
 // ============================================================================
 
-int seginfo_find_all(int segno, int offset, where_t *wherep)
+map<int,linkage_info>::const_iterator seginfo::find_entry(int offset) const
+    // Find entry in linkage table
 {
-    if (wherep == NULL)
-        return -1;
+    // Entry points (but not files) may nest; We'll look for the highest offset
+    // that's lower than the given offset, but that may not be quite right...
+    // BUG: ignoring "hi", which could have helped pick correct overlapping entry point
 
-    wherep->file_name = NULL;
-    wherep->entry = NULL;
-    wherep->entry_offset = -1;
-    wherep->entry_hi = -1;
-    wherep->line_no = -1;
-    wherep->line = NULL;
+    // Looking for highest entry <= given offset
+    if (linkage.empty())
+        return linkage.end();
+    else {
+        map<int,linkage_info>::const_iterator li_it = linkage.upper_bound(offset);
+        int need_sanity_check = 0;
+        if (li_it == linkage.end()) {
+            // All are less than the given value, so use the last entry
+            -- li_it;
+            need_sanity_check = 1;          // May not be a close match, need sanity test
+        } else if (li_it == linkage.begin()) {
+            // All are larger -- nothing matches
+            li_it = linkage.end();
+        } else {
+            // Found one that's larger, so back up one
+            --li_it;
+        }
+        if (li_it != linkage.end()) {
+            const linkage_info& li = (*li_it).second;
+            if (li.hi() == -1) {
+                if (need_sanity_check)
+                    if (offset - li.offset > max_alm_per_line)
+                        li_it == linkage.end(); // fail
+            } else if (li.hi() >= offset) {
+                // OK
+            } else {
+                li_it == linkage.end(); // fail
+            }
+        }
+        return li_it;
+    }
+}
 
-    int segidx = (segno == -1) ? max_seg + 1 : segno;
-    const seginfo& seg = segments[segidx];
-    if (seg.empty()) {
-//if (segno == 0427) cerr << "DEBUG: Seg " << segno << "is empty." << simh_endl;
-        return -1;
+// ============================================================================
+
+const source_line* source_file::get_line(int offset, int use_relocation) const
+{
+    map<int,source_line>::const_iterator lit = find_line(offset, use_relocation);
+    if (lit == lines.end())
+        return NULL;
+    return &(*lit).second;
+}
+
+// ============================================================================
+
+map<int,source_line>::const_iterator source_file::find_line(int offset, int use_relocation) const
+{
+    // BUG: use find_lower for consistency ...
+    // TODO: Performance: Cache prior successful iterator and search fwd from there first
+
+    if (lines.empty())
+        return lines.end();
+    if (reloc < 0 && use_relocation)
+        return lines.end();
+
+    // Source lines contain and are keyed by their un-relocated offset
+    int src_offset = offset;
+    if (use_relocation)
+        src_offset -= reloc;
+    map<int,source_line>::const_iterator ln_it = lines.upper_bound(src_offset);
+    int need_sanity_check = 0;
+    if (ln_it == lines.end()) {
+        // All are less than the given value, so use the last entry
+        -- ln_it;
+        need_sanity_check = 1;          // May not be a close match, need sanity test
+        // Sanity Check
+        if (src_offset - (*ln_it).second.offset > max_alm_per_line) {
+            ++ ln_it;   // fail to match
+        }
+    } else if (ln_it == lines.begin()) {
+        // All are larger -- nothing matches
+        ln_it = lines.end();
+    } else {
+        // Found one that's larger, so back up one
+        --ln_it;
     }
 
-    // BUG: we need to use relocation info... -- fixed?
+    if (ln_it != lines.end()) {
+        const source_line& sl = (*ln_it).second;
+        if (sl.offset > src_offset)
+            cerr << "line " << dec << __LINE__ << ": impossible." << simh_endl;
+    }
+
+    return ln_it;
+}
+
+// ============================================================================
+
+class loc_t {
+public:
+    const linkage_info* linkage;
+    const source_file* file;
+    const source_line* line;
+    // const stack_frame* frame;
+};
+
+
+int seginfo_find_all(int segno, int offset, loc_t& loc)
+{
+    loc.linkage = NULL;
+    loc.file = NULL;
+    loc.line = NULL;
+    // loc.frame = NULL;
+
+    const seginfo& seg = segments(segno);
+    if (seg.empty())
+        return -1;
 
     /*
         Find the correct source file
@@ -419,26 +332,15 @@ int seginfo_find_all(int segno, int offset, where_t *wherep)
     const source_file* srcp;
     if (seg.source_map.empty()) {
         srcp = NULL;
-        // if (segno == 0431 && 0713 <= offset && offset <= 0720) cerr << "DEBUG(line " << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": No source map." << simh_endl;
     } else {
         // Find highest entry that is less than given offset
         // Note that all keys in the source_map are the relocated offset
         map<int,source_file*>::const_iterator src_it = find_lower(seg.source_map, offset);
         if (src_it == seg.source_map.end()) {
             // All are larger -- nothing matches
-            if (0 && segno == 031 && 0 <= offset && offset <= 02166) {
-                cerr << "DEBUG: " << seg_addr_t(segno,offset) << " All sources have higher offsets." << simh_nl;
-                src_it = seg.source_map.begin();
-                cerr << "DEBUG: " << seg_addr_t(segno,offset) << " First source: " << (*src_it).second->fname << ": _lo = " << (*src_it).second->_lo << ", reloc = " << (*src_it).second->reloc << ", lo() = " << (*src_it).second->lo() << simh_endl;
-                src_it = -- seg.source_map.end();
-                cerr << "DEBUG: " << seg_addr_t(segno,offset) << " Last source: " << (*src_it).second->fname << ": _lo = " << (*src_it).second->_lo << ", reloc = " << (*src_it).second->reloc << ", lo() = " << (*src_it).second->lo() << simh_endl;
-                src_it = seg.source_map.end();
-            }
         } else if (src_it == -- seg.source_map.end()) {
             // Found last entry in list, so sanity check
             source_file* last_src = (*src_it).second;
-            // if (segno == 031 && 0 <= offset && offset <= 02166)
-            // cerr << "DEBUG: " << seg_addr_t(segno,offset) << " Last source file (" << last_src->fname << ") matches; will sanity check." << simh_nl;
             if (last_src->lo() != offset)
                 // Given offset is higher than anything in the list
                 if (last_src->hi() > 0) {
@@ -459,8 +361,6 @@ int seginfo_find_all(int segno, int offset, where_t *wherep)
                 }
         } else {
             // Found one...
-            // if (segno == 031 && 0 <= offset && offset <= 02166)
-            // cerr << "DEBUG: " << seg_addr_t(segno,offset) << " Found a source file." << simh_nl;
         }
         if (src_it == seg.source_map.end()) {
             srcp = NULL;
@@ -475,72 +375,19 @@ int seginfo_find_all(int segno, int offset, where_t *wherep)
                     srcp = NULL;
         }
     }
-    if (srcp != NULL) {
-        if (srcp->fname.empty())
-            // impossible
-            cerr << "DEBUG: Found src for " << seg_addr_t(segno,offset) << " with empty name." << simh_nl;
-
-        wherep->file_name = srcp->fname.c_str();
-        // impossible
-        if (wherep->file_name == NULL) cerr << "DEBUG: Null string on file name for " << seg_addr_t(segno,offset) << " with name '" << srcp->fname << "'.\r\n";
-        // if (segno == 031 && 0 <= offset && offset <= 02166)
-        // cerr << "DEBUG(line " << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << " Found source file " << srcp->fname << simh_nl;
-    }
-    //else if (segno == 031 && 0 <= offset && offset <= 02166)
-        //cerr << "DEBUG(line " << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << " No source file found." << simh_nl;
 
 
     /*
         Find entry point
     */
 
-    // Entry points (but not files) may nest; We'll look for the highest offset
-    // that's lower than our offset, but that may not be quite right...
-    // BUG: ignoring "hi", which could have helped pick correct overlapping entry point
-
     // Find entry in linkage table, see comments above
     // Looking for highest entry <= given offset
-    if (! seg.linkage.empty()) {
-        map<int,linkage_info>::const_iterator li_it = seg.linkage.upper_bound(offset);
-        int need_sanity_check = 0;
-        if (li_it == seg.linkage.end()) {
-            // All are less than the given value, so use the last entry
-            -- li_it;
-            need_sanity_check = 1;          // May not be a close match, need sanity test
-        } else if (li_it == seg.linkage.begin()) {
-            // All are larger -- nothing matches
-            li_it = seg.linkage.end();
-        } else {
-            // Found one that's larger, so back up one
-            --li_it;
-        }
-        if (li_it != seg.linkage.end()) {
-            // wherep->entry_hi = li.last;
-            const linkage_info& li = (*li_it).second;
-            int fail = 0;
-            if (li.hi() == -1) {
-                wherep->entry_hi = -1;
-                if (need_sanity_check)
-                    fail = offset - li.offset > max_alm_per_line;
-            } else if (li.hi() >= offset) {
-                wherep->entry_hi = li.entry->last;
-                need_sanity_check = 0;
-            } else {
-                wherep->entry_hi = -1;
-                fail = 1;
-            }
-            if (!fail) {
-                wherep->entry = li.name.c_str();
-                wherep->entry_offset = li.offset;
-            }
-        }
-    }
 
-    if (0 && segno == 031 && 0 <= offset && offset <= 02166) {
-        if (wherep->entry)
-            cerr << "DEBUG(line " << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << " Found entry " << wherep->entry << simh_nl;
-        else
-            cerr << "DEBUG(line " << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << " No entry found." << simh_nl;
+    map<int,linkage_info>::const_iterator li_it = seg.find_entry(offset);
+    if (li_it != seg.linkage.end()) {
+        const linkage_info& li = (*li_it).second;
+        loc.linkage = &li;
     }
 
 
@@ -548,49 +395,77 @@ int seginfo_find_all(int segno, int offset, where_t *wherep)
         Find Line
     */
 
-    // BUG: use find_lower for consistency ...
-    if (srcp && !srcp->lines.empty() && srcp->reloc < 0)
-        cerr << "DEBUG(line " << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << " No relocation info." << simh_endl;
-    if (srcp && !srcp->lines.empty() && srcp->reloc >= 0) {
-        // Source lines contain and are keyed by their un-relocated offset
-        int src_offset = offset - srcp->reloc;
-        if (0 && segno == 031 && 0 <= offset && offset <= 02166) {
-            cerr << "Source: _lo = " << srcp->_lo << ", reloc = " << srcp->reloc << ", lo() = " << srcp->lo();
-            cerr << "; Line offsets range from ";
-            map<int,source_line>::const_iterator ln_it = srcp->lines.begin();
-            cerr << offset_t((*ln_it).first) << " (" << (*ln_it).second.offset << ") .. ";
-            ln_it = -- srcp->lines.end();
-            cerr << offset_t((*ln_it).first) << " (" << (*ln_it).second.offset << ")." << simh_endl;
-        }
-        map<int,source_line>::const_iterator ln_it = srcp->lines.upper_bound(src_offset);
-        int need_sanity_check = 0;
-        if (ln_it == srcp->lines.end()) {
-            // All are less than the given value, so use the last entry
-            -- ln_it;
-            //if (segno == 031 && 0 <= offset && offset <= 02166) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": at end" << simh_endl;
-            need_sanity_check = 1;          // May not be a close match, need sanity test
-            // Sanity Check
-            if (src_offset - (*ln_it).second.offset > max_alm_per_line) {
-                ++ ln_it;   // fail to match
-            }
-        } else if (ln_it == srcp->lines.begin()) {
-            // All are larger -- nothing matches
-            //if (segno == 031 && 0 <= offset && offset <= 02166) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": all larger" << simh_endl;
-            ln_it = srcp->lines.end();
-        } else {
-            // Found one that's larger, so back up one
-            // if (segno == 031 && 0 <= offset && offset <= 02166) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": backing up" << simh_endl;
-            --ln_it;
-        }
-        if (ln_it != srcp->lines.end()) {
-            const source_line& sl = (*ln_it).second;
-            //if (segno == 031 && 0 <= offset && offset <= 02166) cerr << "DEBUG(line" << dec << __LINE__ << "): " << seg_addr_t(segno,offset) << ": found line " << dec << sl.line_no << simh_endl;
-            if (sl.offset > src_offset)
-                cerr << "crap, line " << dec << __LINE__ << ": impossible." << simh_endl;
-            wherep->line_no = sl.line_no;
-            wherep->line = sl.text.c_str();
-        }
+    if (srcp != NULL)
+        loc.line = srcp->get_line(offset, 1);
+
+    loc.file = srcp;
+    return loc.linkage == NULL && loc.file == NULL && loc.line == NULL;
+}
+
+// ============================================================================
+
+int seginfo_find_all(int segno, int offset, where_t *wherep)
+{
+    if (wherep == NULL)
+        return -1;
+
+    wherep->file_name = NULL;
+    wherep->entry = NULL;
+    wherep->entry_offset = -1;
+    wherep->entry_hi = -1;
+    wherep->line_no = -1;
+    wherep->line = NULL;
+    wherep->n_auto = -1;
+
+    loc_t loc;
+    int ret = seginfo_find_all(segno, offset, loc);
+    if (ret != 0)
+        return ret;
+
+    const source_file* srcp = loc.file;
+    if (srcp != NULL)
+        wherep->file_name = srcp->fname.c_str();
+
+    if (loc.linkage != NULL) {
+        const linkage_info& li = *loc.linkage;
+        wherep->entry = li.name.c_str();
+        wherep->entry_offset = li.offset;
+        wherep->entry_hi = li.hi();
+        if (li.entry != NULL && li.entry->stack() != NULL)
+            wherep->n_auto = li.entry->stack()->automatics.size();
     }
 
-    return wherep->file_name == NULL && wherep->entry == NULL && wherep->line_no == -1;
+    if (loc.line != NULL) {
+        wherep->line_no = loc.line->line_no;
+        wherep->line = loc.line->text.c_str();
+    }
+
+    return 0;
+}
+
+// ============================================================================
+
+int seginfo_automatic_count(int segno, int offset)
+{
+    const seginfo& seg = segments(segno);
+    if (seg.empty())
+        return -1;
+
+    map<int,linkage_info>::const_iterator li_it = seg.find_entry(offset);
+    if (li_it == seg.linkage.end())
+        return -1;
+    const linkage_info& li = (*li_it).second;
+    if (li.entry == NULL);
+        return -1;
+    stack_frame *sfp = li.entry->stack();
+    if (sfp == NULL)
+        return -1;
+    return sfp->automatics.size();
+}
+
+// ============================================================================
+
+int seginfo_automatic_list(int segno, int offset, int *count, automatic_t *list)
+{
+    return -1;
 }

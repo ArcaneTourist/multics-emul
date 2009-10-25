@@ -19,6 +19,16 @@ uint ignore_IC = 0;
 uint last_IC;
 uint last_IC_seg;
 
+static int _log_any_io = 0;
+
+int log_any_io(int val)
+    // Callers may use to determine if other functions have call log_xxx to do output
+{
+    int tmp = _log_any_io;
+    _log_any_io = val;
+    return tmp;
+}
+
 int log_ignore_ic_change()
 {
     int old = ignore_IC;
@@ -136,6 +146,7 @@ static void crnl_out(FILE *stream, const char *format, va_list ap)
         if (*(format + strlen(format) - 1) == '\n')
             fprintf(stream, "\r");
     }
+    _log_any_io = 1;
 }
 
 
@@ -263,7 +274,7 @@ static int _scan_seg(uint segno, int msgs)
 
     t_uint64 word0, word1;
 
-log_msg(NOTIFY_MSG, "scan-seg", "Starting for seg %#o\n", segno);   // TODO: remove DEBUG:
+    if (opt_debug) log_msg(DEBUG_MSG, "scan-seg", "Starting for seg %#o\n", segno);
     if (msgs) {
         /* Get last word of segment -- but in-memory copy may be larger than original, so search for last non-zero word */
         TPR.TSR = segno;
@@ -366,6 +377,7 @@ log_msg(NOTIFY_MSG, "scan-seg", "Starting for seg %#o\n", segno);   // TODO: rem
         defp += off;
         char entryname[1025];
         char *entryp = entryname;
+        uint segment_defs = 0;  // Note that no definitions will appear at offset zero
         for (;;) {
             t_uint64 word2, word3;
             if (fetch_word(defp, &word0) != 0)
@@ -389,11 +401,22 @@ log_msg(NOTIFY_MSG, "scan-seg", "Starting for seg %#o\n", segno);   // TODO: rem
                 return 2;
             if (class == 3) {
                 uint firstp = word2 & MASK18;
-                if (msgs)
-                    out_msg("Segment Name is %s; first def is at offset %#o.\n", buf, firstp);
-                strcpy(entryname, buf);
-                entryp = entryname + strlen(entryname);
-                *entryp++ = '$';
+                // Segments can have multiple names
+                // seginfo_add_name(segno, thing_relp, buf);    // call unneeded, only first name matters
+                if (firstp == segment_defs) {
+                    if (msgs) {
+                        *(entryp - 1) = 0;
+                        out_msg("Segment %s has alias %s\n", entryname, buf);
+                        *(entryp - 1) = '$';
+                    }
+                } else {
+                    if (msgs)
+                        out_msg("Segment Name is %s; first def is at offset %#o.\n", buf, firstp);
+                    segment_defs = firstp;
+                    strcpy(entryname, buf);
+                    entryp = entryname + strlen(entryname);
+                    *entryp++ = '$';
+                }
             } else {
                 char sectbuf[20];
                 const char *sect;
@@ -413,11 +436,13 @@ log_msg(NOTIFY_MSG, "scan-seg", "Starting for seg %#o\n", segno);   // TODO: rem
                 //}
                 //uint off = tmp_word >> 18;
                 if (class == 0) {
-                    // Example: bound_active1 has a class 3 definitio for Segment "wire_proc",
+                    // Entries may or may not already have segment info.   For example,
+                    // bound_active1 has a class 3 definition for Segment "wire_proc",
                     // followed by class 0 definitions for: wire_proc$unwire_proc and unwire_proc
                     if (msgs)
                         out_msg("Text %s: link %o|%#o\n", buf, segno, thing_relp);
-                    if (strncmp(entryname, buf, entryp-entryname) == 0)
+                    // if (strncmp(entryname, buf, entryp-entryname) == 0)
+                    if (strchr(buf, '$') != NULL)
                         seginfo_add_linkage(segno, thing_relp, buf);
                     else {
                         strcpy(entryp, buf);

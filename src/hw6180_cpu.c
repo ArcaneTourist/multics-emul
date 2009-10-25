@@ -80,7 +80,7 @@ extern int32 sim_switches;
 t_uint64 reg_A; // Accumulator, 36 bits
 t_uint64 reg_Q; // Quotient, 36 bits
 // Note: AQ register is just a combination of the A and Q registers
-uint8 reg_E;    // Exponent
+int8 reg_E; // Exponent
 // Note: EAQ register is just a combination of the E, A, and Q registers
 uint32 reg_X[8];    // Index Registers, 18 bits; SIMH expects data type to be no larger than needed
 IR_t IR;        // Indicator register
@@ -220,8 +220,7 @@ iom_t iom;  // only one for now
 flag_t fault_gen_no_fault;
 
 // *** Other variables -- These do not need to be part of save/restore
-
-static int seg_debug[n_segments];
+// static int seg_debug[n_segments];
 
 //-----------------------------------------------------------------------------
 // ***  Other Externs
@@ -264,18 +263,8 @@ static void check_events(void);
 static void save_to_simh(void);
 static void save_PR_registers(void);
 static void restore_PR_registers(void);
-static void check_seg_debug(void);
-
-static void state_save(void);
-static void state_dump_changes(void);
-static void state_stack(void);
-static void ic_history_init(void);
-static void ic_history_add(void);
-static void show_location(int show_source_lines);
-static void print_src_loc(const char *prefix, addr_modes_t addr_mode, int segno, int ic, const instr_t* instrp);
 
 void tape_block(unsigned char *p, uint32 len, uint32 addr);
-
 
 //=============================================================================
 
@@ -416,7 +405,6 @@ if(0) {
     calendar_a = 0xdeadbeef;
     calendar_q = 0xdeadbeef;
 
-    memset(seg_debug, 0, sizeof(seg_debug));
     return 0;
 }
 
@@ -513,6 +501,12 @@ ninstr = 0;
 
         reason = control_unit();
 
+        if (opt_debug || show_source_lines) {
+            log_ignore_ic_change();
+            show_variables();
+            log_notice_ic_change();
+        }
+
         //
         // And record history, etc
         //
@@ -524,8 +518,6 @@ ninstr = 0;
             state_dump_changes();
             log_notice_ic_change();
             state_save();   // no stack or queue, just a single backup but all regs, but not just ic history
-        } else {
-            state_stack();
         }
         if (cancel) {
             if (reason == 0)
@@ -602,21 +594,6 @@ void restore_from_simh(void)
 
     // Set default debug and check for a per-segment debug override
     check_seg_debug();
-}
-
-
-static void check_seg_debug()
-{
-    // Set debug flags, but check for per-segment override to global debug setting
-
-    opt_debug = (cpu_dev.dctrl != 0);   // todo: should CPU control all debug settings?
-    if (get_addr_mode() == APPEND_mode)
-        if (PPR.PSR >= 0 && PPR.PSR < ARRAY_SIZE(seg_debug)) {
-            if (seg_debug[PPR.PSR] == -1)
-                opt_debug = 0;
-            else if (seg_debug[PPR.PSR] == 1)
-                opt_debug = 1;
-        }
 }
 
 void load_IR(IR_t *irp, t_uint64 word)
@@ -1261,6 +1238,22 @@ void execute_ir(void)
 
 //=============================================================================
 
+static void check_events()
+{
+    // Called after executing an instruction pair for xed.   The instruction pair
+    // may have including a rpt, rpd, transfer.   The instruction pair may even
+    // have faulted, but if so, it was saved and restarted.
+
+    events.any = events.int_pending || events.low_group || events.group7;
+    if (events.any)
+        log_msg(NOTIFY_MSG, "CU", "check_events: event(s) found (%d,%d,%d).\n", events.int_pending, events.low_group, events.group7);
+
+    return;
+}
+
+
+//=============================================================================
+
 void fault_gen(enum faults f)
 {
     int group;
@@ -1828,647 +1821,4 @@ static void init_ops()
     is_eis[(opcode1_cmpb<<1)|1] = 1;
     is_eis[(opcode1_sztl<<1)|1] = 1;
     is_eis[(opcode1_sztr<<1)|1] = 1;
-}
-
-//=============================================================================
-
-// Temporary hack for partial history.   Will probably turn into the per-cpu structure.
-typedef struct {
-    t_uint64 reg_A;
-    t_uint64 reg_Q;
-    uint8 reg_E;
-    uint32 reg_X[8];
-    IR_t IR;
-    AR_PR_t AR_PR[8];
-    PPR_t PPR;
-    TPR_t TPR;
-    struct {
-        flag_t SD_ON;
-        flag_t PT_ON;
-    } cu;
-    cpu_t cpu;
-} hist_t;
-
-
-static void state_save_x(hist_t *histp)
-{
-    histp->reg_A = reg_A;
-    histp->reg_Q = reg_Q;
-    histp->reg_E = reg_E;
-    memcpy(histp->reg_X, reg_X, sizeof(histp->reg_X));
-    memcpy(&histp->IR, &IR, sizeof(histp->IR));
-    memcpy(histp->AR_PR, AR_PR, sizeof(histp->AR_PR));
-    memcpy(&histp->PPR, &PPR, sizeof(histp->PPR));
-    memcpy(&histp->TPR, &TPR, sizeof(histp->TPR));
-    memcpy(&histp->cpu.DSBR, &cpup->DSBR, sizeof(histp->cpu.DSBR));
-    histp->cu.SD_ON = cu.SD_ON;
-    histp->cu.PT_ON = cu.PT_ON;
-    memcpy(histp->cpu.SDWAM, cpup->SDWAM, sizeof(histp->cpu.SDWAM));
-    memcpy(histp->cpu.PTWAM, cpup->PTWAM, sizeof(histp->cpu.PTWAM));
-}
-
-static hist_t hist;
-
-static void state_save()
-{
-    state_save_x(&hist);
-}
-
-//=============================================================================
-
-static int call6_seen = 0;  // hack
-
-#if 0
-static char* its2text(char *buf, int abs_addr)
-{
-    AR_PR_t pr;
-    if (words2its(M[abs_addr], M[abs_addr+1], &pr) != 0)
-        strcpy(buf, "N/A");
-    else
-        sprintf(buf, "%03o|%06o", pr.PR.snr, pr.wordno);
-    return buf;
-}
-#endif
-
-void print_frame(int seg, int offset, int addr)
-{
-    // out_msg("\tStack frame @ %03o|%06o=>%08o: ", seg, offset, addr);
-
-    AR_PR_t entry_pr;
-    out_msg("stack trace: ");
-    if (words2its(M[addr+026], M[addr+027], &entry_pr) == 0) {
-        where_t where;
-        if (seginfo_find_all(entry_pr.PR.snr, entry_pr.wordno, &where) == 0)
-            if (where.entry)
-                out_msg("\t%s  ", where.entry);
-            else
-                out_msg("\tunknown entry %o|%o  ", entry_pr.PR.snr, entry_pr.wordno);
-        else
-            out_msg("\tUnknown entry %o|%o  ", entry_pr.PR.snr, entry_pr.wordno);
-    } else
-        out_msg("\tUnknowable entry {%llo,%llo}  ", M[addr+026], M[addr+027]);
-    out_msg("(stack frame at %03o|%06o)\n", seg, offset);
-
-#if 0
-    char buf[80];
-    out_msg("prev_sp: %s; ",    its2text(buf, addr+020));
-    out_msg("next_sp: %s; ",    its2text(buf, addr+022));
-    out_msg("return_ptr: %s; ", its2text(buf, addr+024));
-    out_msg("entry_ptr: %s\n",  its2text(buf, addr+026));
-#endif
-}
-
-int stack_trace(void)
-    // Trace through the Multics stack frames
-    // See stack_header.incl.pl1 and http://www.multicians.org/exec-env.html
-{
-    // PR6 should point to the current stack frame.  That stack frame
-    // should be within the stack segment.
-    int seg = AR_PR[6].PR.snr;
-
-    uint curr_frame;
-    if (convert_address(&curr_frame, seg, AR_PR[6].wordno, 0) != 0) {
-        out_msg("STACK: Cannot convert pr6 to absolute memory address.\n");
-        return 1;
-    }
-
-    // The stack header will be at offset 0 within the stack segment.
-    int offset = 0;
-    uint hdr_addr;  // 24bit main memory address
-    if (convert_address(&hdr_addr, seg, offset, 0) != 0) {
-        out_msg("Stack Trace: Cannot convert %03o|0 to absolute memory address.\n", seg);
-        return 1;
-    }
-    AR_PR_t stack_begin_pr;
-    if (words2its(M[hdr_addr+022], M[hdr_addr+023], &stack_begin_pr) != 0) {
-        out_msg("Stack Trace: Stack header seems invalid; no stack_begin_ptr at %03o|22\n", seg);
-        return 1;
-    }
-    AR_PR_t stack_end_pr;
-    if (words2its(M[hdr_addr+024], M[hdr_addr+025], &stack_end_pr) != 0) {
-        out_msg("Stack Trace: Stack header seems invalid; no stack_end_ptr at %03o|24\n", seg);
-        return 1;
-    }
-    if (stack_begin_pr.PR.snr != seg || stack_end_pr.PR.snr != seg) {
-        out_msg("Stack Trace: Stack header seems invalid; stack frames are in another segment.\n");
-        return 1;
-    }
-    AR_PR_t lot_pr;
-    if (words2its(M[hdr_addr+026], M[hdr_addr+027], &lot_pr) != 0) {
-        out_msg("Stack Trace: Stack header seems invalid; no LOT ptr at %03o|26\n", seg);
-        return 1;
-    }
-    // TODO: sanity check LOT ptr
-
-    out_msg("Stack Trace:\n");
-    uint framep = stack_begin_pr.wordno;
-    uint prev = 0;
-    int finished = 0;
-    int need_hist_msg = 0;
-    // while(framep <= stack_end_pr.wordno)
-    for (;;) {
-        // Might find ourselves in a different page while moving from frame to frame...
-        // BUG: We assume a stack frame doesn't cross page boundries
-        uint addr;
-        if (convert_address(&addr, seg, framep, 0) != 0) {
-            if (finished)
-                break;  
-            out_msg("STACK Trace: Cannot convert address of frame %03o|%06o to absolute memory address.\n", seg, framep);
-            return 1;
-        }
-        // Sanity check
-        if (prev != 0) {
-            AR_PR_t prev_pr;
-            if (words2its(M[addr+020], M[addr+021], &prev_pr) == 0) {
-                if (prev_pr.wordno != prev) {
-                    out_msg("STACK Trace: Stack frame's prior ptr, %03o|%o is bad.\n", seg, prev_pr.wordno);
-                }
-            }
-        }
-        prev = framep;
-        // Print the current frame
-        if (finished && M[addr+022] == 0 && M[addr+024] == 0 && M[addr+026] == 0)
-            break;
-        if (need_hist_msg) {
-            need_hist_msg = 0;
-            out_msg("stack trace: ");
-            out_msg("Recently popped frames (aka where we recently returned from):\n");
-        }
-        print_frame(seg, framep, addr);
-        // Get the next one
-        AR_PR_t next;
-        if (words2its(M[addr+022], M[addr+023], &next) != 0) {
-            if (!finished)
-                out_msg("STACK Trace: no next frame.\n");
-            break;
-        }
-        if (next.PR.snr != seg) {
-            out_msg("STACK Trace: next frame is in a different segment (next is in %03o not %03o.\n", next.PR.snr, seg);
-            break;
-        }
-        if (next.wordno == stack_end_pr.wordno) {
-            finished = 1;
-            need_hist_msg = 1;
-            if (framep != AR_PR[6].wordno)
-                out_msg("Stack Trace: Stack may be garbled...\n");
-        }
-        if (next.wordno < stack_begin_pr.wordno || next.wordno > stack_end_pr.wordno) {
-            if (!finished)
-                out_msg("STACK Trace: DEBUG: next frame is outside the expected range for stack frames.\n");
-        }
-
-        // Use the return ptr in the current frame to print the source line.
-        if (! finished) {
-            AR_PR_t return_pr;
-            if (words2its(M[addr+024], M[addr+025], &return_pr) == 0) {
-                where_t where;
-                int offset = return_pr.wordno;
-                if (offset > 0)
-                    -- offset;
-                if (seginfo_find_all(return_pr.PR.snr, offset, &where) == 0) {
-                    out_msg("stack trace: ");
-                    if (where.line_no >= 0) {
-                        // Note that if we have a source line, we also expect to have a "proc" entry and file name
-                        out_msg("\t\tSource:  %s, line %5d:  %s\n", where.file_name, where.line_no, where.line);
-                    } else
-                        if (where.entry_offset < 0)
-                            out_msg("\t\tNear %03o|%06o", return_pr.PR.snr, return_pr.wordno);
-                        else {
-                            int off = return_pr.wordno - where.entry_offset;
-                            char sign = (off < 0) ? '-' : '+';
-                            if (sign == '-')
-                                off = - off;
-                            out_msg("\t\tNear %03o|%06o %s %c%#o\n", return_pr.PR.snr, return_pr.wordno, where.entry, sign, off);
-                        }
-                }
-            }
-        }
-        // Advance
-        framep = next.wordno;
-    }
-
-    out_msg("stack trace: ");
-    out_msg("Current Location:\n");
-    out_msg("stack trace: ");
-    print_src_loc("\t", get_addr_mode(), PPR.PSR, PPR.IC, &cu.IR);
-    return 0;
-}
-
-int cmd_stack_trace(int32 arg, char *buf)
-{
-    stack_trace();
-    return 0;
-}
-
-
-static void state_dump_changes()
-{
-    // Track and dump any changes to any registers after each instruction
-    // TODO: Track some of the control-unit data
-
-    log_msg(DEBUG_MSG, NULL, "\n", NULL);
-    if (reg_A != hist.reg_A)
-        log_msg(DEBUG_MSG, "HIST", "Reg A: %012llo\n", reg_A);
-    if (reg_Q != hist.reg_Q) {
-        if (reg_Q == calendar_q)
-            log_msg(DEBUG_MSG, "HIST", "Reg Q: <calendar>\n");
-        else
-            log_msg(DEBUG_MSG, "HIST", "Reg Q: %012llo\n", reg_Q);
-    }
-    if (reg_E != hist.reg_E)
-        log_msg(DEBUG_MSG, "HIST", "Reg E: %03o (%d)\n", reg_E, ((reg_E & (1<<7)) == 0) ? reg_E : (int) reg_E - 128);
-    for (int i = 0; i < ARRAY_SIZE(reg_X); ++i)
-        if (reg_X[i] != hist.reg_X[i])
-            log_msg(DEBUG_MSG, "HIST", "Reg X[%d]: %06o\n", i, reg_X[i]);
-    if (memcmp(&hist.IR, &IR, sizeof(hist.IR)) != 0) {
-        t_uint64 ir;
-        save_IR(&ir);
-        log_msg(DEBUG_MSG, "HIST", "IR: %s %s\n", bin2text(ir, 18), ir2text(&IR));
-    }
-    if (memcmp(hist.AR_PR, AR_PR, sizeof(hist.AR_PR)) != 0) {
-        for (int i = 0; i < ARRAY_SIZE(AR_PR); ++i)
-            if (memcmp(hist.AR_PR + i, AR_PR + i, sizeof(*hist.AR_PR)) != 0) {
-                log_msg(DEBUG_MSG, "HIST", "PR[%d]: rnr=%o, snr=%o, wordno=%0o, bitno=%#o; AR: bitno=%#o, charno=%#o\n",
-                    i, AR_PR[i].PR.rnr, AR_PR[i].PR.snr, AR_PR[i].wordno, AR_PR[i].PR.bitno,
-                    AR_PR[i].AR.bitno, AR_PR[i].AR.charno);
-            }
-    }
-    if (memcmp(&hist.PPR, &PPR, sizeof(hist.PPR)) != 0)
-        log_msg(DEBUG_MSG, "HIST", "PPR: PRR=%#o, PSR=%#o, P=%#o, IC=%#o\n", PPR.PRR, PPR.PSR, PPR.P, PPR.IC);
-    if (memcmp(&hist.TPR, &TPR, sizeof(hist.TPR)) != 0) {
-        if (TPR.is_value)
-            log_msg(DEBUG_MSG, "HIST", "TPR: TRR=%#o, TSR=%#o, TBR=%#o, CA=%#o, is_value=Y, value=%#llo\n",
-                TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA, TPR.value);
-        else
-            log_msg(DEBUG_MSG, "HIST", "TPR: TRR=%#o, TSR=%#o, TBR=%#o, CA=%#o, is_value=N\n",
-                TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA);
-    }
-    if (memcmp(&hist.cpu.DSBR, &cpup->DSBR, sizeof(hist.cpu.DSBR)) != 0)
-        log_msg(DEBUG_MSG, "HIST", "DSBR: addr=%#o, bound=%#o(%d), unpaged=%c, stack=%#o\n",
-            cpup->DSBR.addr, cpup->DSBR.bound, cpup->DSBR.bound, cpup->DSBR.u ? 'Y' : 'N', cpup->DSBR.stack);
-    if (hist.cu.PT_ON != cu.PT_ON)
-        log_msg(DEBUG_MSG, "HIST", "PTWAM %s enabled\n", cu.PT_ON ? "is" : "is NOT");
-    if (memcmp(hist.cpu.PTWAM, cpup->PTWAM, sizeof(hist.cpu.PTWAM)) != 0) {
-        for (int i = 0; i < ARRAY_SIZE(cpup->PTWAM); ++i) {
-            uint tmp = hist.cpu.PTWAM[i].assoc.use;     // compare all members except "use" counter
-            hist.cpu.PTWAM[i].assoc.use = cpup->PTWAM[i].assoc.use;
-            if (memcmp(hist.cpu.PTWAM + i, cpup->PTWAM + i, sizeof(*hist.cpu.PTWAM)) != 0) {
-                log_msg(DEBUG_MSG, "HIST", "PTWAM[%d]: ptr/seg = %#o, pageno=%#o, is_full/used=%c, use=%02o\n",
-                    i, cpup->PTWAM[i].assoc.ptr, cpup->PTWAM[i].assoc.pageno, cpup->PTWAM[i].assoc.is_full ? 'Y' : 'N', cpup->PTWAM[i].assoc.use);
-                log_msg(DEBUG_MSG, "HIST", "PTWAM[%d]: PTW: addr=%06oxx, used=%c, mod=%c, fault=%c, fc=%#o\n",
-                    i, cpup->PTWAM[i].ptw.addr, cpup->PTWAM[i].ptw.u ? 'Y' : 'N', cpup->PTWAM[i].ptw.m ? 'Y' : 'N',
-                    cpup->PTWAM[i].ptw.f ? 'Y' : 'N', cpup->PTWAM[i].ptw.fc);
-            }
-            hist.cpu.PTWAM[i].assoc.use = tmp;
-        }
-    }
-    if (hist.cu.SD_ON != cu.SD_ON)
-        log_msg(DEBUG_MSG, "HIST", "SDWAM %s enabled\n", cu.SD_ON ? "is" : "is NOT");
-    if (memcmp(hist.cpu.SDWAM, cpup->SDWAM, sizeof(hist.cpu.SDWAM)) != 0) {
-        for (int i = 0; i < ARRAY_SIZE(cpup->SDWAM); ++i) {
-            uint tmp = hist.cpu.SDWAM[i].assoc.use;     // compare all members except "use" counter
-            hist.cpu.SDWAM[i].assoc.use = cpup->SDWAM[i].assoc.use;
-            if (memcmp(hist.cpu.SDWAM + i, cpup->SDWAM + i, sizeof(*hist.cpu.SDWAM)) != 0) {
-                log_msg(DEBUG_MSG, "HIST", "SDWAM[%d]: ptr(segno)=0%05o, is-full=%c, use=0%02o(%02d).\n",
-                    i, cpup->SDWAM[i].assoc.ptr, cpup->SDWAM[i].assoc.is_full ? 'Y' : 'N',
-                    cpup->SDWAM[i].assoc.use, cpup->SDWAM[i].assoc.use);
-                SDW_t *sdwp = &cpup->SDWAM[i].sdw;
-                log_msg(DEBUG_MSG, "HIST", "\tSDW for seg %d: addr = %#08o, r1=%o r2=%o r3=%o, f=%c, fc=%#o.\n",
-                    cpup->SDWAM[i].assoc.ptr, sdwp->addr, sdwp->r1, sdwp->r2, sdwp->r3, sdwp->f ? 'Y' : 'N', sdwp->fc);
-                log_msg(DEBUG_MSG, "HIST", "\tbound = %05o(%d), r=%c e=%c w=%c, priv=%c, unpaged=%c, g=%c, c=%c, cl=%05o\n",
-                    sdwp->bound, sdwp->bound, sdwp->r ? 'Y' : 'N', sdwp->e ? 'Y' : 'N', sdwp->w ? 'Y' : 'N',
-                    sdwp->priv ? 'Y' : 'N', sdwp->u ? 'Y' : 'N', sdwp->g ? 'Y' : 'N',
-                    sdwp->c ? 'Y' : 'N', sdwp->cl);
-            }
-            hist.cpu.SDWAM[i].assoc.use = tmp;
-        }
-    }
-    if (call6_seen && (memcmp(&hist.AR_PR[6], &AR_PR[6], sizeof(*hist.AR_PR)) != 0)) {
-        stack_trace();
-    }
-    if (cu.IR.opcode == (opcode0_call6 << 1)) {
-        call6_seen = 1;
-    }
-}
-
-static void state_stack(void)
-{
-    // Light verson of state_dump_changes() and state_save()
-    // Used to dump the call stack whenever it changes
-
-    if (call6_seen && (memcmp(&hist.AR_PR[6], &AR_PR[6], sizeof(*hist.AR_PR)) != 0)) {
-        stack_trace();
-    }
-    if (cu.IR.opcode == (opcode0_call6 << 1)) {
-        if (!call6_seen)
-            out_msg("STACK: First call6 seen.  PR6 = %03o|%06o\n", AR_PR[6].PR.snr, AR_PR[6].wordno);
-        call6_seen = 1;
-    }
-    memcpy(&hist.AR_PR[6], &AR_PR[6], sizeof(*hist.AR_PR));
-}
-
-
-//=============================================================================
-
-void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic)
-{
-    if (addr_mode == ABSOLUTE_mode)
-        sprintf(icbuf, "%06o", ic);
-    else if (addr_mode == BAR_mode)
-        sprintf(icbuf, "BAR %o|%06o", seg, ic);
-#if 1
-    else if (addr_mode != APPEND_mode)
-        sprintf(icbuf, "??%o??|%06o", seg, ic);
-#endif
-    else
-        sprintf(icbuf, "%o|%06o", seg, ic);
-}
-
-//=============================================================================
-
-#define ic_hist_max 60
-static int ic_hist_ptr;
-static int ic_hist_wrapped;
-static struct {
-    addr_modes_t addr_mode;
-    uint seg;
-    uint ic;
-    instr_t instr;
-} ic_hist[ic_hist_max];
-
-static void ic_history_init()
-{
-    ic_hist_wrapped = 0;
-    ic_hist_ptr = 0;
-}
-
-static void ic_history_add()
-{
-    // Caller should make sure IR and PPR are already set
-
-    ic_hist[ic_hist_ptr].addr_mode = get_addr_mode();
-    ic_hist[ic_hist_ptr].seg = PPR.PSR;
-    ic_hist[ic_hist_ptr].ic = PPR.IC;
-
-    memcpy(&ic_hist[ic_hist_ptr].instr, &cu.IR, sizeof(ic_hist[ic_hist_ptr].instr));
-    if (++ic_hist_ptr == ic_hist_max) {
-        ic_hist_wrapped = 1;
-        ic_hist_ptr = 0;
-    }
-}
-
-
-static void print_src_loc(const char *prefix, addr_modes_t addr_mode, int segno, int ic, const instr_t* instrp)
-{
-    char icbuf[80];
-    ic2text(icbuf, addr_mode, segno, ic);
-
-    where_t where;
-    if (seginfo_find_all(segno, ic, &where) != 0)
-        out_msg("%sIC: %s: %-60s\n", prefix, icbuf, instr2text(instrp));
-    else {
-        const char *name = where.entry ? where.entry : where.file_name ? where.file_name : "unknown";
-        if (where.line_no >= 0) {
-            out_msg("%sIC: %s: %-60s %s, line %d\n", prefix, icbuf, instr2text(instrp), name, where.line_no);
-            out_msg("%s\tline %d: %s\n", prefix, where.line_no, where.line);
-        } else {
-            if (where.entry_offset < 0)
-                out_msg("%sIC: %s: %-60s %s\n", prefix, icbuf, instr2text(instrp), name);
-            else {
-                int offset = (int) ic - where.entry_offset;
-                char sign = (offset < 0) ? '-' : '+';
-                if (sign == '-')
-                    offset = - offset;
-                out_msg("%sIC: %s: %-60s %s %c%#o\n", prefix, icbuf, instr2text(instrp), name, sign, offset);
-            }
-        }
-    }
-}
-
-
-int cmd_dump_history(int32 arg, char *buf)
-    // Dumps the instruction histrory
-{
-    // The queue is implemented via an array and is circular,
-    // so we make two passes through the array.
-    for (int wrapped = ic_hist_wrapped; wrapped >= 0; --wrapped) {
-        int start, end;
-        if (wrapped) {
-            start = ic_hist_ptr;
-            end = ic_hist_max;
-        } else {
-            start = 0;
-            end = ic_hist_ptr;
-        }
-        for (int i = start; i < end; ++i) {
-            int segno = (ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1;
-            print_src_loc("", ic_hist[i].addr_mode, segno, ic_hist[i].ic, &ic_hist[i].instr);
-        }
-    }
-    return 0;
-}
-
-
-//=============================================================================
-
-static void check_events()
-{
-    // Called after executing an instruction pair for xed.   The instruction pair
-    // may have including a rpt, rpd, transfer.   The instruction pair may even
-    // have faulted, but if so, it was saved and restarted.
-
-    events.any = events.int_pending || events.low_group || events.group7;
-    if (events.any)
-        log_msg(NOTIFY_MSG, "CU", "check_events: event(s) found (%d,%d,%d).\n", events.int_pending, events.low_group, events.group7);
-
-    return;
-}
-
-
-//=============================================================================
-
-
-static void show_location(int show_source_lines)
-{
-
-    // WARNING: re-init the following two varibles if (re)init() is ever implemented for symtab pkg
-    static int have_source = 0;
-    static where_t where;
-    static int prev_segno = -1;
-
-    static const char *old;
-    static int old_line_no = -1;
-
-    // Segment 0400 is the first used segment and shows a lot of bouncing between source
-    // files that's no longer of interest   
-    const int show_source_changes = PPR.PSR != 0400 || prev_segno != 0400;
-    //const int show_source_changes = 0;
-
-    static int seg_scanned[512];
-    if (! opt_debug && ! show_source_changes && ! show_source_lines)
-        return;
-
-    // Scan segments for entry points to procedures
-    addr_modes_t amode = get_addr_mode();
-    int seg = (amode == APPEND_mode) ? PPR.PSR : -1;
-    if (seg >= 0 && seg < ARRAY_SIZE(seg_scanned) && ! seg_scanned[seg]) {
-        scan_seg(seg, 0);
-        seg_scanned[seg] = 1;
-    }
-
-    if (opt_debug)
-        log_msg(DEBUG_MSG, NULL, "\n", NULL);
-
-    // Did we just change from one source file or procedure to another?
-    int source_changed;
-    if (have_source) {
-        source_changed = prev_segno != seg || where.entry_offset > PPR.IC || where.entry_hi < 0 || PPR.IC > where.entry_hi;
-        if (source_changed) {
-            where_t owhere = where;
-            have_source = seginfo_find_all(seg, PPR.IC, &where) == 0;
-            if (have_source) {
-                source_changed = where.file_name != owhere.file_name || where.entry != owhere.entry;
-            } else {
-                source_changed = 1;
-                // log_msg(NOTIFY_MSG, "MAIN", "src changed: lost source on %#o|%#o\n", seg, PPR.IC);
-            }
-        } else {
-            have_source = seginfo_find_all(seg, PPR.IC, &where) == 0;
-            if (! have_source) {
-                source_changed = 1;
-                // log_msg(NOTIFY_MSG, "MAIN", "src changed: lost source (but within prior range?)\n");
-            }
-        }
-    } else {
-        source_changed = have_source = seginfo_find_all(seg, PPR.IC, &where) == 0;
-    }
-
-    prev_segno = seg;
-
-    // Display source line
-    int display_entry = 0;
-    int display_line = 0;
-    if (show_source_lines && (opt_debug || cpu.cycle != FETCH_cycle)) {
-        if (where.line_no >= 0) {
-            display_entry = source_changed;     // BUG: why do we care re line #?
-            display_line = source_changed || old_line_no != where.line_no;
-        }
-        old_line_no = where.line_no;
-    }
-    if (display_entry) {
-        if (where.entry)
-            log_msg(DEBUG_MSG, "MAIN", "%s: %s\n", "Procedure", where.entry);
-        else if (where.file_name)
-            log_msg(DEBUG_MSG, "MAIN", "%s: %s\n", "Source file", where.file_name);
-        else
-            log_msg(DEBUG_MSG, "MAIN", "Source unknown\n");
-    }
-    if (display_line && where.line_no >= 0) {
-        // Note that if we have a source line, we also expect to have a "proc" entry
-        const char *name = where.entry ? where.entry : where.file_name;
-        out_msg("Source:  %s %o|%06o %5d:  %s\n", name, seg, PPR.IC, where.line_no, where.line);
-    }
-
-    // Display IC
-    if (opt_debug || (source_changed && show_source_changes)) {
-        const char *name = where.entry ? where.entry : where.file_name;
-        char icbuf[80];
-        ic2text(icbuf, amode, PPR.PSR, PPR.IC);
-        if (source_changed) {
-            if (have_source) {
-                if (! where.entry || where.entry_offset < 0 || where.entry_offset == (int) PPR.IC) {
-                    if (name == NULL)
-                        log_msg(WARN_MSG, "MAIN", "name is null; offset = %#o; e-name = %s, f-name = %s.\n", where.entry_offset, where.entry, where.file_name); // impossible
-                    log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: %s\n", icbuf, name);
-                } else {
-                    int offset = (int) PPR.IC - where.entry_offset;
-                    char sign = (offset < 0) ? '-' : '+';
-                    if (sign == '-')
-                        offset = - offset;
-                    log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: %s %c%#o\n", icbuf, name, sign, offset);
-                }
-            } else if (old != NULL)
-                log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: Unknown (leaving %s)\n", icbuf, old);
-            old = name;
-        } else
-            if (opt_debug)
-                log_msg(DEBUG_MSG, "MAIN", "IC: %s\n", icbuf);  // source unchanged
-    }
-}
-
-//=============================================================================
-
-int cmd_xdebug(int32 arg, char *buf)
-{
-    char *s = buf;
-    s += strspn(s, " \t");
-    if (*s == 0) {
-        out_msg("USAGE xdebug seg <segment number> { on | off }\n");
-        return 1;
-    }
-
-    if (strncmp(s, "seg", strlen("seg")) == 0)
-        s += strlen("seg");
-    else if (strncmp(s, "segment", strlen("segment")) == 0)
-        s += strlen("segment");
-    else {
-        out_msg("xdebug: expecting the word 'seg' or 'segment'\n");
-        return 1;
-    }
-    s += strspn(s, " \t");
-    unsigned segno;
-    char c;
-    int n;
-    if (sscanf(s, "%o", &segno) != 1) {
-        out_msg("xdebug: Expecting a octal segment number.\n");
-        return 1;
-    }
-    s += strspn(s, "01234567 \t");
-    int state;
-    if (strcmp(s, "on") == 0)
-        state = 1;
-    else if (strcmp(s, "cpu") == 0 || strcmp(s, "default") == 0 || strcmp(s, "def") == 0)
-        state = 0;
-    else if (strcmp(s, "off") == 0)
-        state = -1;
-    else {
-        out_msg("xdebug: Expecting 'on', 'off', or 'cpu', not: %s\n", s);
-        return 1;
-    }
-
-    if (segno >= n_segments) {
-        out_msg("xdebug: Maximum segment number is %#o\n", n_segments - 1);
-        return 1;
-    }
-
-    seg_debug[segno] = state;
-    return 0;
-}
-
-//=============================================================================
-
-char *ir2text(const IR_t *irp)
-{
-    static char buf[256];
-
-    char *s = buf;
-    *s++ = '[';
-
-    if (irp->zero) { strcpy(s, " zero"); s += strlen(s); }
-    if (irp->neg) { strcpy(s, " neg"); s += strlen(s); }
-    if (irp->carry) { strcpy(s, " carry"); s += strlen(s); }
-    if (irp->overflow) { strcpy(s, " overflow"); s += strlen(s); }
-    if (irp->exp_overflow) { strcpy(s, " exp-overflow"); s += strlen(s); }
-    if (irp->exp_underflow) { strcpy(s, " exp-underflow"); s += strlen(s); }
-    if (irp->overflow_mask) { strcpy(s, " overflow-mask"); s += strlen(s); }
-    if (irp->tally_runout) { strcpy(s, " tally-run-out"); s += strlen(s); }
-    if (irp->parity_error) { strcpy(s, " parity-error"); s += strlen(s); }
-    if (irp->parity_mask) { strcpy(s, " parity-mask"); s += strlen(s); }
-    if (irp->not_bar_mode) { strcpy(s, " not-bar-mode"); s += strlen(s); }
-    if (irp->truncation) { strcpy(s, " truncation"); s += strlen(s); }
-    if (irp->mid_instr_intr_fault) { strcpy(s, " mid-instr-intr-fault"); s += strlen(s); }
-    if (irp->abs_mode) { strcpy(s, " abs-mode"); s += strlen(s); }
-    if (irp->hex_mode) { strcpy(s, " hex-mode"); s += strlen(s); }
-    strcpy(s, " ]");
-    return buf;
 }

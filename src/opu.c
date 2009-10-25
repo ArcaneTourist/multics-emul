@@ -4111,7 +4111,7 @@ static int op_ufa(const instr_t* ip)
     if (ret != 0)
         return ret;
     ret = instr_ufa(word);
-    log_msg(WARN_MSG, "OPU", "Untested opcode %03o(%d)\n", ip->opcode >> 1, ip->opcode & 1);
+    log_msg(WARN_MSG, "OPU::ufa", "Unnormalized Floating Add is untested\n");
     cancel_run(STOP_WARN);
     return ret;
 }
