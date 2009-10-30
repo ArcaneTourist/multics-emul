@@ -1821,4 +1821,6 @@ static void init_ops()
     is_eis[(opcode1_cmpb<<1)|1] = 1;
     is_eis[(opcode1_sztl<<1)|1] = 1;
     is_eis[(opcode1_sztr<<1)|1] = 1;
+    is_eis[(opcode1_btd<<1)|1] = 1;
+    is_eis[(opcode1_mvne<<1)|1] = 1;
 }

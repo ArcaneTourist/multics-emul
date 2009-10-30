@@ -47,8 +47,8 @@ int instr_dvf(t_uint64 word)
 
     log_msg(NOTIFY_MSG, "opu::dvf", "AQ = {%012llo,%012llo} aka (%lld,%lld).  Divisor = %012llo aka %lld.\n", reg_A, reg_Q, reg_A, reg_Q, word, word);
 
-    double aq = multics_to_double(reg_A, reg_Q, 1, 1);
-    double div = multics_to_double(word, 0, 1, 1);
+    double aq = multics_to_double(reg_A, reg_Q, 0, 1);
+    double div = multics_to_double(word, 0, 0, 1);
     log_msg(NOTIFY_MSG, "opu::dvf", "%g/%g\n", aq, div);
     int dividend_is_neg = bit36_is_neg(reg_A);
     int divisor_is_neg = bit36_is_neg(word);
@@ -70,23 +70,19 @@ int instr_dvf(t_uint64 word)
         return 1;
     }
 
-    // shift AQ right one
+    // Shift AQ right one -- adjust for scaling?  Loses bit 72 as noted in AL-39.
     reg_Q = setbits36(reg_Q>>1, 0, 1, reg_A&1); 
     reg_A >>= 1;
 
+    // Do unsigned division of the two values
     t_uint64 quot;
     t_uint64 rem;
-    // printf("Calling div72 {%012llo,%012llo}/%012llo\n", reg_A, reg_Q, word); 
     div72(reg_A, reg_Q, word, &quot, &rem);
-    // printf("Div72 returns %012llo rem %012llo -- %lld rem %lld\n", quot, rem, quot, rem);
     if (rem != 0)
         if (dividend_is_neg)
             rem = negate36(rem);
     if (dividend_is_neg != divisor_is_neg)
         quot = negate36(quot);
-    //double q = convert(quot, 0, 1);
-    //double r = convert(rem, 0, 1);
-    //printf("Result: %#012llo rem %012llo -- decimal %lld rem %lld.  Representing %g rem %g\n", quot, rem, quot, rem, q, r);
 
     reg_A = quot;
     reg_Q = rem;
@@ -106,11 +102,15 @@ int instr_dvf(t_uint64 word)
 int instr_ufa(t_uint64 word)
 {
     log_msg(NOTIFY_MSG, "opu::ufa", "E = %03o(%d) AQ = {%012llo,%012llo} aka (%lld,%lld).\n", reg_E, reg_E, reg_A, reg_Q, reg_A, reg_Q);
+    double x = multics_to_double(reg_A, reg_Q, 0, 1);
+    log_msg(NOTIFY_MSG, "opu::ufa", "AQE is %g * 2^%d\n", x, reg_E);
 
     // int aq_neg = bit36_is_neg(reg_A);
     uint8 op_exp = getbits36(word, 0, 8);
     uint32 op_mant = getbits36(word, 8, 28);    // 36-8=28 bits
     log_msg(NOTIFY_MSG, "opu::ufa", "op = %012llo => exp %03o(%d) and mantissa %010o (%d)\n", word, op_exp, (int8) op_exp, op_mant, op_mant);
+    x = multics_to_double(op_mant, 0,  0, 1);
+    log_msg(NOTIFY_MSG, "opu::ufa", "op is %g * 2^%d\n", x, op_exp);
 
     if (op_mant == 0) {
         // short circuit the addition of zero
@@ -158,6 +158,8 @@ int instr_ufa(t_uint64 word)
         // NOTE: fno would turn off the overflow flag, but we don't
     }
 
+    x = multics_to_double(reg_A, reg_Q, 0, 1);
+    log_msg(NOTIFY_MSG, "opu::ufa", "resulting AQE is %g * 2^%d\n", x, reg_E);
     return 1;   // untested
 }
 
@@ -168,11 +170,15 @@ int instr_ufm(t_uint64 word)
     int ret = 0;
 
     log_msg(NOTIFY_MSG, "opu::ufm", "E = %03o(%d) AQ = {%012llo,%012llo} aka (%lld,%lld).\n", reg_E, reg_E, reg_A, reg_Q, reg_A, reg_Q);
+    double x = multics_to_double(reg_A, reg_Q, 0, 1);
+    log_msg(NOTIFY_MSG, "opu::ufm", "AQE is %g * 2^%d\n", x, reg_E);
 
     // int aq_neg = bit36_is_neg(reg_A);
     uint8 op_exp = getbits36(word, 0, 8);
     t_uint64 op_mant = getbits36(word, 8, 28) << 8; // 36-8=28 bits
     log_msg(NOTIFY_MSG, "opu::ufm", "op = %012llo => exp %03o(%d) and mantissa %012llo (%lld)\n", word, op_exp, (int8) op_exp, op_mant, op_mant);
+    x = multics_to_double(op_mant, 0,  0, 1);
+    log_msg(NOTIFY_MSG, "opu::ufm", "op is %g * 2^%d\n", x, op_exp);
 
     IR.exp_underflow = 0;
     IR.exp_overflow = 0;
@@ -190,25 +196,32 @@ int instr_ufm(t_uint64 word)
     reg_E = (unsigned) exp & MASKBITS(8);
     log_msg(NOTIFY_MSG, "opu::ufm", "new exp is %d aka %#o\n", exp, reg_E);
 
-    if (reg_A == ((t_uint64) 1 << 35) && reg_Q == 0 && op_mant == ((t_uint64) 1 << 35)) {
-        log_msg(NOTIFY_MSG, "opu::ufm", "Need to normalize operands....\n");
-        cancel_run(STOP_BUG);
-        // BUG: the following probably isn't the proper way to normalize...
-        reg_A = ((t_uint64) 1 << 34);   // 0.5
-        if (reg_E == 127) {
-            reg_E = 128;
-            IR.exp_overflow = 1;
-            log_msg(NOTIFY_MSG, "opu::ufm", "exp overflow.\n");
-            // ret = 1;
-        } else
-            ++ reg_E;
-    } else {
+    int normalize = reg_A == ((t_uint64) 1 << 35) && reg_Q == 0 && op_mant == ((t_uint64) 1 << 35);
+#if 0
+    if (normalize) {
+        log_msg(NOTIFY_MSG, "opu::ufm", "Normalizing operand...\n");
+        if (instr_fno() != 0)
+            return 1;
+    } else
+#endif
+    {
         t_uint64 a = reg_A;
         t_uint64 q = reg_Q;
         mpy72fract(reg_A, reg_Q, op_mant, &reg_A, &reg_Q);
         log_msg(NOTIFY_MSG, "opu::ufm", "Multiplying {%012llo,%012llo} by {%012llo} yields {%012llo,%012llo}\n", a, q, op_mant, reg_A, reg_Q);
     }
 
+    if (normalize) {
+        log_msg(NOTIFY_MSG, "opu::ufm", "Normalizing results....\n");
+        ret = instr_fno();
+    }
+
+    x = multics_to_double(reg_A, reg_Q, 0, 1);
+    log_msg(NOTIFY_MSG, "opu::ufm", "resulting AQE is %g * 2^%d\n", x, reg_E);
+    if (normalize) {
+        log_msg(NOTIFY_MSG, "opu::ufm", "Auto Breakpoint.\n");
+        (void) cancel_run(STOP_IBKPT);
+    }
     return ret;
 }
 
@@ -216,14 +229,22 @@ int instr_ufm(t_uint64 word)
 
 int instr_fno()
 {
+    if (opt_debug) {
+        double x = multics_to_double(reg_A, reg_Q, 0, 1);
+        log_msg(NOTIFY_MSG, "OPU::fno", "AQE initially {%0llo,%012llo},%03o => %g * 2^%d\n", reg_A, reg_Q, reg_E, x, reg_E);
+    }
+
     if (IR.overflow) {
         // Shift AQ by one and invert sign bit
         reg_Q = setbits36(reg_Q >> 1, 0, 1, reg_A & 1);
         int sign = bit36_is_neg(reg_A);
         reg_A >>= 1;
-        reg_A = setbits36(reg_A, 0, 1, ! sign);
+        reg_A = setbits36(reg_A, 0, 1, ! sign); // BUG: Should we invert the old sign or the shifted-in zero?
         IR.overflow = 0;
+        return 0;
     }
+
+    // Note: no special case test needed for AQ == 0 before the loop
 
     // BUG: What is the exact behavior on underflow?  Do we shift or not?
 
@@ -256,7 +277,11 @@ int instr_fno()
         return 0;
     }
 
-    // BUG: results not tested
+    if (opt_debug) {
+        double x = multics_to_double(reg_A, reg_Q, 0, 1);
+        log_msg(DEBUG_MSG, "OPU::fno", "AQE now:      {%0llo,%012llo},%03o => %g * 2^%d\n", reg_A, reg_Q, reg_E, x, reg_E);
+    }
+
     return 0;
 }
 
@@ -271,10 +296,6 @@ double multics_to_double(t_uint64 xhi, t_uint64 xlo, int show, int is_signed)
     t_uint64 orig_hi = xhi;
     t_uint64 orig_lo = xlo;
     
-    xlo = setbits36(xlo, 35, 1, 0); // throw it away, use 71 bits, not 72
-    // reg_Q = setbits36(reg_Q>>1, 0, 1, reg_A&1);  // BUG
-    xhi = setbits36(xhi>>1, 0, 1, xhi&1);   // BUG fixed
-
     int sign = 0;
     if (is_signed) {
         // The MSB is a sign bit; the next bit represents 1/2 and the following 1/4, etc
@@ -297,7 +318,8 @@ double multics_to_double(t_uint64 xhi, t_uint64 xlo, int show, int is_signed)
             ++ nbits;
             if ((x & bitsel) != 0) {
                 val += (double) 1 / fact;
-                out_msg("bit %d on: val now %g\n", nbits, val);
+                if (show)
+                    out_msg("bit %d on: val now %g\n", nbits, val);
             }
             bitsel >>= 1;
             fact *= 2;
@@ -305,14 +327,11 @@ double multics_to_double(t_uint64 xhi, t_uint64 xlo, int show, int is_signed)
     }
     if (is_signed)
         val += sign;
-    if (show) {
-        //printf("%#o aka %sb => %0*o aka %sb represents %g\n", orig, bin2text(orig,word_size), word_size/3, x, bin2text(x,word_size), val);
-        // printf("%#lloo => de-signed/masked %0*lloo aka %sb represents (%c) %g\n",
-        //  orig, word_size/3, x, fbin2text(x,word_size), (sign == 0) ? '+' : '-', val);
+    if (show)
         log_msg(NOTIFY_MSG, "OPU::fixed", " {%#llo,%#llo} => %g\n", orig_hi, orig_lo, val);
-    }
     return val;
 }
+
 // ============================================================================
 
 #if 0
@@ -354,22 +373,3 @@ C(AQ) are shifted one place to the right.
 C(AQ)0 is inverted to restore the
 */
 
-/*
- * fno
-NOTES: The fno instruction normalizes the number in C(EAQ) if C(AQ) ? 0 and the
-overflow indicator is OFF.
-A normalized floating number is defined as one whose mantissa lies in the
-interval [0.5,1.0] such that
-0.5 <= | C(AQ) | < 1.0
-which, in turn, requires that C(AQ)0 ? C(AQ)1.
-If the overflow indicator is ON, then C(AQ) is shifted one place to the right,
-C(AQ)0 is inverted to reconstitute the actual sign, and the overflow
-indicator is set OFF. This action makes the fno instruction useful in
-correcting overflows that occur with fixed point numbers.
-Normalization is performed by shifting C(AQ)1,71 one place to the left and
-reducing C(E) by 1, repeatedly, until the conditions for C(AQ)0 and C(AQ)1
-are met. Bits shifted out of AQ1 are lost.
-If C(AQ) = 0, then C(E) is set to -128 and the zero indicator is set ON.
-Attempted repetition with the rpl instruction causes an illegal procedure
-fault.
-*/

@@ -164,8 +164,11 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
                     err |= sim_putchar(c);
                 } else {
                     sprintf(buf+strlen(buf), "\\%03o", c);
+#if 0
+    // BUG: not sending control junk
                     if (c != 0)
                         err |= sim_putchar(c);
+#endif
                 }
             }
             if (err)

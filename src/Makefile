@@ -9,7 +9,7 @@ wc:
 	wc hw6180.h seginfo.h bits.h hw6180_cpu.c hw6180_sys.c misc.c opu.c bits.c apu.c eis_mw_desc.c scu.c iom.c mt.c math.c math_real.c console.c listing.cpp seginfo.cpp debug_run.cpp debug_io.cpp
 
 opcode-count:
-	@echo `grep -n 'case opcode._' opu.c | grep -cv ' + 0:'` of `grep -c 'opcode._.*=' opcodes.h`
+	@echo `grep -n 'case opcode._[a-z0-9]*:' opu.c | grep -cv ' + 0:'` of `grep -c 'opcode._.*=' opcodes.h`
 
 t: t.c
 	gcc -o t t.c

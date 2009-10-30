@@ -627,7 +627,9 @@ static int stack_trace(void)
     int framep = stack_begin_pr.wordno;
     int prev = 0;
     int finished = 0;
+#if 0
     int need_hist_msg = 0;
+#endif
     // while(framep <= stack_end_pr.wordno)
     for (;;) {
         // Might find ourselves in a different page while moving from frame to frame...
@@ -652,11 +654,13 @@ static int stack_trace(void)
         // Print the current frame
         if (finished && M[addr+022] == 0 && M[addr+024] == 0 && M[addr+026] == 0)
             break;
+#if 0
         if (need_hist_msg) {
             need_hist_msg = 0;
             out_msg("stack trace: ");
             out_msg("Recently popped frames (aka where we recently returned from):\n");
         }
+#endif
         print_frame(seg, framep, addr);
         // Get the next one
         AR_PR_t next;
@@ -671,9 +675,13 @@ static int stack_trace(void)
         }
         if (next.wordno == stack_end_pr.wordno) {
             finished = 1;
+            break;
+#if 0
             need_hist_msg = 1;
             if (framep != AR_PR[6].wordno)
                 out_msg("Stack Trace: Stack may be garbled...\n");
+            // BUG: Infinite loop if enabled and garbled stack with "Unknowable entry {0,0}", "Unknown entry 15|0  (stack frame at 062|000000)", etc
+#endif
         }
         if (next.wordno < stack_begin_pr.wordno || next.wordno > stack_end_pr.wordno) {
             if (!finished)

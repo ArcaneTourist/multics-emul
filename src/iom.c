@@ -1085,6 +1085,10 @@ static void iom_fault(int chan, int src_line, int is_sys, int signal)
     // sys fault masks channel
 
     // signal gets put in bits 30..35, but we need fault code for 26..29
-    log_msg(ERR_MSG, "IOM", "Fault for channel %d at line %d: is_sys=%d, signal=%d\n", chan, src_line, is_sys, signal);
-    cancel_run(STOP_WARN);
+
+    // BUG: unimplemented
+
+    log_msg(WARN_MSG, "IOM", "Fault for channel %d at line %d: is_sys=%d, signal=%d\n", chan, src_line, is_sys, signal);
+    log_msg(ERR_MSG, "IOM", "Not setting status word.\n");
+    // cancel_run(STOP_WARN);
 }

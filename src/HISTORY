@@ -566,3 +566,28 @@ History of pre-release versions
     General
         Update listing.c to track automatic (stack) variables.  No support in symtab/syminfo though.
         Use C++ for re-work of symtab/seginfo
+=== Pre-Version 70, Oct 12, 2009
+    General
+        Updates to seginfo.h and seginfo.cpp for re-worked segment info tracking.
+=== Pre-Version 71, Oct 13, 2009
+    General
+        Moved fixed point support from opu.c to math_real.c
+        Updates to source tracking
+=== Pre-Version 72, Oct 14, 2009
+    General
+        Update xlist source listing to automatically detect relocation amount,
+        so user doesn't have to figure that out.
+=== Pre-Version 73, Oct 17, 2009
+    General
+        Begin to track changes to automatic (stack based) PL/1 variables
+=== Pre-Version 74, Oct 25, 2009
+    General
+        Updates for C++ compatibility to opcodes2c.pl
+        More work on tracking automatic variables
+        Move stack tracking support from hw6180_cpu.c to debug_*.cpp
+        Update listing.cpp to see stack frames.
+        Update seginfo.cpp to handle stack frames and automatic variables.
+        Remember first name of segments with multiple names instead of the last seen.
+    Math_real.c
+        Finish fno instruction
+        

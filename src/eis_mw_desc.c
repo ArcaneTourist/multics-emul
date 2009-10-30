@@ -169,6 +169,25 @@ const char* mf2text(const eis_mf_t* mfp)
     return bufp;
 }
 
+
+static void mf_desc_to_text(char *abuf, char *rbuf, const eis_mf_t* mfp, const eis_alpha_desc_t* descp)
+{
+    if (mfp->rl) {
+        char mod[30];
+        mod2text(mod, 0, descp->n_orig);
+        sprintf(rbuf, "%s=>%#o(%d)", mod, descp->n, descp->n);
+    } else
+        sprintf(rbuf, "%#o(%d)", descp->n, descp->n);
+
+    if (mfp->ar) {
+        uint pr = descp->address >> 15;
+        uint offset = descp->address & MASKBITS(15);
+        sprintf(abuf, "%#o => PR%d|%#o", descp->address, pr, offset);
+    } else
+        sprintf(abuf, "%#o", descp->address);
+}
+
+
 const char* eis_alpha_desc_to_text(const eis_mf_t* mfp, const eis_alpha_desc_t* descp)
 {
     static char bufs[2][100];
@@ -180,35 +199,52 @@ const char* eis_alpha_desc_to_text(const eis_mf_t* mfp, const eis_alpha_desc_t* 
         sprintf(bufp, "{y=%#o, char-no=%#o, ta=%o, n=%#o(%d)}",
             descp->address, descp->cn, descp->ta, descp->n, descp->n);
     else {
+        char abuf[60];
         char reg[40];
-        if (mfp->rl) {
-            char mod[30];
-            mod2text(mod, 0, descp->n_orig);
-            sprintf(reg, "%s=>%#o(%d)", mod, descp->n, descp->n);
-        } else
-            sprintf(reg, "%#o(%d)", descp->n, descp->n);
-
-        if (mfp->ar) {
-            uint pr = descp->address >> 15;
-            uint offset = descp->address & MASKBITS(15);
-            sprintf(bufp, "{y=%#o => PR[%d]|%#o, char-no=%#o, ta=%o, n=%s}",
-                descp->address, pr, offset, descp->cn, descp->ta, reg);
-        } else
-            sprintf(bufp, "{y=%#o, char-no=%#o, ta=%o, n=%s}",
-                descp->address, descp->cn, descp->ta, reg);
+        mf_desc_to_text(abuf, reg, mfp, descp);
+        sprintf(bufp, "{y=%s, char-no=%#o, ta=%o, len=%s}", abuf, descp->cn, descp->ta, reg);
     }
     return bufp;
 }
 
-const char* eis_bit_desc_to_text(const eis_bit_desc_t* descp)
+
+const char* eis_bit_desc_to_text(const eis_mf_t* mfp, const eis_bit_desc_t* descp)
 {
     static char bufs[2][100];
     static int which = 0;
     which = !which;
     char *bufp = bufs[which];
 
-    sprintf(bufp, "{y=%#o, char-no=%#o, bit-no=%d n=%#o(%d)}",
-        descp->address, descp->cn/9, descp->bitno, descp->n, descp->n);
+    if (mfp == NULL)
+        sprintf(bufp, "{y=%#o, char-no=%#o, bit-no=%d n=%#o(%d)}",
+            descp->address, descp->cn/9, descp->bitno, descp->n, descp->n);
+    else {
+        char abuf[60];
+        char reg[40];
+        mf_desc_to_text(abuf, reg, mfp, descp);
+        sprintf(bufp, "{y=%s, char-no=%#o, bit-no=%d len=%s}",
+            abuf, descp->cn/9, descp->bitno, reg);
+    }
+    return bufp;
+}
+
+const char* eis_num_desc_to_text(const eis_mf_t* mfp, const eis_num_desc_t* descp)
+{
+    static char bufs[2][100];
+    static int which = 0;
+    which = !which;
+    char *bufp = bufs[which];
+
+    if (mfp == NULL)
+        sprintf(bufp, "{y=%#o, char-no=%#o, %d-bits, sign-ctl=%o, sf=%02o, n=%#o(%d)}",
+            descp->address, descp->cn, descp->nbits, descp->num.s, descp->num.scaling_factor, descp->n, descp->n);
+    else {
+        char abuf[60];
+        char reg[40];
+        mf_desc_to_text(abuf, reg, mfp, descp);
+        sprintf(bufp, "{y=%s, char-no=%#o, %d-bits, sign-ctl=%o, sf=%02o, n=%s}",
+            abuf, descp->cn, descp->nbits, descp->num.s, descp->num.scaling_factor, reg);
+    }
     return bufp;
 }
 
@@ -283,6 +319,54 @@ void parse_eis_bit_desc(t_uint64 word, const eis_mf_t* mfp, eis_bit_desc_t* desc
     descp->nbits = 1;
 
     fix_mf_len(&descp->n, mfp, descp->nbits);
+
+    descp->first = 1;
+
+    descp->area.addr = 0123;
+    descp->area.bitpos = 0;
+    // Set the "current" addr and bitpos in case we need to display them
+    descp->curr.addr = 0123;
+    descp->curr.bitpos = 0;
+}
+
+//=============================================================================
+
+void parse_eis_num_desc(t_uint64 word, const eis_mf_t* mfp, eis_num_desc_t* descp)
+{
+    // Parse EIS operand in Numeric Operator Descriptor Format
+    descp->address = getbits36(word, 0, 18);    // we'll check for PR usage later
+
+    descp->cn = getbits36(word, 18, 3);
+    descp->bitno = 0;
+    descp->ta = getbits36(word, 21, 1); // data type
+    descp->num.s = getbits36(word, 22, 2); 
+    descp->num.scaling_factor = getbits36(word, 24, 6); 
+    descp->n_orig = getbits36(word, 30, 6);
+    descp->n = descp->n_orig;
+    descp->nbits = (descp->ta == 0) ? 9 : 4;
+
+int n = descp->n;
+    fix_mf_len(&descp->n, mfp, descp->nbits);
+    if (descp->nbits == 9) {
+#if 1
+        if ((descp->cn & 1) != 0) {
+            log_msg(ERR_MSG, "APU::EIS", "TA of 0 (9bit) not legal with cn of %d\n", descp->cn);
+            fault_gen(illproc_fault);
+        } else
+            descp->cn /= 2;
+#else
+        // The btd instruction doesn't seem to adhere to the numeric CN conventions
+        log_msg(WARN_MSG, "APU::EIS", "CN of %0o (%d) for numeric operand.\n", descp->cn, descp->cn);
+        if (descp->cn > 3) {
+            log_msg(ERR_MSG, "APU::EIS", "Bad CN %d\n", descp->cn);
+            cancel_run(STOP_BUG);
+        }
+#endif
+    }
+    if (descp->nbits * descp->cn >= 36) {
+        log_msg(ERR_MSG, "APU::EIS", "Data type TA of %d (%d bits) does not allow char pos of %d\n", descp->ta, descp->nbits, descp->cn);
+        fault_gen(illproc_fault);
+    }
 
     descp->first = 1;
 
