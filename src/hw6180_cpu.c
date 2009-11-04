@@ -440,6 +440,7 @@ t_stat sim_instr(void)
     //
     
     restore_from_simh();
+    // setup_streams(); // Route the C++ clog and cdebug streams to match SIMH settings
 
     if (! bootimage_loaded) {
         // We probably should not do this
@@ -534,11 +535,12 @@ ninstr = 0;
     uint32 delta = sim_os_msec() - start;
     //if (delta > 2000)
     if (delta > 200)
-        log_msg(NOTIFY_MSG, "CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
+        log_msg(INFO_MSG, "CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
             (float) delta / 1000, ncycles, ncycles*1000/delta, ninstr, ninstr*1000/delta);
 
     // BUG: pack private variables into SIMH's world
     save_to_simh();
+    flush_logs();
         
     return reason;
 }
@@ -1532,14 +1534,14 @@ int store_abs_word(uint addr, t_uint64 word)
     if (sim_brk_summ)
         if (sim_brk_test(addr, SWMASK('W') | SWMASK('M') | SWMASK('E'))) {
             if (sim_brk_test(addr, SWMASK ('W'))) {
-                log_msg(WARN_MSG, "CU::store", "Memory Write Breakpoint, address %#o\n", addr);
+                log_msg(NOTIFY_MSG, "CU::store", "Memory Write Breakpoint, address %#o\n", addr);
                 (void) cancel_run(STOP_IBKPT);
             } else if (sim_brk_test(addr, SWMASK ('M'))) {
-                log_msg(WARN_MSG, "CU::store", "Memory Breakpoint, address %#o\n", addr);
+                log_msg(NOTIFY_MSG, "CU::store", "Memory Breakpoint, address %#o\n", addr);
                 (void) cancel_run(STOP_IBKPT);
             } else
                 log_msg(NOTIFY_MSG, "CU::store", "Write to a location that has an execution breakpoint, address %#o\n", addr);
-            log_msg(NOTIFY_MSG, "CU::store", "Address %08o: value was %012llo, storing %012llo\n", addr, M[addr], word);
+            log_msg(INFO_MSG, "CU::store", "Address %08o: value was %012llo, storing %012llo\n", addr, M[addr], word);
         }
 
     M[addr] = word; // absolute memory reference

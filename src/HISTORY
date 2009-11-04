@@ -590,4 +590,19 @@ History of pre-release versions
         Remember first name of segments with multiple names instead of the last seen.
     Math_real.c
         Finish fno instruction
-        
+=== Pre-Version 75, Oct 30, 2009
+    General
+        Implemented fno, ufm, btd, and mvne.  This includes support for EIS numeric
+        descriptors and MOP editing micro operations..
+    hw6180.h
+        Support for EIS numeric descriptors
+    eis_mw_desc.c
+        Support for EIS numeric descriptors
+    opu.c
+        Implemented fno, ufm, btd, and mvne
+    math_real.c
+        Implemented ufm
+        Corrected debug output of multics_to_double()
+    console.c
+        Temporarily disable sending of control chars to the console because current execution
+        is spewing garbage on the console.

@@ -13,6 +13,7 @@ using namespace std;
 // #include <list>
 // #include <map>
 // #include <vector>
+#include <ostream>
 #include <stdexcept>
 #include <sstream>
 
@@ -56,7 +57,7 @@ static int seg_debug_init_done = 0;
 
 static int stack_trace(void);
 static void print_src_loc(const char *prefix, addr_modes_t addr_mode, int segno, int ic, const instr_t* instrp);
-static void check_autos(int segno);
+void check_autos(int segno);
 
 //=============================================================================
 
@@ -352,13 +353,13 @@ void show_location(int show_source_lines)
                 source_changed = where.file_name != owhere.file_name || where.entry != owhere.entry;
             } else {
                 source_changed = 1;
-                // log_msg(NOTIFY_MSG, "MAIN", "src changed: lost source on %#o|%#o\n", segno, PPR.IC);
+                // log_msg(INFO_MSG, "MAIN", "src changed: lost source on %#o|%#o\n", segno, PPR.IC);
             }
         } else {
             have_source = seginfo_find_all(segno, PPR.IC, &where) == 0;
             if (! have_source) {
                 source_changed = 1;
-                // log_msg(NOTIFY_MSG, "MAIN", "src changed: lost source (but within prior range?)\n");
+                // log_msg(INFO_MSG, "MAIN", "src changed: lost source (but within prior range?)\n");
             }
         }
     } else {
@@ -381,7 +382,7 @@ void show_location(int show_source_lines)
     if (display_entry) {
         if (where.entry) {
             if (display_file && display_line && where.file_name)
-                out_msg("Source: $s\n", where.file_name);
+                out_msg("Source: %s\n", where.file_name);
             log_msg(DEBUG_MSG, "MAIN", "%s: %s\n", "Procedure", where.entry);
         } else if (where.file_name)
             log_msg(DEBUG_MSG, "MAIN", "%s: %s\n", "Source file", where.file_name);
@@ -393,7 +394,7 @@ void show_location(int show_source_lines)
         // Note that if we have a source line, we also expect to have a "proc" entry
         const char *name = where.entry ? where.entry : where.file_name;
         // out_msg("Source:  %s %o|%06o %5d:  %s\n", name, segno, PPR.IC, where.line_no, where.line);
-        out_msg("Source:  %3o|%06o, line %5d: < %s\n", segno, PPR.IC, where.line_no, where.line);
+        log_msg(INFO_MSG, NULL, "Source:  %3o|%06o, line %5d: < %s\n", segno, PPR.IC, where.line_no, where.line);
     }
 
     // Display IC
@@ -406,16 +407,16 @@ void show_location(int show_source_lines)
                 if (! where.entry || where.entry_offset < 0 || where.entry_offset == (int) PPR.IC) {
                     if (name == NULL)
                         log_msg(WARN_MSG, "MAIN", "name is null; offset = %#o; e-name = %s, f-name = %s.\n", where.entry_offset, where.entry, where.file_name); // impossible
-                    log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: %s\n", icbuf, name);
+                    log_msg(INFO_MSG, "MAIN", "IC: %s\tSource: %s\n", icbuf, name);
                 } else {
                     int offset = (int) PPR.IC - where.entry_offset;
                     char sign = (offset < 0) ? '-' : '+';
                     if (sign == '-')
                         offset = - offset;
-                    log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: %s %c%#o\n", icbuf, name, sign, offset);
+                    log_msg(INFO_MSG, "MAIN", "IC: %s\tSource: %s %c%#o\n", icbuf, name, sign, offset);
                 }
             } else if (old != NULL)
-                log_msg(NOTIFY_MSG, "MAIN", "IC: %s\tSource: Unknown (leaving %s)\n", icbuf, old);
+                log_msg(INFO_MSG, "MAIN", "IC: %s\tSource: Unknown (leaving %s)\n", icbuf, old);
             old = name;
         } else
             if (opt_debug)
@@ -423,6 +424,8 @@ void show_location(int show_source_lines)
     }
 
     cout << flush;
+    clog << flush;
+    // cdebug << flush;
     cerr << flush;
     log_any_io(0);      // Output of source/location info doesn't count towards requiring re-display of source
 }
@@ -810,6 +813,8 @@ int multics_stack_frame::addr()
 
 int multics_stack_frame::_refresh(int first)
 {
+    const char *moi = "multics-stack-frame::_refresh";
+    // log_msg(INFO_MSG, moi, "starting\n");
     if (_addr == -1) {
         uint a;
         if (convert_address(&a, ptr.segno, ptr.offset, 0) != 0)
@@ -817,8 +822,24 @@ int multics_stack_frame::_refresh(int first)
         _addr = a;
     }
     const stack_frame* sfp = _owner.stack();
+    if (sfp == NULL) {
+        log_msg(NOTIFY_MSG, moi, "sanity check fails -- no stack for frame %s...\n", string(ptr).c_str());
+        cancel_run(STOP_WARN);
+        return 1;
+    }
     int found_uninit = 0;
+    unsigned sanity = 200;  // BUG
+    if (sfp->automatics.size() > sanity) {
+        log_msg(NOTIFY_MSG, moi, "sanity check fails -- too many automatics for frame %s...\n", string(ptr).c_str());
+        cancel_run(STOP_WARN);
+        return 1;
+    }
     for (map<int,string>::const_iterator autos_it = sfp->automatics.begin(); autos_it != sfp->automatics.end(); ++ autos_it) {
+        if (--sanity == 0) {
+            log_msg(NOTIFY_MSG, moi, "sanity check fails, too many variables..\n");
+            cancel_run(STOP_WARN);
+            break;
+        }
         int soffset = (*autos_it).first;
         t_uint64 curr = M[_addr+soffset];
         if (first)
@@ -829,7 +850,7 @@ int multics_stack_frame::_refresh(int first)
                 if (! vals[soffset].initialized)
                     found_uninit = 1;
                 else {
-                    out_msg("Source:                            %s = %lld (%012llo) -- initial value\n", (*autos_it).second.c_str(), curr, curr);
+                    log_msg(INFO_MSG, NULL, "Source:                            %s = %lld (%012llo) -- initial value\n", (*autos_it).second.c_str(), curr, curr);
                     log_any_io(0);      // Output of variables doesn't count towards requiring re-display of source
                 }
             }
@@ -890,7 +911,7 @@ static int push_frame(int segno, const seginfo& seg)
 ostringstream s;
 s << "Pushing new frame at depth ";
 s << multics_stack.size() << " for " << li.name << " with PR6 == " << seg_addr_t(stack_segno,stack_offset);
-    log_msg(NOTIFY_MSG, "STACK", "%s\n", s.str().c_str());
+    log_msg(INFO_MSG, "STACK", "%s\n", s.str().c_str());
     multics_stack.push_back(multics_stack_frame(stack_segno, stack_offset, *li.entry));
 
     return 0;
@@ -909,25 +930,33 @@ void show_variables()
 
 //=============================================================================
 
-static void check_autos(int segno)
+void check_autos(int segno)
 {
     // segno should be the current execution segment
+    // TODO: improve efficiency -- Maybe only check when about to display source change.  Maybe use memory-write range breakpoints.
+    const char *moi = "check_autos";
 
-    // log_msg(NOTIFY_MSG, "MAIN", "Entry %s has %d automatics.\n", where.entry, where.n_auto);
+    // log_msg(INFO_MSG, "MAIN", "Entry %s has %d automatics.\n", where.entry, where.n_auto);
     // int seginfo_automatic_list(int segno, int offset, int *count, automatic_t *list);
 
     // Since we've been called, we know that the current frame does have automatic variables...
 
     const seginfo& seg = segments(segno);
     if (seg.empty()) {
-        cerr << "Odd, segment " << oct << segno << " is empty." << simh_endl;
+        cerr << "check_autos: Odd, segment " << oct << segno << " is empty." << simh_endl;
         return;
     }
 
     // TODO: check source_changed re checking for frame change
 
     seg_addr_t ptr(AR_PR[6].PR.snr, AR_PR[6].wordno);   // TODO: add a constructor for AR_PR_t?
-// BUG: use rbegin, rend
+    if (multics_stack.size() > 20) {
+        log_msg(NOTIFY_MSG, "check_autos", "sanity check fails -- stack size...\n");
+        cancel_run(STOP_WARN);
+        return;
+    }
+#if 1
+    // Bug: use reverse iterator
     list<multics_stack_frame>::iterator stackp = find(multics_stack.begin(), multics_stack.end(), ptr);
     if (stackp == multics_stack.end()) {
         push_frame(segno, seg);
@@ -938,35 +967,68 @@ static void check_autos(int segno)
         multics_stack.erase(++stackp, multics_stack.end());
         stackp = -- multics_stack.end();
     }
+#else
+    list<multics_stack_frame>::reverse_iterator rstackp = find(multics_stack.rbegin(), multics_stack.rend(), ptr);
+    if (rstackp == multics_stack.rend()) {
+        push_frame(segno, seg);
+        return;
+    }
+    list<multics_stack_frame>::iterator stackp = rstackp.base();
+    if (stackp != -- multics_stack.end()) {
+        // Pop one or more frames
+        multics_stack.erase(++stackp, multics_stack.end());
+        stackp = -- multics_stack.end();
+    }
+#endif
 
     // Check values in saved frame versus the machine
     multics_stack_frame& msf = *stackp;
     int sp_addr = msf.addr();
     if (sp_addr == -1)
-        log_msg(NOTIFY_MSG, "STACK", "Internal error, line %d\n", __LINE__);
+        log_msg(INFO_MSG, "STACK", "Internal error, line %d\n", __LINE__);
     else {
         const entry_point& ep = msf.owner();
         const stack_frame* sfp = ep.stack();
+        if (sfp == NULL) {
+            log_msg(NOTIFY_MSG, "check_autos", "sanity check fails -- no stack for seg %o...\n", segno);
+            cancel_run(STOP_WARN);
+            return;
+        }
         int changed = 0;
+        unsigned sanity = 200;  // BUG
+        if (sfp->automatics.size() > sanity) {
+            log_msg(NOTIFY_MSG, "check_autos", "sanity check fails -- too many automatics...\n");
+            cancel_run(STOP_WARN);
+            return;
+        }
         for (map<int,string>::const_iterator autos_it = sfp->automatics.begin(); autos_it != sfp->automatics.end(); ++ autos_it) {
+            if (--sanity == 0) {
+                log_msg(NOTIFY_MSG, "show variables", "sanity check fails, too many variables..\n");
+                cancel_run(STOP_WARN);
+                break;
+            }
             int soffset = (*autos_it).first;
             if (msf.is_initialized(soffset)) {
                 t_uint64 old = msf[soffset];
                 t_uint64 curr = M[sp_addr + soffset];
                 if (old != curr) {
                     if (!changed && msf.owner().source && log_any_io(0)) {
-                        out_msg("Source: %s\n", msf.owner().source->fname.c_str());
+                        log_msg(INFO_MSG, NULL, "Source: %s\n", msf.owner().source->fname.c_str());
                         const source_line* lnp = msf.owner().source->get_line(PPR.IC); 
                         if (lnp)
-                            out_msg("Source:  %3o|%06o, line %5d: > %s\n", segno, PPR.IC, lnp->line_no, lnp->text.c_str());
+                            log_msg(INFO_MSG, NULL, "Source:  %3o|%06o, line %5d: > %s\n", segno, PPR.IC, lnp->line_no, lnp->text.c_str());
                     }
                     changed = 1;
-                    out_msg("Source:                            %s = %lld (%012llo)\n", (*autos_it).second.c_str(), curr, curr);
+                    log_msg(INFO_MSG, NULL, "Source:                            %s = %lld (%012llo)\n", (*autos_it).second.c_str(), curr, curr);
                 }
             }
         }
-        if (changed || ! msf.all_initialized())
+        if (changed || ! msf.all_initialized()) {
             msf.refresh();
+        }
         log_any_io(0);      // Output of variables doesn't count towards requiring re-display of source
     }
 }
+
+//=============================================================================
+

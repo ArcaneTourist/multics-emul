@@ -824,7 +824,7 @@ static void chars_to_words(int n, uint nbits, uint *offp, uint *bitnop)
 
     uint nchars = n % chars_per_word;
     if (nchars != 0) {
-        log_msg(NOTIFY_MSG, moi, "Reg mod for %d-bit data: Value %d isn't evenly divisible by %d; result will contain a bit offset.\n", nbits, n, chars_per_word);
+        log_msg(INFO_MSG, moi, "Reg mod for %d-bit data: Value %d isn't evenly divisible by %d; result will contain a bit offset.\n", nbits, n, chars_per_word);
         *bitnop += nchars * nbits;
         if (*bitnop > 36) {
             log_msg(WARN_MSG, "APU", "Reg mod for %d-bit data: Result is over 36 bits.  Wrapping.\n", nbits);

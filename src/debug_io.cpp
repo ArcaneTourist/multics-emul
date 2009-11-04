@@ -1,6 +1,6 @@
 /*
     debug_io.cpp -- Output and formatting functions related to the classes used to track and
-    display changes to multics internals.
+    display changes to multics internals.  Also includes general purpose C++ I/O code.
     Everything here is used for debug output, not for actual instruction execution.
 */
 
@@ -8,10 +8,33 @@ using namespace std;
 #include "seginfo.h"
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 // #include <string.h>
 // #include <list>
 // #include <map>
 // #include <vector>
+
+#include <fstream>
+#include <boost/iostreams/device/file.hpp>
+#include <boost/iostreams/stream.hpp>
+#include <boost/iostreams/device/file_descriptor.hpp>
+
+namespace bio = boost::iostreams;
+
+class fd_sink : public bio::stream_buffer<bio::file_descriptor_sink> {
+    // A derived class that will report what file descriptor it's tied to.
+private:
+    int _fd;
+public:
+    int fd() { return is_open() ? _fd : -1; }
+    fd_sink() :  bio::stream_buffer<bio::file_descriptor_sink> () { _fd = -1; }
+    fd_sink(int fdesc) :  bio::stream_buffer<bio::file_descriptor_sink> (fdesc) { _fd = fdesc; }
+};
+
+// bio::stream_buffer<bio::file_descriptor_sink> cdebug_buf;
+//fd_sink cdebug_buf;
+//ostream cdebug(&cdebug_buf);
+ostream cdebug(NULL);
 
 // ============================================================================
 
@@ -34,6 +57,18 @@ ostream& operator<<(ostream& out, const offset_t& o)
     out << oct << o.offset;
 
     return out;
+}
+
+// ============================================================================
+
+seg_addr_t::operator string() const
+{
+    char buf[60];
+    if (segno != -1)
+        sprintf(buf, "%03o|%06o", segno, int(offset));
+    else
+        sprintf(buf, "%08o", int(offset));
+    return string(buf);
 }
 
 // ============================================================================
@@ -244,3 +279,57 @@ ostream& seginfo::print(ostream& out, int indent) const
 
     return out;
 }
+
+// ============================================================================
+
+#if 0
+void setup_streams()
+    // Setup the C++ cdebug and clog streams to flow to the same places as sim_deb and the SIMH console.
+    // Flushing issues would mostly disappear if we had a class that took a FILE* rather than a descriptor.
+{
+    extern FILE *sim_deb;
+
+    // Make cdebug point to same descriptor as sim_deb
+    if (sim_deb == NULL) {
+        fd_sink* bufp = (fd_sink*) cdebug.rdbuf();
+        if (bufp != NULL && bufp->is_open()) {
+            //fd_sink* newbufp = new fd_sink();
+            //cdebug.rdbuf(newbufp);
+            cdebug.rdbuf(NULL);
+            delete bufp;
+        }
+    } else {
+        fflush(sim_deb);
+        int sim_fd = fileno(sim_deb);
+        fd_sink* bufp = (fd_sink*) cdebug.rdbuf();
+        if (bufp == NULL || bufp->fd() != sim_fd) {
+            fd_sink* newbufp = new fd_sink(sim_fd);
+            cdebug.rdbuf(newbufp);
+            if (bufp != NULL)
+                delete bufp;
+        }
+    }
+
+    // Make clog point to the same descriptor as sim_log if sim_log is open
+    extern FILE *sim_log;
+    if (sim_log == NULL) {
+        fd_sink* bufp = (fd_sink*) clog.rdbuf();
+        if (bufp == NULL || bufp->fd() != 1) {
+            fd_sink* newbufp = new fd_sink(1);
+            clog.rdbuf(newbufp);
+            if (bufp != NULL)
+                delete bufp;
+        }
+    } else {
+        fflush(sim_log);
+        int sim_fd = fileno(sim_log);
+        fd_sink* bufp = (fd_sink*) clog.rdbuf();
+        if (bufp == NULL || bufp->fd() != sim_fd) {
+            fd_sink* newbufp = new fd_sink(sim_fd);
+            clog.rdbuf(newbufp);
+            if (bufp != NULL)
+                delete bufp;
+        }
+    }
+}
+#endif

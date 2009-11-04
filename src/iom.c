@@ -261,7 +261,7 @@ static int handle_pcw(int chan, int addr)
     log_msg(DEBUG_MSG, moi, "PCW for chan %d, addr 0%o\n", chan, addr);
     pcw_t pcw;
     parse_pcw(&pcw, addr, 1);
-    log_msg(NOTIFY_MSG, moi, "PCW is: %s\n", pcw2text(&pcw));
+    log_msg(INFO_MSG, moi, "PCW is: %s\n", pcw2text(&pcw));
 
     if (pcw.chan < 0 || pcw.chan >= 040) {  // 040 == 32 decimal
         iom_fault(chan, __LINE__, 1, iom_ill_chan); // BUG: what about ill-ser-req? -- is iom issuing a pcw or is channel requesting svc?
@@ -352,9 +352,9 @@ while (ret == 0 && control != 0) {
                     if (chan_status.major == 0) {
                         if (need_indir_svc) {
                             if (control == 2)
-                                log_msg(DEBUG_MSG, moi, "Need indirect data service after I-DCW with i/o transfer.  Leaving control at 2 since list service seems to have the same effect.\n");
+                                log_msg(WARN_MSG, moi, "Need indirect data service after I-DCW with i/o transfer.  Leaving control at 2 since list service seems to have the same effect.\n");
                             else {
-                                log_msg(DEBUG_MSG, moi, "Need indirect data service after I-DCW with i/o transfer.   Changing control from %d to 2 to force list service (which seems to have the same effect).\n",  control);
+                                log_msg(WARN_MSG, moi, "Need indirect data service after I-DCW with i/o transfer.   Changing control from %d to 2 to force list service (which seems to have the same effect).\n",  control);
                                 control = 2;
                             }
                         }
@@ -496,7 +496,7 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
         if (lpw.ae) {
             int sz = lpw.size;
             if (lpw.size == 0) {
-                log_msg(NOTIFY_MSG, "IOM::list-sevice", "LPW size is zero\n");
+                log_msg(INFO_MSG, "IOM::list-sevice", "LPW size is zero; interpreting as 4096\n");
                 sz = 010000;    // 4096
             }
             if (addr >= sz)     // BUG: was >
@@ -793,7 +793,7 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
         if (--tally <= 0)
             break;
     }
-    log_msg(DEBUG_MSG, "IOM::DDCW", "Last I/O Request was to addr 0%o; tally now %d\n", daddr, tally);
+    log_msg(DEBUG_MSG, "IOM::DDCW", "Last I/O Request was to/from addr 0%o; tally now %d\n", daddr, tally);
     // set control ala PCW as method to indicate terminate or proceed
     if (type == 0)
         *control = 0;
@@ -870,6 +870,14 @@ static int do_dcw(int chan, int addr, int *controlp, int *need_indir_svc)
 {
     dcw_t dcw;
     log_msg(DEBUG_MSG, "IOM::dcw", "chan %d, addr 0%o\n", chan, addr);
+    if (M[addr] == 0) {
+        log_msg(ERR_MSG, "IOM::dcw", "DCW of all zeros is legal but useless (unless you want to dump first 4K of memory).\n");
+        log_msg(ERR_MSG, "IOM::dcw", "Disallowing legal but useless all zeros DCW at address %012llo.\n", addr);
+        cancel_run(STOP_BUG);
+        return 1;
+    }
+        
+    // if zero ...
     parse_dcw(&dcw, addr);
     if (dcw.type == idcw) {
         // instr dcw

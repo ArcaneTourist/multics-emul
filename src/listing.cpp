@@ -101,6 +101,7 @@ extern "C" int cmd_load_listing(int32 arg, char *buf)
     // BUG: we require the user to tell us the relocation info -- fixed?
     source_file& src = seginfo_add_source_file(segno, s, offset);
 
+    out_msg("Loading PL/1 compiler listing, %s\n", s);
     int ret = listing_parse(f, src);
     if (fclose(f) != 0) {
         perror(s);
@@ -321,6 +322,67 @@ int listing_parse(FILE *f, source_file &src)
                 }
             }
         }
+
+        // TODO: Use a single state variable
+        // TODO: Generalize the line scanning code
+
+#if 0
+        // Look for declarations -- unfinished code to pick up type info for automatics and/or handle based and external statics
+        int doing_dcl_stmt = alm_lineno == 5;
+        if (!doing_dcl_stmt) {
+            doing_dcl_stmt = str_pmatch(lbufp, "NAMES DECLARED BY DECLARE STATEMENT") == 0;
+        } else {
+            const char *section = "dcl stmt";
+            seen_explicit_dcl = str_pmatch(lbufp, "NAMES DECLARED BY EXPLICIT CONTEXT") == 0 ||
+                str_pmatch(lbufp, "NAME DECLARED BY EXPLICIT CONTEXT") == 0;
+            if (seen_explicit_dcl) {
+                doing_dcl_stmt = 0;
+                continue;
+            }
+            if (strstr(lbufp, "NAMES DECLARED BY") != NULL) {
+                doing_dcl_stmt = 0;
+                continue;
+            }
+            if (strstr(lbufp, "NAME DECLARED BY") != NULL) {
+                doing_dcl_stmt = 0;
+                continue;
+            }
+            if (str_pmatch(lbufp, "STORAGE REQUIREMENTS FOR THIS PROGRAM") == 0) {
+                doing_dcl_stmt = 0;
+                continue;
+            }
+            if (strspn(lbufp, " \t\f") > 80)
+                continue;   // continuation line
+            // First pull off the name
+            const char *s = lbufp + strspn(lbufp, " \t");
+            int l = strcspn(s, " \t");
+            char dcl_name[sizeof(lbuf)];
+            strncpy(dcl_name, s, l);
+            dcl_name[l] = 0;
+            s += l;
+            s += strspn(s, " \t");
+            // Check next token to see if it's an optional location
+            int have_dcl_loc = 0;
+            unsigned int dcl_loc;
+            if (strspn(s, "01234567") == 6) {
+                if (sscanf(s, "%o", &dcl_loc) != 1) {
+                    fprintf(stderr, "%s: Found garbled entry at input line %d (no location): %s.\n", section, nlines, lbufp);
+                    errno = EINVAL;
+                    ret = -1;
+                    continue;
+                }
+                s += 6;
+                s += strspn(s, " \t");
+                have_dcl_loc = 1;
+            } else if (strspn(s, "01234567") != 0) {
+                // based info of form # or #(#)
+            } else {
+                have_dcl_loc = 0;
+            }
+            // next word is one of: parameter, automatic, constant, based, "external static"
+            // following tokens include: structure, pointer, fixed bin(#,#), char(#), bit(#)
+        }
+#endif
 
         // Look for entry point declarations
         if (!seen_explicit_dcl) {

@@ -4,19 +4,22 @@ operating system.
 This is pre-alpha.   The emulator does not yet boot Multics.  There is no
 support for disk drives yet.  It can read an on-disk version of a real boot
 tape and partially process it.  Console output is implemented but not console
-input.  At this time the emulator seems to correctly process about 200,000
-instructions before hitting a bug.  The following console output is produced
-when the appropriate boot tape is used:
+input.  At this time the emulator seems to correctly process just under two
+million instructions before hitting a bug.  The following console output is
+produced when the appropriate boot tape is used:
 	bootload_0: Booting system MR12.5 generated 01/11/93 0832.3 mst Mon.
 	bootload_0: Unexpected control word on tape.
 	bootload_0: Enter tape drive number for memory dump: 
 
-The only reason for publishing at this time is to allow other people to
-critique and collaborate on the code.
+Actually, the bug related to the last two lines above has since been fixed.
+
+This is alpha and doesn't finish booting.  The only reason for publishing at
+this time is to allow other people to critique and collaborate on the code.
 
 This emulator is designed for use with SIMH simulator system.
 See http://simh.trailing-edge.com/.
 
-See README.source for details of the source code.
+See README.source for details of the source code and README.running for
+tips on how to actually do test runs.
 
 

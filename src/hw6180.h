@@ -68,7 +68,8 @@ enum sim_stops {
     STOP_IBKPT          // breakpoint
 };
 enum dev_type { DEV_NONE, DEV_TAPE, DEV_CON, DEV_DISK };    // devices connected to an IOM
-enum log_level { DEBUG_MSG, NOTIFY_MSG, WARN_MSG, ERR_MSG };
+// Levels debug and info may be routed via debug logging; debug may be suppressed by turning off debug
+enum log_level { DEBUG_MSG, INFO_MSG, NOTIFY_MSG, WARN_MSG, ERR_MSG };
 
 
 // ============================================================================
@@ -198,14 +199,14 @@ typedef struct {
 // Note that the eight registers are also known by the
 // names: ap, ab, bp, bb, lp, lb, sp, sb
 typedef struct {
-    int wordno; // offset from segment base;
+    int wordno; // offset from segment base; 18 bits
     struct {
         int snr;    // segment #, 15 bits
         uint rnr;   // effective ring number
         uint bitno; // index into wordno
     } PR;   // located in APU in physical hardware
     struct {
-        uint charno;    // index into wordno
+        uint charno;    // index into wordno (2 bits)
         uint bitno; // index into charno
     } AR;   // located in Decimal Unit in physical hardware
 } AR_PR_t;
@@ -580,7 +581,7 @@ static inline t_uint64 setbits36(t_uint64 x, int p, unsigned n, t_uint64 val)
         // 2 => ..11
     int shift = 36 - p - n;
     if (shift < 0 || shift > 35) {
-        log_msg(ERR_MSG, "setbit36", "bad args\n");
+        log_msg(ERR_MSG, "setbits36", "bad arg, shift = %d\n", shift);
         return 0;
     }
     mask <<= (unsigned) shift;  // shift 1s to proper position; result 0*1{n}0*
@@ -653,6 +654,8 @@ extern void check_seg_debug(void);
 extern void ic_history_init(void);
 extern void ic_history_add(void);
 extern void show_location(int show_source_lines);
+
+extern void setup_streams(void);
 
 extern void cancel_run(enum sim_stops reason);
 extern void fault_gen(enum faults);
@@ -754,6 +757,10 @@ extern int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 
 #ifdef __cplusplus
 }
+
+// C++ only features
+// extern ostream cdebug;
+
 #endif
 
 #include "opcodes.h"

@@ -67,6 +67,7 @@ static int op_mvne(const instr_t* ip);
 static int op_dvf(const instr_t* ip);
 static int op_ufa(const instr_t* ip);
 static int op_ufm(const instr_t* ip);
+static void long_right_shift(t_uint64 *hip, t_uint64 *lop, int n, int is_logical);
 
 static uint saved_tro;
 
@@ -210,6 +211,7 @@ static int do_an_op(instr_t *ip)
             case opcode1_a6bd + 0:
             case opcode1_a9bd + 0:
             case opcode1_abd + 0:
+            case opcode1_s9bd + 0:
                 addr_mod_eis_addr_reg(ip);
                 break;
             case opcode1_epp1 + 0:
@@ -300,7 +302,7 @@ static int do_an_op(instr_t *ip)
                     //reg_X[n] = (word >> 18) & MASK18; // reg is 18 bits
                     //reg_X[n] = (((~ reg_X[n]) & MASK18) + 1) & MASK18;
                     reg_X[n] = negate18(word >> 18);
-                    log_msg(NOTIFY_MSG, "OPU::instr::lcx*", "X[%d]: Loaded complement of %#llo => %#llo(%d); result is %#o(%d).\n", n, word, word >> 18, sign18(word >>18), reg_X[n], sign18(reg_X[n]));
+                    log_msg(INFO_MSG, "OPU::instr::lcx*", "X[%d]: Loaded complement of %#llo => %#llo(%d); result is %#o(%d).\n", n, word, word >> 18, sign18(word >>18), reg_X[n], sign18(reg_X[n]));
                     IR.zero = reg_X[n] == 0;
                     IR.neg = bit18_is_neg(reg_X[n]);
                 }
@@ -679,7 +681,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 reg_A = asv;
                 reg_Q = qsv;
                 if (n >= 72) {
-                    log_msg(NOTIFY_MSG, "OPU::lls", "Shift of %d bits.\n", n);
+                    log_msg(INFO_MSG, "OPU::lls", "Shift of %d bits.\n", n);
                     reg_A = 0;
                     reg_Q = 0;
                 } else if (n != 0) {
@@ -693,9 +695,9 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                     }
                 }
                 if (reg_A != a || reg_Q != q) {
-                    log_msg(NOTIFY_MSG, "OPU::lls", "BUG Fix: Shift of %012llo,%012llo by %d bits\n", asv, qsv, n);
-                    log_msg(NOTIFY_MSG, "OPU::lls", "Prior result was: %012llo,%012llo\n", a, q);
-                    log_msg(NOTIFY_MSG, "OPU::lls", "Fixed result is:  %012llo,%012llo\n", reg_A, reg_Q);
+                    log_msg(INFO_MSG, "OPU::lls", "BUG Fix: Shift of %012llo,%012llo by %d bits\n", asv, qsv, n);
+                    log_msg(INFO_MSG, "OPU::lls", "Prior result was: %012llo,%012llo\n", a, q);
+                    log_msg(INFO_MSG, "OPU::lls", "Fixed result is:  %012llo,%012llo\n", reg_A, reg_Q);
                 }
 
                 IR.zero = reg_A == 0 && reg_Q == 0;
@@ -707,60 +709,18 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
             case opcode0_lrl: {     // long right logical
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 int init_neg = bit36_is_neg(reg_A);
-                log_msg(NOTIFY_MSG, "OPU::lrl", "Debug: Shift AQ %012llo,%012llo of %d bits.\n", reg_A, reg_Q, n);  // BUG: temp
-                if (n >= 72) {
-                    log_msg(NOTIFY_MSG, "OPU::lrl", "Shift of %d bits.\n", n);
-                    if (init_neg) {
-                        reg_A = MASK36;
-                        reg_Q = MASK36;
-                    } else {
-                        reg_A = 0;
-                        reg_Q = 0;
-                    }
-                } else if (n != 0) {
-                    if (n <= 36) {
-                        reg_Q >>= n;
-                        reg_Q = setbits36(reg_Q, 0, n, reg_A);
-                    } else {
-                        reg_Q = reg_A >> (n - 36);
-                    }
-                    reg_A >>= n;
-                }
-                IR.zero = reg_A == 0 && reg_Q == 0;
+                long_right_shift(&reg_A, &reg_Q, n, 1);
+                IR.zero= reg_A == 0 && reg_Q == 0;
                 IR.neg = init_neg;
-                log_msg(NOTIFY_MSG, "OPU::lrl", "Debug: Result:  %012llo,%012llo\n", reg_A, reg_Q); // BUG: temp
                 return 0;
             }
 
             case opcode0_lrs: {     // Long right shift
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 int init_neg = bit36_is_neg(reg_A);
-                // log_msg(NOTIFY_MSG, "OPU::lrs", "Debug: Shift AQ %012llo,%012llo of %d bits.\n", reg_A, reg_Q, n);
-                if (n >= 72) {
-                    log_msg(NOTIFY_MSG, "OPU::lrs", "Shift of %d bits.\n", n);
-                    if (init_neg) {
-                        reg_A = MASK36;
-                        reg_Q = MASK36;
-                    } else {
-                        reg_A = 0;
-                        reg_Q = 0;
-                    }
-                } else if (n != 0) {
-                    if (n <= 36) {
-                        reg_Q >>= n;
-                        reg_Q = setbits36(reg_Q, 0, n, reg_A);
-                    } else {
-                        reg_Q = reg_A >> (n - 36);
-                        if (init_neg && n != 36)
-                            reg_Q = setbits36(reg_Q, 0, n-36, ~0);
-                    }
-                    reg_A >>= n;
-                    if (init_neg)
-                        reg_A = setbits36(reg_A, 0, min(n, 36), ~0);
-                }
-                IR.zero = reg_A == 0 && reg_Q == 0;
+                long_right_shift(&reg_A, &reg_Q, n, 0);
+                IR.zero= reg_A == 0 && reg_Q == 0;
                 IR.neg = init_neg;
-                // log_msg(NOTIFY_MSG, "OPU::lrs", "Debug: Result:  %012llo,%012llo\n", reg_A, reg_Q);
                 return 0;
             }
 
@@ -1725,9 +1685,22 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 return ret;
             }
 
-            // dfst unimplemented
+            case opcode0_dfst: {    // Double-Precision Floating Store
+                t_uint64 word1 = setbits36(0, 0, 8, reg_E);
+                word1 = setbits36(word1, 8, 28, getbits36(reg_A, 0, 28));
+                t_uint64 word2 = setbits36(0, 0, 8, getbits36(reg_A, 28, 8));
+                word2 = setbits36(word2, 8, 28, getbits36(reg_A, 0, 28));
+                return store_pair(TPR.CA, word1, word2);
+            }
+
             // dfstr unimplemented
-            // fst unimplemented
+
+            case opcode0_fst: { // Floating Store
+                t_uint64 word = setbits36(0, 0, 8, reg_E);
+                word = setbits36(word, 8, 28, getbits36(reg_A, 0, 28));
+                return store_word(TPR.CA, word);
+            }
+
             // fstr unimplemented
             // dfad unimplemented
             // dufa unimplemented
@@ -1772,9 +1745,79 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
             // dfrd unimplemented -- double precision floating round
             // frd unimplemented -- floating round
             // dfcmg unimplemented -- double precision floating compare magnitude
-            // dfcmp unimplemented -- double precision floating compare
+
+            case opcode0_dfcmp: {       // double precision floating compare
+                t_uint64 word0, word1;
+                int ret;
+                if (fetch_pair(TPR.CA, &word0, &word1) != 0)
+                    return 1;
+                log_msg(NOTIFY_MSG, "OPU::dfcmp", "AQ = { %012llo, %012llo }, exp %d\n", reg_A, reg_Q, reg_E);
+                log_msg(NOTIFY_MSG, "OPU::dfcmp", "op = { %012llo, %012llo }\n", word0, word1);
+                uint8 op_exp = getbits36(word0, 0, 8);
+                t_uint64 op_mant_hi = getbits36(word0, 8, 28);  // 36-8=28 bits
+                op_mant_hi <<= 8;
+                op_mant_hi |= getbits36(word1, 0, 8);
+                t_uint64 op_mant_lo = getbits36(word1, 8, 28) << 8;
+                log_msg(NOTIFY_MSG, "OPU::dfcmp", "op:  { %012llo, %012llo }, exp %d\n", op_mant_hi, op_mant_lo, op_exp);
+                t_uint64 reg_a = reg_A;
+                t_uint64 reg_q = getbits36(reg_Q, 0, 28) << 8;  // need 64bit version of aq
+
+                extern double multics_to_double(t_uint64 xhi, t_uint64 xlo, int show, int is_signed);
+                double op_val = multics_to_double(op_mant_hi, op_mant_lo, 0, 1);
+                double aq_val72 = multics_to_double(reg_A, reg_Q, 0, 1);
+                double aq_val64 = multics_to_double(reg_a, reg_q, 0, 1);
+                log_msg(NOTIFY_MSG, "OPU::dfcmp", "Comparing %f*2^%d aka %f*2^%d to %f*2^%d\n", aq_val72, reg_E, aq_val64, reg_E, op_val, op_exp);
+
+                // treat fractions as sign-magnitude for shifting
+                int op_neg = bit36_is_neg(op_mant_hi);
+                if (op_neg)
+                    negate72(&op_mant_hi, &op_mant_lo);
+                int aq_neg = bit36_is_neg(reg_a);
+                if (aq_neg)
+                    negate72(&reg_a, &reg_q);
+            
+                // 72-bit right shift
+                int exp;    // debug
+                if ((int8) op_exp < (int8) reg_E) {
+                    // operand has the smaller exponent
+                    exp = (int8) reg_E;
+                    int n = (int8) reg_E - (int8) op_exp;
+                    long_right_shift(&op_mant_hi, &op_mant_lo, n, 1);
+                } else {
+                    // AQ has the smaller exponent
+                    exp = (int8) op_exp;
+                    int n = (int8) op_exp - (int8) reg_E;
+                    long_right_shift(&reg_a, &reg_q, n, 1);
+                }
+                if (op_mant_hi == 0 && op_mant_lo == 0)
+                    op_neg = 0;
+                if (reg_a == 0 && reg_q == 0)
+                    aq_neg = 0;
+                IR.zero = aq_neg == op_neg && reg_a == op_mant_hi && reg_q == op_mant_lo;
+                if (IR.zero)
+                    IR.neg = 0;
+                else if (aq_neg && ! op_neg)
+                    IR.neg = 1;
+                else if (!aq_neg && op_neg)
+                    IR.neg = 0;
+                else if (!aq_neg && ! op_neg)
+                    IR.neg = reg_a < op_mant_hi || (reg_a == op_mant_hi && reg_q < op_mant_lo);
+                else
+                    IR.neg = reg_a > op_mant_hi || (reg_a == op_mant_hi && reg_q > op_mant_lo);
+
+                op_val = multics_to_double(op_mant_hi, op_mant_lo, 0, 1);
+                aq_val64 = multics_to_double(reg_a, reg_q, 0, 1);
+                if (IR.zero)
+                    log_msg(NOTIFY_MSG, "OPU::dfcmp", "Result: equal -- exp is %d; mantissa %f verus %f\n", exp, aq_val64, op_val);
+                else
+                    log_msg(NOTIFY_MSG, "OPU::dfcmp", "Result: Neg=%d -- exp is %d; mantissa %f verus %f\n", IR.neg, exp, aq_val64, op_val);
+                log_msg(NOTIFY_MSG, "OPU::dfcmp", "Auto breakpoint\n");
+                cancel_run(STOP_IBKPT);
+                return 0;
+            }
+            
             // fcmg unimplemented -- floating compare magnitude
-            // cmp unimplemented -- floating compare
+            // fcmp unimplemented -- floating compare
             
             // ade unimplemented
             // fszn unimplemented
@@ -2191,7 +2234,8 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 int n = (op & 03) + ((op >= opcode0_adwp4) ? 4 : 0);
                 if (bug_n != n) {
                     char opname[30];
-                    log_msg(NOTIFY_MSG, "OPU::opcode::adwpx(%d)", "Bug fix: prior version would have updated PR[%d] instead of PR[%d].\n", bug_n, n);
+                    sprintf(opname, "OPU::opcode::%s", op0text[op]);
+                    log_msg(INFO_MSG, opname, "Bug fix: prior version would have updated PR[%d] instead of PR[%d].\n", bug_n, n);
                 }
                 int ret;
                 t_uint64 word;
@@ -2217,11 +2261,14 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                     return 1;
                 }
                 int ret = scu_get_calendar(TPR.CA);
+#if 0
+                // AL-39 was just trying to say that the clock is 52 bits...
                 if (ret == 0) {
                     reg_A = setbits36(reg_A, 0, 20, 0);
                 }
-                log_msg(WARN_MSG, "OPU::rccl", "Untested; A = %012llo from %012llo\n", reg_A, calendar_a);
-                cancel_run(STOP_WARN);
+#endif
+                log_msg(NOTIFY_MSG, "OPU::rccl", "Untested; A = %012llo from %012llo\n", reg_A, calendar_a);
+                //cancel_run(STOP_WARN);
                 return ret;
             }
 
@@ -2335,7 +2382,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 // Setting cu.rpt will cause the instruction to be executed
                 // until the termination is met.
                 // See cpu.c for the rest of the handling.
-                log_msg(NOTIFY_MSG, "OPU", "RPT instruction found\n");
+                log_msg(INFO_MSG, "OPU", "RPT instruction found\n");
                 return 0;
             }
 
@@ -2363,7 +2410,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 if ((ret = fetch_op(ip, &word)) == 0) {
                     BAR.base = getbits36(word, 0, 9);
                     BAR.bound = getbits36(word, 9, 9);
-                    log_msg(NOTIFY_MSG, "OPU::lbar", "BAR: base = %09o => %018o, bound = %09o => %018o\n",
+                    log_msg(INFO_MSG, "OPU::lbar", "BAR: base = %09o => %018o, bound = %09o => %018o\n",
                         BAR.base, BAR.base << 9, BAR.bound, BAR.bound << 9);
                 }
                 return ret;
@@ -2430,7 +2477,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 cpup->DSBR.bound = getbits36(word2, 37-36, 14);
                 cpup->DSBR.u = getbits36(word2, 55-36, 1);
                 cpup->DSBR.stack = getbits36(word2, 60-36, 12);
-                log_msg(NOTIFY_MSG, "OPU::ldbr", "DSBR: addr=%#o, bound=%#o(%u), u=%d, stack=%#o\n",
+                log_msg(INFO_MSG, "OPU::ldbr", "DSBR: addr=%#o, bound=%#o(%u), u=%d, stack=%#o\n",
                     cpup->DSBR.addr, cpup->DSBR.bound, cpup->DSBR.bound, cpup->DSBR.u, cpup->DSBR.stack);
                 return 0;
             }
@@ -2501,10 +2548,10 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 int enable = TPR.CA & 3;        // Bits 16 and 17 of 18-bit CA
                 if (enable == 2) {
                     cu.SD_ON = 1;
-                    log_msg(NOTIFY_MSG, "OPU::cams", "Enabling SDWAM\n");
+                    log_msg(INFO_MSG, "OPU::cams", "Enabling SDWAM\n");
                 } else if (enable == 1) {
                     cu.SD_ON = 0;
-                    log_msg(NOTIFY_MSG, "OPU::cams", "Disabling SDWAM\n");
+                    log_msg(INFO_MSG, "OPU::cams", "Disabling SDWAM\n");
                 } else if (enable == 0) {
                     log_msg(DEBUG_MSG, "OPU::cams", "Neither enable nor disable requested\n");
                 } else {
@@ -2549,11 +2596,11 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 t_bool show_q = 1;
                 if ((TPR.CA & ~7) == ea) {
                     ; // SC mode reg
-                    log_msg(NOTIFY_MSG, "OPU::opcode::rscr", "mode register selected\n");
+                    log_msg(INFO_MSG, "OPU::opcode::rscr", "mode register selected\n");
                     ret = scu_get_mode_register(TPR.CA);
                 } else if ((TPR.CA & ~7) == ea + 0010) {
                     ; // SC config reg
-                    log_msg(NOTIFY_MSG, "OPU::opcode::rscr", "sys config switches selected\n");
+                    log_msg(INFO_MSG, "OPU::opcode::rscr", "sys config switches selected\n");
                     ret = scu_get_config_switches(TPR.CA);
                 } else if ((TPR.CA & ~7) == ea + 0020) {
                     log_msg(DEBUG_MSG, "OPU::opcode::rscr", "port zero selected\n");
@@ -2625,14 +2672,14 @@ extern cpu_ports_t cpu_ports;
                                 byte |= 7;          // BUG: assume max memory size
                             reg_A = (reg_A << 9) | byte;
                         }
-                        log_msg(NOTIFY_MSG, "OPU::opcode::rsw", "function xxx%o sets A=%012llo.\n", low, reg_A);
+                        log_msg(INFO_MSG, "OPU::opcode::rsw", "function xxx%o sets A=%012llo.\n", low, reg_A);
                         break;
                     case 2:
 #if 0
                         // from start_cpu.pl1
                         reg_A = setbits36(0, 4, 2, 0);  // 0 for L68 or DPS
                         reg_A = setbits36(reg_A, 6, 7, switches.FLT_BASE);  // 7 MSB bits of 12bit addr
-                        log_msg(NOTIFY_MSG, "OPU::opcode::rsw", "Fault base in bits 6..13 is %#o=>%#o\n", switches.FLT_BASE, switches.FLT_BASE << 5);
+                        log_msg(INFO_MSG, "OPU::opcode::rsw", "Fault base in bits 6..13 is %#o=>%#o\n", switches.FLT_BASE, switches.FLT_BASE << 5);
                         reg_A = setbits36(reg_A, 19, 1, 0); // 0 for L68
                         reg_A = setbits36(reg_A, 27, 1, 0); // cache
                         reg_A = setbits36(reg_A, 28, 1, 0); // gcos mode extended memory option off
@@ -2645,11 +2692,11 @@ extern cpu_ports_t cpu_ports;
                         reg_A = setbits36(reg_A, 23, 11, 016);  // 1110b=>L68 re start_cpu.pl1
                         reg_A = setbits36(reg_A, 34, 2, switches.cpu_num);
 #endif
-                        log_msg(NOTIFY_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012llo.\n", low, reg_A);
+                        log_msg(INFO_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012llo.\n", low, reg_A);
                         break;
                     case 4:
                         reg_A = 0;  // see AL-39, configuration switch data; 0 is full memory with 4 word interlace
-                        log_msg(NOTIFY_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012llo.\n", low, reg_A);
+                        log_msg(INFO_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012llo.\n", low, reg_A);
                         break;
                     default:
                         log_msg(WARN_MSG, "OPU::opcode::rsw", "function xxx%o not implemented.\n", low);
@@ -2942,10 +2989,10 @@ extern cpu_ports_t cpu_ports;
                 int enable = TPR.CA & 3;        // Bits 16 and 17 of 18-bit CA
                 if (enable == 2) {
                     cu.PT_ON = 1;
-                    log_msg(NOTIFY_MSG, "OPU::camp", "Enabling PTWAM\n");
+                    log_msg(INFO_MSG, "OPU::camp", "Enabling PTWAM\n");
                 } else if (enable == 1) {
                     cu.PT_ON = 0;
-                    log_msg(NOTIFY_MSG, "OPU::camp", "Disabling PTWAM\n");
+                    log_msg(INFO_MSG, "OPU::camp", "Disabling PTWAM\n");
                 } else if (enable == 0) {
                     // Don't change enabled/disabled status
                 } else {
@@ -3004,7 +3051,11 @@ extern cpu_ports_t cpu_ports;
             // awd unimplemented
             // s4bd unimplemented
             // s6bd unimplemented
-            // s9bd unimplemented
+
+            case opcode1_s9bd:
+                log_msg(DEBUG_MSG, "OPU::s9bd", "APU does our work for us\n");
+                return 0;
+
             // sbd unimplemented
             // swd unimplemented
 
@@ -3014,9 +3065,9 @@ extern cpu_ports_t cpu_ports;
             // opcode1_scd unimplemented -- scan characters double
             // opcode1_scdr unimplemented -- scan characters double in reverse
             case opcode1_scm: { // scan with mask
-                // extern DEVICE cpu_dev; ++opt_debug; ++ cpu_dev.dctrl;
+                extern DEVICE cpu_dev; ++opt_debug; ++ cpu_dev.dctrl;
                 int ret = op_scm(ip);
-                //--opt_debug; --cpu_dev.dctrl;
+                --opt_debug; --cpu_dev.dctrl;
                 return ret;
             }
             
@@ -3253,7 +3304,10 @@ int add72(t_uint64 ahi, t_uint64 alow, t_uint64* dest1, t_uint64* dest2, int is_
     uint sign2 = *dest1 >> 35;
 
     t_uint64 lo = alow + *dest2;
-    int lo_carry = (lo >> 35);
+    int lo_carry = (lo >> 36);
+    if (!lo_carry && (lo>>35) != 0) {
+        log_msg(NOTIFY_MSG, "OPU::add72", "Bug fix: prior version would have incorrectly carried into hi bits\n");
+    }
     lo &= MASK36;
 
     t_uint64 hi = ahi + *dest1;
@@ -3903,10 +3957,8 @@ static int op_btd(const instr_t* ip)
     word2 = setbits36(word2, 21, 2, desc1.ta);  // force (ignored) type of mf2 to match mf1
     parse_eis_num_desc(word2, &mf2, &desc2);
 
-    // log_msg(NOTIFY_MSG, moi, "MF1: %s\n", mf2text(&ip->mods.mf1));
-    log_msg(NOTIFY_MSG, moi, "desc1: %s\n", eis_num_desc_to_text(&ip->mods.mf1, &desc1));
-    // log_msg(NOTIFY_MSG, moi, "MF2: %s\n", mf2text(&mf2));
-    log_msg(NOTIFY_MSG, moi, "desc2: %s\n", eis_num_desc_to_text(&mf2, &desc2));
+    log_msg(INFO_MSG, moi, "desc1: %s\n", eis_num_desc_to_text(&ip->mods.mf1, &desc1));
+    log_msg(INFO_MSG, moi, "desc2: %s\n", eis_num_desc_to_text(&mf2, &desc2));
 
     if (desc2.num.scaling_factor != 0) {
         log_msg(ERR_MSG, moi, "Descriptor 2 scaling factor must be zero\n");
@@ -3944,14 +3996,14 @@ static int op_btd(const instr_t* ip)
         src_lo |= nib;
     }
     src_lo &= MASK36;
-    log_msg(NOTIFY_MSG, moi, "source binary is { %#llo, %012llo}\n", src_hi, src_lo);
+    log_msg(INFO_MSG, moi, "source binary is { %#llo, %012llo}\n", src_hi, src_lo);
 
     int negate = 0;
     if (desc2.num.s != 03)
         if (bit36_is_neg(src_hi)) {
             negate72(&src_hi, &src_lo);
             negate = 1;
-            log_msg(NOTIFY_MSG, moi, "source binary is negative, negating yields { %#llo, %012llo}\n", src_hi, src_lo);
+            log_msg(INFO_MSG, moi, "source binary is negative, negating yields { %#llo, %012llo}\n", src_hi, src_lo);
         }
         
     // We'll initially compute the results into rhi and rlo via 4bit nibbles.  We only need just over 72 bits;
@@ -4003,7 +4055,7 @@ static int op_btd(const instr_t* ip)
         if (((rhi >> (i*4)) & 0xf) != 0)
             ndigits = 64/4 + i + 1;
         
-    log_msg(NOTIFY_MSG, moi, "intermediate result is %d digits: { %x, %llx}\n", ndigits, rhi, rlo); // hex format displays bcd as decimal
+    log_msg(NOTIFY_MSG, moi, "intermediate result is %d digits: { hi=%x, low=%llx}\n", ndigits, rhi, rlo);  // hex format displays bcd as decimal
 
     IR.zero = rlo == 0 && rhi == 0;
     IR.neg = negate;
@@ -4169,7 +4221,7 @@ static int op_scm(const instr_t* ip)
     uint mf2bits = ip->addr & MASKBITS(7);
     eis_mf_t mf2;
     (void) parse_mf(mf2bits, &mf2);
-    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+    //log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
 
     t_uint64 word1, word2, word3;
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, &word3) != 0)
@@ -4179,9 +4231,8 @@ static int op_scm(const instr_t* ip)
     parse_eis_alpha_desc(word1, &ip->mods.mf1, &desc1);
     eis_alpha_desc_t desc2;
     word2 = setbits36(word2, 21, 2, desc1.ta);  // force (ignored) type of desc2 to match desc1
-    //word2 = setbits36(word2, 24, 12, 1);  // force (ignored) count of desc2 to one
     parse_eis_alpha_desc(word2, &mf2, &desc2);
-    desc2.n = 1;
+    desc2.n = 1;                                // force (ignored) count of desc2 to one
     // eis_mf_t mf3 = { 0, 0, 1, 0};
     uint y3;
     if (get_eis_indir_addr(word3, &y3) != 0)
@@ -4198,9 +4249,14 @@ static int op_scm(const instr_t* ip)
     int ret = 0;
 
     uint test_nib;
-    log_msg(DEBUG_MSG, moi, "Getting test char\n");
-    if (get_eis_an(&mf2, &desc2, &test_nib) != 0) {
-        return 1;
+    if (mf2.id == 0 && mf2.reg == 3) {  // 3 is ",du"
+        test_nib = getbits36(word2, 0, 9);
+        log_msg(DEBUG_MSG, moi, "test char specified via special-case ',du'\n");
+    } else {
+        log_msg(DEBUG_MSG, moi, "Getting test char\n");
+        if (get_eis_an(&mf2, &desc2, &test_nib) != 0) {
+            return 1;
+        }
     }
     if (isprint(test_nib))
         log_msg(DEBUG_MSG, moi, "test char: %03o '%c'\n", test_nib, test_nib);
@@ -4245,9 +4301,9 @@ static int op_csl(const instr_t* ip)
     uint mf2bits = ip->addr & MASKBITS(7);
     eis_mf_t mf2;
     (void) parse_mf(mf2bits, &mf2);
-    log_msg(NOTIFY_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+    log_msg(INFO_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
     char *ops[16] = { "clear", "and", "x&!y", "x", "!x&y", "y", "xor", "or", "!or", "!xor", "!y", "!x&y", "!x", "x|!y", "nand", "set" };
-    log_msg(NOTIFY_MSG, moi, "bool oper: %#o =b%d%d%d%d (%s), fill: %d\n", bolr, (bolr>>3)&1, (bolr>>2)&1, (bolr>>1)&1, bolr&1, ops[bolr], fill);
+    log_msg(INFO_MSG, moi, "bool oper: %#o =b%d%d%d%d (%s), fill: %d\n", bolr, (bolr>>3)&1, (bolr>>2)&1, (bolr>>1)&1, bolr&1, ops[bolr], fill);
 
     t_uint64 word1, word2;
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
@@ -4260,8 +4316,8 @@ static int op_csl(const instr_t* ip)
     eis_bit_desc_t desc2;
     parse_eis_bit_desc(word2, &mf2, &desc2);
 
-    log_msg(NOTIFY_MSG, moi, "desc1: %s\n", eis_bit_desc_to_text(&ip->mods.mf1, &desc1));
-    log_msg(NOTIFY_MSG, moi, "desc2: %s\n", eis_bit_desc_to_text(&mf2, &desc2));
+    log_msg(INFO_MSG, moi, "desc1: %s\n", eis_bit_desc_to_text(&ip->mods.mf1, &desc1));
+    log_msg(INFO_MSG, moi, "desc2: %s\n", eis_bit_desc_to_text(&mf2, &desc2));
 
     int ret = 0;
 
@@ -4280,7 +4336,7 @@ static int op_csl(const instr_t* ip)
             break;
         }
         flag_t r = (bolr >> (3 - ((bit1 << 1) | bit2))) & 1;    // like indexing into a truth table
-        log_msg(NOTIFY_MSG, moi, "nbits1=%d, nbits2=%d; %d op(%#o) %d => %d\n", desc1.n, desc2.n, bit1, bolr, bit2, r);
+        log_msg(INFO_MSG, moi, "nbits1=%d, nbits2=%d; %d op(%#o) %d => %d\n", desc1.n, desc2.n, bit1, bolr, bit2, r);
         if (r == bit2) {
             // Do an ordinary "get" to advance the ptr
             if (get_eis_bit(&mf2, &desc2, &bit2) != 0) {
@@ -4376,13 +4432,13 @@ static int mop_init(const eis_mf_t *mfp, eis_num_desc_t *descp, int is_decimal)
                     }
                     mopinfo.sign = src;
                     mopinfo.flags.sn = mopinfo.sign == 015;     // on if negative
-                    log_msg(NOTIFY_MSG, moi, "Got leading sign %02o (%d)\n", mopinfo.sign, mopinfo.flags.sn);
+                    log_msg(INFO_MSG, moi, "Got leading sign %02o (%d)\n", mopinfo.sign, mopinfo.flags.sn);
                     continue;
                 }
             } else if (descp->n == 1 && descp->nbits == 4 && descp->num.s == 0  ) {
                 // these second-to-last 4 bits are 1/2 of an 8 bit exponent
                 mopinfo.exp = src << 4;
-                log_msg(NOTIFY_MSG, moi, "Got exp hi four bits %02o\n", src);
+                log_msg(INFO_MSG, moi, "Got exp hi four bits %02o\n", src);
                 continue;
             } else if (descp->n == 0) {
                 // last nibble
@@ -4390,10 +4446,10 @@ static int mop_init(const eis_mf_t *mfp, eis_num_desc_t *descp, int is_decimal)
                     // decimal with exponent
                     if (descp->nbits == 4) {
                         mopinfo.exp |= src; // these last 4 bits are the 2nd 1/2 of an 8 bit exponent
-                        log_msg(NOTIFY_MSG, moi, "Got exp low four bits %02o\n", src);
+                        log_msg(INFO_MSG, moi, "Got exp low four bits %02o\n", src);
                     } else {
                         mopinfo.exp = src & 0377;   // 8 bit exponent; AL-39 doesn't mention validation
-                        log_msg(NOTIFY_MSG, moi, "Got exp %02o -> %02o\n", src, src & 0377);
+                        log_msg(INFO_MSG, moi, "Got exp %02o -> %02o\n", src, src & 0377);
                     }
                     continue;
                 }
@@ -4406,7 +4462,7 @@ static int mop_init(const eis_mf_t *mfp, eis_num_desc_t *descp, int is_decimal)
                     }
                     mopinfo.sign = src;
                     mopinfo.flags.sn = mopinfo.sign == 015;     // on if negative
-                    log_msg(NOTIFY_MSG, moi, "Got trailing sign %02o (%d)\n", mopinfo.sign, mopinfo.flags.sn);
+                    log_msg(INFO_MSG, moi, "Got trailing sign %02o (%d)\n", mopinfo.sign, mopinfo.flags.sn);
                     continue;
                 }
             }
@@ -4415,12 +4471,12 @@ static int mop_init(const eis_mf_t *mfp, eis_num_desc_t *descp, int is_decimal)
         }
     }
 
-    log_msg(NOTIFY_MSG, moi, "N = %d, flags.sn = %d, sign=%#o, exp=%#o(%d)\n", mopinfo.n_src, mopinfo.flags.sn, mopinfo.sign, mopinfo.exp, mopinfo.exp);
+    log_msg(INFO_MSG, moi, "N = %d, flags.sn = %d, sign=%#o, exp=%#o(%d)\n", mopinfo.n_src, mopinfo.flags.sn, mopinfo.sign, mopinfo.exp, mopinfo.exp);
     {
     char msg[4*64+1];
     for (int i = 0; i < mopinfo.n_src; ++i) 
         sprintf(msg + i * 4, " %02o,", mopinfo.src[i] & 0xf);
-    log_msg(NOTIFY_MSG, moi, "SRC = {%s }\n", msg);
+    log_msg(INFO_MSG, moi, "SRC = {%s }\n", msg);
     }
 
     return 0;
@@ -4452,9 +4508,9 @@ static int mop_put(const eis_mf_t *dest_mfp, eis_alpha_desc_t *dest_descp, int i
         }
 
         if (040 <= byte && byte <= 0176)
-            log_msg(NOTIFY_MSG, moi, "Writing %03o '%c'\n", byte, byte);
+            log_msg(INFO_MSG, moi, "Writing %03o '%c'\n", byte, byte);
         else
-            log_msg(NOTIFY_MSG, moi, "Writing %03o\n", byte);
+            log_msg(INFO_MSG, moi, "Writing %03o\n", byte);
         if (put_eis_an(dest_mfp, dest_descp, byte) != 0)
             return 1;
     } else {
@@ -4481,10 +4537,10 @@ static int mop_exec_single(const eis_mf_t *mop_mfp, eis_alpha_desc_t *mop_descp,
     uint mop = (mop_byte >> 4) & 0177;
     uint mop_if = mop_byte & 017;
 
-    log_msg(ERR_MSG, moi, "Got MOP {%03o,%02o} %#o\n", mop, mop_if, mop_byte);
+    log_msg(INFO_MSG, moi, "Got MOP {%03o,%02o} %#o\n", mop, mop_if, mop_byte);
     switch(mop) {
         case 002:   // enf -- End floating suppression
-            log_msg(NOTIFY_MSG, moi, "ENF\n");
+            log_msg(INFO_MSG, moi, "ENF\n");
             if ((mop_if & 010) == 0) {          // bit zero
                 if (!mopinfo.flags.es) {
                     unsigned sign = mopinfo.eit[(mopinfo.flags.sn) ? 4 : 3];
@@ -4510,7 +4566,7 @@ static int mop_exec_single(const eis_mf_t *mop_mfp, eis_alpha_desc_t *mop_descp,
         case 001:   // insm -- insert table entry one multiple
             if (mop_if == 0)
                 mop_if = 16;
-            log_msg(NOTIFY_MSG, moi, "INSM %#o(%dd) for EIT[1]==%#o\n", mop_if, mop_if, mopinfo.eit[1]);
+            log_msg(INFO_MSG, moi, "INSM %#o(%dd) for EIT[1]==%#o\n", mop_if, mop_if, mopinfo.eit[1]);
             for (int i = 0; i < mop_if; ++i) {
                 if (mop_put(dest_mfp, dest_descp, is_decimal, mopinfo.eit[1]) != 0)
                     return 1;
@@ -4520,7 +4576,7 @@ static int mop_exec_single(const eis_mf_t *mop_mfp, eis_alpha_desc_t *mop_descp,
             break;
         case 020: { // lte -- load table entry
             if (mop_if == 0 || mop_if > 8) {
-                log_msg(NOTIFY_MSG, moi, "LTE with bad IF %d\n", mop_if);
+                log_msg(INFO_MSG, moi, "LTE with bad IF %d\n", mop_if);
                 fault_gen(illproc_fault);
                 return 1;
             }
@@ -4530,13 +4586,13 @@ static int mop_exec_single(const eis_mf_t *mop_mfp, eis_alpha_desc_t *mop_descp,
                 return 1;
             }
             mopinfo.eit[mop_if] = m;
-            log_msg(NOTIFY_MSG, moi, "LTE: Setting EIT[%d] to %02o\n", mop_if, m);
+            log_msg(INFO_MSG, moi, "LTE: Setting EIT[%d] to %02o\n", mop_if, m);
             break;
         }
         case 006:   // mfls -- move with floating sign insertion
             if (mop_if == 0)
                 mop_if = 16;
-            log_msg(NOTIFY_MSG, moi, "MFLS %#o(%dd)\n", mop_if, mop_if);
+            log_msg(INFO_MSG, moi, "MFLS %#o(%dd)\n", mop_if, mop_if);
             for (int i = 0; i < mop_if; ++i) {
                 if (mopinfo.n_src == 0) {
                     log_msg(ERR_MSG, moi, "Source exhausted\n");
@@ -4568,7 +4624,7 @@ static int mop_exec_single(const eis_mf_t *mop_mfp, eis_alpha_desc_t *mop_descp,
         case 015:   // mvc -- move source chars
             if (mop_if == 0)
                 mop_if = 16;
-            log_msg(NOTIFY_MSG, moi, "MVC %#o(%dd)\n", mop_if, mop_if);
+            log_msg(INFO_MSG, moi, "MVC %#o(%dd)\n", mop_if, mop_if);
             for (int i = 0; i < mop_if; ++i) {
                 if (mopinfo.n_src == 0) {
                     log_msg(ERR_MSG, moi, "Source exhausted\n");
@@ -4596,29 +4652,29 @@ static int mop_exec_single(const eis_mf_t *mop_mfp, eis_alpha_desc_t *mop_descp,
                 fault_gen(illproc_fault);
                 return 1;
             }
-            log_msg(NOTIFY_MSG, moi, "INSB: ES==%d, IF==%dd\n", mopinfo.flags.es, mop_if);
+            log_msg(INFO_MSG, moi, "INSB: ES==%d, IF==%dd\n", mopinfo.flags.es, mop_if);
             unsigned byte;
             if (! mopinfo.flags.es) {
                 byte = mopinfo.eit[1];
                 if (mop_if == 0) {
-                    log_msg(NOTIFY_MSG, moi, "INSB: write EIT[one]==%#o and skip next MOP.\n", mopinfo.eit[1]);
+                    log_msg(INFO_MSG, moi, "INSB: write EIT[one]==%#o and skip next MOP.\n", mopinfo.eit[1]);
                     unsigned ignored;
                     if (get_eis_an(mop_mfp, mop_descp, &ignored) != 0) {
                         fault_gen(illproc_fault);
                         return 1;
                     }
                 } else
-                    log_msg(NOTIFY_MSG, moi, "INSB: write EIT[one]==%#o.\n", mopinfo.eit[1]);
+                    log_msg(INFO_MSG, moi, "INSB: write EIT[one]==%#o.\n", mopinfo.eit[1]);
             } else {
                 if (mop_if != 0) {
                     byte = mopinfo.eit[mop_if];
-                    log_msg(NOTIFY_MSG, moi, "INSB: write EIT[IF==%d] which is %#o\n", mop_if, byte);
+                    log_msg(INFO_MSG, moi, "INSB: write EIT[IF==%d] which is %#o\n", mop_if, byte);
                 } else {
                     if (get_eis_an(mop_mfp, mop_descp, &byte) != 0) {
                         fault_gen(illproc_fault);
                         return 1;
                     }
-                    log_msg(NOTIFY_MSG, moi, "INSB: read next mop (%#o) and write it.\n", byte);
+                    log_msg(INFO_MSG, moi, "INSB: read next mop (%#o) and write it.\n", byte);
                 }
             }
             if (mop_put(dest_mfp, dest_descp, is_decimal, byte) != 0)
@@ -4685,10 +4741,10 @@ static int op_mvne(const instr_t* ip)
 
     eis_mf_t mf2;
     (void) parse_mf(mf2bits, &mf2);
-    log_msg(NOTIFY_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
     eis_mf_t mf3;
     (void) parse_mf(mf3bits, &mf3);
-    log_msg(NOTIFY_MSG, moi, "mf3 = %s\n", mf2text(&mf3));
+    log_msg(DEBUG_MSG, moi, "mf3 = %s\n", mf2text(&mf3));
 
     t_uint64 word1, word2, word3;
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, &mf3, &word3) != 0)
@@ -4712,9 +4768,9 @@ static int op_mvne(const instr_t* ip)
     if (desc3.n >= 64)
         desc3.n %= 64;
 
-    log_msg(NOTIFY_MSG, moi, "desc1: %s\n", eis_num_desc_to_text(&ip->mods.mf1, &desc1));
-    log_msg(NOTIFY_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
-    log_msg(NOTIFY_MSG, moi, "desc3: %s\n", eis_alpha_desc_to_text(&mf3, &desc3));
+    log_msg(INFO_MSG, moi, "desc1: %s\n", eis_num_desc_to_text(&ip->mods.mf1, &desc1));
+    log_msg(INFO_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
+    log_msg(INFO_MSG, moi, "desc3: %s\n", eis_alpha_desc_to_text(&mf3, &desc3));
 
     int ret = 0;
     // Initialize the EIT and load the source bytes
@@ -4772,4 +4828,36 @@ static int op_ufm(const instr_t* ip)
     return ret;
 }
 
+// ============================================================================
 
+static void long_right_shift(t_uint64 *hip, t_uint64 *lop, int n, int is_logical)
+{
+    const char *moi = (is_logical) ? "OPU::lrl" : "OPU::lrs";
+
+    int init_neg = bit36_is_neg(*hip);
+    log_msg(INFO_MSG, moi, "Debug: Shift %012llo,%012llo of %d bits.\n", *hip, *lop, n);    // BUG: temp
+
+    if (n >= 72) {
+        log_msg(NOTIFY_MSG, moi, "Shift of %d bits.\n", n);
+        if (!is_logical && init_neg) {
+            *hip = MASK36;
+            *lop = MASK36;
+        } else {
+            *hip = 0;
+            *lop = 0;
+        }
+    } else if (n != 0) {
+        if (n <= 36) {
+            *lop >>= n;
+            *lop = setbits36(*lop, 0, n, *hip);
+        } else {
+            *lop = *hip >> (n - 36);
+            if (!is_logical && init_neg && n != 36)
+                *lop = setbits36(*lop, 0, n-36, ~0);
+        }
+        *hip >>= n;
+        if (!is_logical && init_neg)
+            *hip = setbits36(*hip, 0, min(n, 36), ~0);
+    }
+    log_msg(INFO_MSG, moi, "Debug: Result:  %012llo,%012llo\n", *hip, *lop);    // BUG: temp
+}

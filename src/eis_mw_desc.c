@@ -41,6 +41,15 @@ static int32 sign15(uint x)
         return x;
 }
 
+static inline int32 negate18(t_uint64 x)
+{
+    // overflow not detected
+    if (bit18_is_neg(x))
+        return ((~x & MASK18) + 1) & MASK18;    // todo: only one mask needed?
+    else
+        return (- x) & MASK18;
+}
+
 //=============================================================================
 
 
@@ -75,19 +84,19 @@ int get_eis_indir_addr(t_uint64 word, uint* addrp)
         uint pr = y >> 15;
         int32 offset = y & MASKBITS(15);
         int32 soffset = sign15(offset);
-        log_msg(NOTIFY_MSG, moi, "Indir word %012llo: pr=%#o, offset=%#o(%d); REG(Td)=%#o\n", word, pr, offset, soffset, td); 
+        log_msg(INFO_MSG, moi, "Indir word %012llo: pr=%#o, offset=%#o(%d); REG(Td)=%#o\n", word, pr, offset, soffset, td); 
     } else {
         // use 18 bit addr
-        log_msg(NOTIFY_MSG, moi, "Indir word %012llo: addr=%#o(%d); REG(Td)=%#o\n", word, y, sign18(y), td); 
+        log_msg(INFO_MSG, moi, "Indir word %012llo: addr=%#o(%d); REG(Td)=%#o\n", word, y, sign18(y), td); 
     }
 
     uint bitno;
     uint minaddr, maxaddr;  // unneeded
 
-    log_msg(NOTIFY_MSG, moi, "Calling get-address.\n");
+    log_msg(INFO_MSG, moi, "Calling get-address.\n");
     int ret = get_address(y, indir, 0, td, 36, addrp, &bitno, &minaddr, &maxaddr);
     if (ret == 0) {
-        log_msg(NOTIFY_MSG, moi, "Resulting addr is %#o\n", *addrp);
+        log_msg(INFO_MSG, moi, "Resulting addr is %#o\n", *addrp);
         if (bitno != 0) {
             log_msg(ERR_MSG, moi, "Resulting addr (%#o) includes a bit offset of %#o(%+d) that cannot be returned.\n", *addrp, bitno, bitno);
             cancel_run(STOP_BUG);
@@ -96,7 +105,7 @@ int get_eis_indir_addr(t_uint64 word, uint* addrp)
             // cancel_run(STOP_IBKPT);
         }
     } else {
-        log_msg(NOTIFY_MSG, moi, "Call to get-address(y=%#o,ar=%d,reg=%d,nbits=36,...) returns non-zero.\n", y, indir, td);
+        log_msg(INFO_MSG, moi, "Call to get-address(y=%#o,ar=%d,reg=%d,nbits=36,...) returns non-zero.\n", y, indir, td);
         cancel_run(STOP_WARN);
     }
     return ret;
@@ -276,7 +285,7 @@ int n = descp->n;
         //log_msg(WARN_MSG, "APU", "parse_eis_alpha_desc: desc: n orig %#o; After mod %#o => %#o\n", n, descp->n, descp->n & MASKBITS(12));
         //descp->n &= MASKBITS(12);
         // BUG FIX follows
-        log_msg(NOTIFY_MSG, "APU", "parse_eis_alpha_desc: desc: n orig %#o; After mod %#o; prior bug would have truncated to %#o\n", n, descp->n, descp->n & MASKBITS(12));
+        log_msg(INFO_MSG, "APU", "parse_eis_alpha_desc: desc: n orig %#o; After mod %#o; prior bug would have truncated to %#o\n", n, descp->n, descp->n & MASKBITS(12));
     }
 #endif
     if (descp->nbits == 9) {
@@ -508,7 +517,7 @@ static int get_eis_an_base(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
         int curr_bit = descp->curr.bitpos;
         descp->curr.bitpos += descp->cn * descp->nbits + descp->bitno;
         if (descp->curr.bitpos >= 36) {
-            log_msg(NOTIFY_MSG, moi, "Too many offset bits for a single word.  Base address is %#o with bit offset %d; CN offset is %d (%d bits).  Advancing to next word.\n", descp->area.addr, descp->area.bitpos, descp->cn, descp->cn * descp->nbits);
+            log_msg(INFO_MSG, moi, "Too many offset bits for a single word.  Base address is %#o with bit offset %d; CN offset is %d (%d bits).  Advancing to next word.\n", descp->area.addr, descp->area.bitpos, descp->cn, descp->cn * descp->nbits);
             // cancel_run(STOP_WARN);
             descp->curr.addr += descp->curr.bitpos / 36;
             if (descp->curr.addr > descp->area.max_addr) {
@@ -974,6 +983,7 @@ int addr_mod_eis_addr_reg(instr_t *ip)
         case opcode1_a6bd: nbits = 6; break;
         case opcode1_a4bd: nbits = 4; break;
         case opcode1_abd: nbits = 1; break;
+        case opcode1_s9bd: nbits = 9; break;
         default:
             log_msg(ERR_MSG, "APU", "internal error: opcode %03o(%d) not implemented for EIS address register arithmetic\n", op, bit27);
             cancel_run(STOP_BUG);
@@ -997,8 +1007,14 @@ int addr_mod_eis_addr_reg(instr_t *ip)
 
 
     switch (op) {
-        case opcode1_a9bd: {
-            int oops = sign18(TPR.CA) < 0;
+        case opcode1_s9bd:
+            cancel_run(STOP_IBKPT);
+        case opcode1_a9bd:
+        {
+            log_msg(INFO_MSG, "APU::eis-addr-reg", "%s\n", (sign == 1) ? "a9bd" : "s9bd");
+            int sign = (op == opcode1_a9bd) ? 1 : -1;
+            int oops = sign18(TPR.CA) < 0 || sign < 0;
+    oops = 1;
             // if (oops)
             {
                 if (oops) ++ opt_debug;
@@ -1008,11 +1024,19 @@ int addr_mod_eis_addr_reg(instr_t *ip)
                     ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
             }
             if (a == 0) {
-                AR_PR[ar].wordno = soffset + sign18(TPR.CA) / 4;
-                AR_PR[ar].AR.charno = TPR.CA % 4;
+                int wordno = soffset + sign18(TPR.CA) / 4;
+                unsigned charno = TPR.CA % 4;
+                AR_PR[ar].wordno = (sign == 1)? wordno : negate18(wordno);
+                AR_PR[ar].AR.charno = (sign == 1) ? charno : ((- charno) &  3);
             } else {
-                AR_PR[ar].wordno += soffset + (sign18(TPR.CA) + AR_PR[ar].AR.charno) / 4;
-                AR_PR[ar].AR.charno = (TPR.CA + AR_PR[ar].AR.charno) % 4;
+                if (sign == 1) {
+                    AR_PR[ar].wordno += soffset + (sign18(TPR.CA) + AR_PR[ar].AR.charno) / 4;
+                    AR_PR[ar].AR.charno = (AR_PR[ar].AR.charno + TPR.CA) % 4;
+                } else {
+                    AR_PR[ar].wordno -= soffset;
+                    AR_PR[ar].wordno += (AR_PR[ar].AR.charno - sign18(TPR.CA)) / 4;
+                    AR_PR[ar].AR.charno = ((int) AR_PR[ar].AR.charno - TPR.CA % 4) & 3;
+                }
             }
             AR_PR[ar].AR.bitno = 0;
             // handle anomaly (AL39 AR description)

@@ -383,12 +383,19 @@ extern UNIT cpu_unit;   // BUG: put in hdr
 extern char* print_instr(t_uint64 word); // BUG: put in hdr
 extern char* print_lpw(t_addr addr);    // BUG: put in hdr
 
+static where_t prior_dump;
+
 t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
 {
     if (uptr == &cpu_unit) {
         // memory request -- print memory specified by SIMH absolute M[addr].  However
         // note that parse_addr() was called by SIMH to determine the absolute addr.
-
+        static int need_init = 1;
+        if (need_init) {
+            need_init = 0;
+            prior_dump.line_no = 0;
+            prior_dump.line = NULL;
+        }
         /* First print matching source line if we're dumping instructions */
         if (sw & SWMASK('M')) {
             // M -> instr -- print matching source line if we have one
@@ -396,9 +403,11 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
             if (offset >= 0) {
                 where_t where;
                 seginfo_find_all(last_parsed_seg, offset, &where);
-                if (where.line != NULL) {
+                if (where.line != NULL && prior_dump.line_no != where.line_no && prior_dump.line != where.line) {
                     fprintf(ofile, "Line %d: %s\n", where.line_no, where.line);
                     fprintf(ofile, "%06o:\t", addr);
+                    prior_dump.line_no = where.line_no;
+                    prior_dump.line = where.line;
                 }
             }
         }
@@ -621,6 +630,8 @@ out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
         cptr += 2;
 #endif
     
+    prior_dump.line = NULL;
+
     uint addr;
     if (force_abs || (seg == -1 && get_addr_mode() == ABSOLUTE_mode)) {
         *optr = cptr;

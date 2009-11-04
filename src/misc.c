@@ -80,6 +80,7 @@ void log_msg(enum log_level level, const char* who, const char* format, ...)
     va_start(ap, format);
 #if 0
     char *tag = (level == DEBUG_MSG) ? "Debug" :
+        (level == INFO_MSG) ? "Info" :
         (level == NOTIFY_MSG) ? "Note" :
         (level == WARN_MSG) ? "WARNING" :
         (level == ERR_MSG) ? "ERROR" :
@@ -157,7 +158,8 @@ void out_msg(const char* format, ...)
 
     FILE *stream = (sim_log != NULL) ? sim_log : stdout;
     crnl_out(stream, format, ap);
-    fflush(stream);
+    if (sim_deb != NULL)
+        crnl_out(sim_deb, format, ap);
 }
 
 #if 0
@@ -183,8 +185,8 @@ static void msg(enum log_level level, const char *who, const char* format, va_li
 
     streams[con] = (sim_log != NULL) ? sim_log : stdout;
     streams[dbg] = sim_deb;
-    if (level == DEBUG_MSG) {
-        // Debug messags go to a debug log if one exists, otherwise to
+    if (level == DEBUG_MSG || level == INFO_MSG) {
+        // Debug and info messages go to a debug log if one exists, otherwise to
         //  the console
         if (streams[dbg] != NULL)
             streams[con] = NULL;
@@ -195,8 +197,10 @@ static void msg(enum log_level level, const char *who, const char* format, va_li
     }
 
     char *tag = (level == DEBUG_MSG) ? "Debug" :
-        (level == WARN_MSG) ? "WARNING" :
+        (level == INFO_MSG) ? "Info" :
         (level == NOTIFY_MSG) ? "Note" :
+        (level == WARN_MSG) ? "WARNING" :
+        (level == WARN_MSG) ? "WARNING" :
         (level == ERR_MSG) ? "ERROR" :
             "???MESSAGE";
 
@@ -909,3 +913,11 @@ static int seginfo_show_all(int seg, int first)
 }
 
 // ============================================================================
+
+void flush_logs()
+{
+    if (sim_log != NULL)
+        fflush(sim_log);
+    if (sim_deb != NULL)
+        fflush(sim_deb);
+}

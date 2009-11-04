@@ -95,7 +95,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
                     return 1;
                 }
             }
-            log_msg(NOTIFY_MSG, "MT::iom_cmd", "Read %d bytes from simulated tape\n", (int) tbc);
+            log_msg(INFO_MSG, "MT::iom_cmd", "Read %d bytes from simulated tape\n", (int) tbc);
             tape_statep->bitsp = bitstm_new(tape_statep->bufp, tbc);
             *majorp = 0;
             *subp = 0;

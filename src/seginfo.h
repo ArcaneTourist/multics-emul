@@ -74,6 +74,7 @@ public:
     offset_t offset;
     int operator == (const seg_addr_t& x) const { return x.segno == segno && x.offset == offset; }
     friend ostream& operator<<(ostream& out, const seg_addr_t& sa);
+    operator string(void) const;
 };
 
 #if 0

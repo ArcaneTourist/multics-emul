@@ -412,11 +412,12 @@ int scu_get_calendar(t_uint64 addr)
     }
     t_uint64 seconds = tv.tv_sec;
     seconds += (t_uint64) 69 * 365 * 24 * 3600; // returned time is since epoch of 00:00:00 UTC, Jan 1, 1970
-    t_uint64 now = seconds * 1000 + tv.tv_usec;
+    t_uint64 now = seconds * 1000000 + tv.tv_usec;
     reg_Q = now & MASK36;
     reg_A = (now >> 36) & MASK36;
     calendar_a = reg_A; // only for debugging
     calendar_q = reg_Q; // only for debugging
+    // log_msg(INFO_MSG, "calendar", "UNIX time %ld; multics time {%012llo, %012llo}\n", tv.tv_sec, reg_A, reg_Q);
 
     return 0;
 }
@@ -445,15 +446,26 @@ int scu_cioc(t_uint64 addr)
     //  CPU target: connect fault
     
     // todo: check if enabled & not masked
+
+    static int n_cioc = 0;
     {
-        static int n_cioc = 0;
+        //static int n_cioc = 0;
         log_msg(NOTIFY_MSG, "SCU::cioc", "CIOC # %d\n", ++ n_cioc);
+        if (n_cioc >= 306) {        // BUG: temp hack to increase debug level
+            extern DEVICE cpu_dev;
+            ++ opt_debug; ++ cpu_dev.dctrl;
+        }
     }
     log_msg(DEBUG_MSG, "SCU::cioc", "Connect sent to port %d => %d\n", port, scu.ports[port]);
 
     // we only have one IOM, so signal it
     // todo: sanity check port connections
     iom_interrupt();
+
+    if (n_cioc >= 306) {
+        extern DEVICE cpu_dev;
+        -- opt_debug; -- cpu_dev.dctrl;
+    }
 
     return 0;
 }

@@ -72,6 +72,7 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
 
     switch(dev_cmd) {
         case 0: {               // CMD 00 Request status
+            log_msg(NOTIFY_MSG, "CON::iom_cmd", "Status request cmd received");
             *majorp = 0;
             *subp = 0;
             return 0;
@@ -91,6 +92,7 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             *subp = 0;
             return 0;
         case 040:               // Reset
+            log_msg(NOTIFY_MSG, "CON::iom_cmd", "Reset cmd received");
             con_statep->io_mode = no_mode;
             *majorp = 0;
             *subp = 0;
@@ -98,6 +100,7 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
         case 051:               // Write Alert -- Ring Bell
             // AN70-1 says only console channels respond to this command
             out_msg("CONSOLE: ALERT\n");
+            log_msg(NOTIFY_MSG, "CON::iom_cmd", "Write Alert cmd received\n");
             *majorp = 0;
             *subp = 0;
             return 0;
@@ -164,7 +167,7 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
                     err |= sim_putchar(c);
                 } else {
                     sprintf(buf+strlen(buf), "\\%03o", c);
-#if 0
+#if 1
     // BUG: not sending control junk
                     if (c != 0)
                         err |= sim_putchar(c);
