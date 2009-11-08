@@ -158,7 +158,6 @@ typedef struct {
         flag_t ic_odd;  // executing odd pair?
         flag_t poa;     // prepare operand address
         uint opcode;    // currently executing opcode
-    addr_modes_t orig_mode_BUG;
     struct {
         flag_t  fhld;   // An access violation or directed fault is waiting.   AL39 mentions that the APU has this flag, but not where scpr stores it
     } apu_state;
@@ -429,7 +428,7 @@ typedef struct {
 typedef struct {
     // Switches on the Processor's maintenance and configuration panels
     int FLT_BASE;   // normally 7 MSB of 12bit fault base addr
-    int cpu_num;
+    int cpu_num;    // zero for CPU 'A', one for 'B' etc.
 } switches_t;
 
 typedef struct {
@@ -629,6 +628,9 @@ extern flag_t fault_gen_no_fault;
 
 extern t_uint64 calendar_a;
 extern t_uint64 calendar_q;
+extern t_uint64 total_cycles;
+extern t_uint64 total_instr;
+extern t_uint64 total_msec;
 
 // ============================================================================
 // === Functions
@@ -653,7 +655,7 @@ extern void state_dump_changes(void);
 extern void check_seg_debug(void);
 extern void ic_history_init(void);
 extern void ic_history_add(void);
-extern void show_location(int show_source_lines);
+extern int show_location(int show_source_lines);
 
 extern void setup_streams(void);
 

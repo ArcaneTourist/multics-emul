@@ -229,6 +229,9 @@ extern int bootimage_loaded;    // only relevent for the boot CPU ?
 extern uint32 sim_emax;
 t_uint64 calendar_a;
 t_uint64 calendar_q;
+t_uint64 total_cycles;
+t_uint64 total_instr;
+t_uint64 total_msec;
 
 //-----------------------------------------------------------------------------
 // ***  Constants, unchanging lookup tables, etc
@@ -405,6 +408,10 @@ if(0) {
     calendar_a = 0xdeadbeef;
     calendar_q = 0xdeadbeef;
 
+    total_cycles = 0;
+    total_instr = 0;
+    total_msec = 0;
+
     return 0;
 }
 
@@ -493,8 +500,16 @@ ninstr = 0;
         //
 
         const int show_source_lines = 1;
-        if (opt_debug || show_source_lines)
-            show_location(show_source_lines);
+        int known_loc = 0;
+        uint saved_seg;
+        int saved_IC;
+        int saved_cycle;
+        if (opt_debug || show_source_lines) {
+            known_loc = show_location(show_source_lines) == 0;
+            saved_seg = PPR.PSR;
+            saved_IC = PPR.IC;
+            saved_cycle = cpu.cycle;
+        }
 
         //
         // Execute instructions (or fault or whatever)
@@ -502,10 +517,14 @@ ninstr = 0;
 
         reason = control_unit();
 
-        if (opt_debug || show_source_lines) {
-            log_ignore_ic_change();
-            show_variables();
-            log_notice_ic_change();
+        if (saved_cycle != FETCH_cycle) {
+            if (!known_loc)
+                known_loc = cpu.trgo;
+            if (/*known_loc && */ (opt_debug || show_source_lines)) {
+                log_ignore_ic_change();
+                show_variables(saved_seg, saved_IC);
+                log_notice_ic_change();
+            }
         }
 
         //
@@ -533,6 +552,9 @@ ninstr = 0;
     }
 
     uint32 delta = sim_os_msec() - start;
+    total_cycles += ncycles;
+    total_msec += delta;
+    total_instr += ninstr;
     //if (delta > 2000)
     if (delta > 200)
         log_msg(INFO_MSG, "CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
@@ -1380,12 +1402,6 @@ int fetch_word(uint addr, t_uint64 *wordp)
     // Returns non-zero if a fault in groups 1-6 is detected
 
     addr_modes_t mode = get_addr_mode();
-#if 0
-if (mode != cpu.orig_mode_BUG) {
-log_msg(WARN_MSG, "CU::fetch", "Using mode %d not %d\n", cpu.orig_mode_BUG, mode);
-mode = cpu.orig_mode_BUG;
-}
-#endif
 
     if (mode == APPEND_mode) {
         return fetch_appended(addr, wordp);
@@ -1469,12 +1485,6 @@ int store_word(uint addr, t_uint64 word)
     // Returns non-zero if a fault in groups 1-6 is detected
 
     addr_modes_t mode = get_addr_mode();
-#if 0
-if (mode != cpu.orig_mode_BUG){
-log_msg(WARN_MSG, "CU::store", "Using mode %d not %d\n", cpu.orig_mode_BUG, mode);
-mode = cpu.orig_mode_BUG;
-}
-#endif
 
     if (mode == APPEND_mode) {
         return store_appended(addr, word);

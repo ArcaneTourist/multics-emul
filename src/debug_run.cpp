@@ -9,10 +9,6 @@
 using namespace std;
 #include <iostream>
 #include <iomanip>
-// #include <string.h>
-// #include <list>
-// #include <map>
-// #include <vector>
 #include <ostream>
 #include <stdexcept>
 #include <sstream>
@@ -24,8 +20,6 @@ using namespace std;
 
 #include "hw6180.h"
 #include "seginfo.h"
-// #include "sim_tape.h"
-// #include "bits.h"
 
 // BUG: The following externs are hacks
 extern t_uint64 M[];    /* memory */    // BUG: hack
@@ -57,7 +51,7 @@ static int seg_debug_init_done = 0;
 
 static int stack_trace(void);
 static void print_src_loc(const char *prefix, addr_modes_t addr_mode, int segno, int ic, const instr_t* instrp);
-void check_autos(int segno);
+void check_autos(int segno, int ic);
 
 //=============================================================================
 
@@ -205,10 +199,6 @@ void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic)
         sprintf(icbuf, "%06o", ic);
     else if (addr_mode == BAR_mode)
         sprintf(icbuf, "BAR %o|%06o", seg, ic);
-#if 1
-    else if (addr_mode != APPEND_mode)
-        sprintf(icbuf, "??%o??|%06o", seg, ic);
-#endif
     else
         sprintf(icbuf, "%o|%06o", seg, ic);
 }
@@ -306,9 +296,10 @@ static void print_src_loc(const char *prefix, addr_modes_t addr_mode, int segno,
 //=============================================================================
 
 
-void show_location(int show_source_lines)
+int show_location(int show_source_lines)
     // Called by the CPU.   Decides if we need to display the current IC and/or
     // source filenames, entry point names, etc.   If so, displays them.
+    // Returns zero if any entrypoint of source line info was displayed
 {
 
     // WARNING: re-init the following two varibles if (re)init() is ever implemented for symtab pkg
@@ -326,7 +317,7 @@ void show_location(int show_source_lines)
 
     static int seg_scanned[512];
     if (! opt_debug && ! show_source_changes && ! show_source_lines)
-        return;
+        return 1;
 
     // Scan segments for entry points to procedures
     addr_modes_t amode = get_addr_mode();
@@ -379,11 +370,13 @@ void show_location(int show_source_lines)
         old_line_no = where.line_no;
     }
     
+    int ret = 1;
     if (display_entry) {
         if (where.entry) {
             if (display_file && display_line && where.file_name)
-                out_msg("Source: %s\n", where.file_name);
+                log_msg(INFO_MSG, NULL, "Source: %s\n", where.file_name);
             log_msg(DEBUG_MSG, "MAIN", "%s: %s\n", "Procedure", where.entry);
+            ret = 0;
         } else if (where.file_name)
             log_msg(DEBUG_MSG, "MAIN", "%s: %s\n", "Source file", where.file_name);
         else
@@ -393,8 +386,8 @@ void show_location(int show_source_lines)
     if (display_line && where.line_no >= 0) {
         // Note that if we have a source line, we also expect to have a "proc" entry
         const char *name = where.entry ? where.entry : where.file_name;
-        // out_msg("Source:  %s %o|%06o %5d:  %s\n", name, segno, PPR.IC, where.line_no, where.line);
         log_msg(INFO_MSG, NULL, "Source:  %3o|%06o, line %5d: < %s\n", segno, PPR.IC, where.line_no, where.line);
+        ret = 0;
     }
 
     // Display IC
@@ -428,6 +421,8 @@ void show_location(int show_source_lines)
     // cdebug << flush;
     cerr << flush;
     log_any_io(0);      // Output of source/location info doesn't count towards requiring re-display of source
+
+    return ret;
 }
 
 //=============================================================================
@@ -512,19 +507,6 @@ char *ir2text(const IR_t *irp)
 
 //=============================================================================
 
-#if 0
-static char* its2text(char *buf, int abs_addr)
-{
-    AR_PR_t pr;
-    if (words2its(M[abs_addr], M[abs_addr+1], &pr) != 0)
-        strcpy(buf, "N/A");
-    else
-        sprintf(buf, "%03o|%06o", pr.PR.snr, pr.wordno);
-    return buf;
-}
-#endif
-
-
 static int stack_to_entry(unsigned abs_addr, AR_PR_t* prp)
 {
     // Looks into the stack frame maintained by Multics and
@@ -579,6 +561,10 @@ void print_frame(int seg, int offset, int addr)
 int cmd_stack_trace(int32 arg, char *buf)
 {
     stack_trace();
+
+    float secs = (float) total_msec / 1000;
+    out_msg("Stats: %.1f seconds: %lld cycles at %.0f cycles/sec, %lld instructions at %.0f instr/sec\n",
+        secs, total_cycles, total_cycles/secs, total_instr, total_instr/secs);
     return 0;
 }
 
@@ -731,57 +717,34 @@ static int stack_trace(void)
 
 //=============================================================================
 
-#if 0
-typedef struct {
-    AR_PR_t ptr;
-    frame_t *next;
-    t_uint64 *vals;
-} frame_t;
-#endif
-
-#if 0
-class automatic_val_t : public automatic_t {
-    t_uint64 *vals;
-};
-#endif
-
 class multics_stack_frame {
+public:
+    enum change_t { uninitialized, unchanged, initial_change, changed };
+    class val_t {
+        private:
+            int _initialized;   // constructor sets _initialized to false, but
+            t_uint64 _val;      // also sets _val to a copy of what's in memory
+        public:
+            val_t(t_uint64 v) { _val = v; _initialized = 0; }
+            int is_initialized() { return _initialized; }
+            t_uint64 val() { if (!_initialized) throw logic_error("unitialized"); return _val; }
+            change_t change(t_uint64 currval);
+    };
+private:
     seg_addr_t ptr;
     int _addr;                  // 24-bit absolute address corresponding to ptr
     const entry_point& _owner;
     int _all_initialized;
-    class val_t {
-        public:
-            int initialized;
-            t_uint64 val;
-    };
     map <int, val_t> vals;  // Key is stack offset
-    int _refresh(int first);
+    int _refresh_all(int first);
 public:
-    // multics_stack_frame(seg_addr_t p, const entry_point& e);
+    map<int, val_t>::iterator begin() { return vals.begin(); }
+    map<int, val_t>::iterator end() { return vals.end(); }
+public:
     multics_stack_frame(int segno, int offset, entry_point& e);
-    int operator == (const seg_addr_t& x) const  { return x == ptr; }
-    int refresh() { return _refresh(0); }
-    int all_initialized() const { return _all_initialized; }
     int addr();
+    int operator == (const seg_addr_t& x) const  { return x == ptr; }
     const entry_point& owner() { return _owner; }
-    // map<int, t_uint64>::const_iterator begin() const { return vals.begin(); }
-    // map<int, t_uint64>::const_iterator end() const { return vals.end(); }
-    int is_initialized(unsigned offset) const {
-        map<int, val_t>::const_iterator vit = vals.find(offset);
-        if (vit == vals.end())
-            throw out_of_range("nonexistent stack offset");
-        return (*vit).second.initialized;
-    }
-    t_uint64 operator[](unsigned offset) const {
-        map<int, val_t>::const_iterator vit = vals.find(offset);
-        if (vit == vals.end())
-            throw out_of_range("nonexistent stack offset");
-        if (! (*vit).second.initialized)
-            throw logic_error("uninitialized automatic");
-        return (*vit).second.val;
-    }
-    // t_uint64& operator[](unsigned offset) { return vals[offset]; }
 };
 
 static list<multics_stack_frame> multics_stack;
@@ -793,10 +756,21 @@ static list<multics_stack_frame> multics_stack;
 multics_stack_frame::multics_stack_frame(int segno, int offset, entry_point& e)
     : ptr(segno,offset), _owner(e)
 {
-    // WARNING -- we assume our stack never gets relocated to a different address
+    // WARNING -- we assume our stack never gets relocated to a different absolute address
     _addr = -1;
     _all_initialized = 0;
-    this->_refresh(1);
+
+    const stack_frame* sfp = _owner.stack();
+    if (sfp == NULL)
+        throw logic_error("multics_stack_frame: entry has no stack info\n");
+    if (addr() == -1)
+        return;
+    map<int,val_t>::iterator it = vals.end();
+    for (map<int,string>::const_iterator autos_it = sfp->automatics.begin(); autos_it != sfp->automatics.end(); ++ autos_it) {
+        int soffset = (*autos_it).first;
+        t_uint64 curr = M[_addr+soffset];
+        it = vals.insert(it, pair<int,val_t>(soffset, val_t(curr)));
+    }
 }
 
 
@@ -811,57 +785,21 @@ int multics_stack_frame::addr()
 }
 
 
-int multics_stack_frame::_refresh(int first)
+multics_stack_frame::change_t multics_stack_frame::val_t::change(t_uint64 curr_val)
+    // Update the current value (if changed) and report status
 {
-    const char *moi = "multics-stack-frame::_refresh";
-    // log_msg(INFO_MSG, moi, "starting\n");
-    if (_addr == -1) {
-        uint a;
-        if (convert_address(&a, ptr.segno, ptr.offset, 0) != 0)
-            return 1;
-        _addr = a;
+    // Note that the constructor sets _initialized to false, but also sets _val
+    // to a copy of what's in memory.
+
+    
+    if (_val == curr_val)
+        return (_initialized) ? unchanged : uninitialized;
+    else {
+        int prev_init = _initialized;
+        _val = curr_val;
+        _initialized = 1;
+        return (prev_init) ? changed : initial_change;
     }
-    const stack_frame* sfp = _owner.stack();
-    if (sfp == NULL) {
-        log_msg(NOTIFY_MSG, moi, "sanity check fails -- no stack for frame %s...\n", string(ptr).c_str());
-        cancel_run(STOP_WARN);
-        return 1;
-    }
-    int found_uninit = 0;
-    unsigned sanity = 200;  // BUG
-    if (sfp->automatics.size() > sanity) {
-        log_msg(NOTIFY_MSG, moi, "sanity check fails -- too many automatics for frame %s...\n", string(ptr).c_str());
-        cancel_run(STOP_WARN);
-        return 1;
-    }
-    for (map<int,string>::const_iterator autos_it = sfp->automatics.begin(); autos_it != sfp->automatics.end(); ++ autos_it) {
-        if (--sanity == 0) {
-            log_msg(NOTIFY_MSG, moi, "sanity check fails, too many variables..\n");
-            cancel_run(STOP_WARN);
-            break;
-        }
-        int soffset = (*autos_it).first;
-        t_uint64 curr = M[_addr+soffset];
-        if (first)
-            vals[soffset].initialized = 0;
-        else {
-            if (! vals[soffset].initialized) {
-                vals[soffset].initialized = vals[soffset].val != curr;
-                if (! vals[soffset].initialized)
-                    found_uninit = 1;
-                else {
-                    log_msg(INFO_MSG, NULL, "Source:                            %s = %lld (%012llo) -- initial value\n", (*autos_it).second.c_str(), curr, curr);
-                    log_any_io(0);      // Output of variables doesn't count towards requiring re-display of source
-                }
-            }
-        }
-        vals[soffset].val = curr;
-    }
-    if (first)
-        _all_initialized = 0;
-    else
-        _all_initialized = ! found_uninit;
-    return 0;
 }
 
 //=============================================================================
@@ -919,27 +857,23 @@ s << multics_stack.size() << " for " << li.name << " with PR6 == " << seg_addr_t
 
 //=============================================================================
 
-extern "C" void show_variables(void);
+extern "C" void show_variables(unsigned segno, int ic);
 
-void show_variables()
+void show_variables(unsigned segno, int ic)
 {
     addr_modes_t amode = get_addr_mode();
-    int segno = (amode == APPEND_mode) ? PPR.PSR : -1;
-    check_autos(segno);
+    //int segno = (amode == APPEND_mode) ? PPR.PSR : -1;
+    // check_autos(segno, ic);
+    check_autos((amode == APPEND_mode) ? segno : -1, ic);
 }
 
 //=============================================================================
 
-void check_autos(int segno)
+void check_autos(int segno, int ic)
 {
-    // segno should be the current execution segment
+    // segno and ic should be last executed instruction
     // TODO: improve efficiency -- Maybe only check when about to display source change.  Maybe use memory-write range breakpoints.
     const char *moi = "check_autos";
-
-    // log_msg(INFO_MSG, "MAIN", "Entry %s has %d automatics.\n", where.entry, where.n_auto);
-    // int seginfo_automatic_list(int segno, int offset, int *count, automatic_t *list);
-
-    // Since we've been called, we know that the current frame does have automatic variables...
 
     const seginfo& seg = segments(segno);
     if (seg.empty()) {
@@ -950,36 +884,20 @@ void check_autos(int segno)
     // TODO: check source_changed re checking for frame change
 
     seg_addr_t ptr(AR_PR[6].PR.snr, AR_PR[6].wordno);   // TODO: add a constructor for AR_PR_t?
-    if (multics_stack.size() > 20) {
-        log_msg(NOTIFY_MSG, "check_autos", "sanity check fails -- stack size...\n");
-        cancel_run(STOP_WARN);
-        return;
-    }
-#if 1
-    // Bug: use reverse iterator
-    list<multics_stack_frame>::iterator stackp = find(multics_stack.begin(), multics_stack.end(), ptr);
-    if (stackp == multics_stack.end()) {
-        push_frame(segno, seg);
-        return;
-    }
-    if (stackp != -- multics_stack.end()) {
-        // Pop one or more frames
-        multics_stack.erase(++stackp, multics_stack.end());
-        stackp = -- multics_stack.end();
-    }
-#else
+    // Search backwards from the top of the stack
     list<multics_stack_frame>::reverse_iterator rstackp = find(multics_stack.rbegin(), multics_stack.rend(), ptr);
     if (rstackp == multics_stack.rend()) {
         push_frame(segno, seg);
         return;
     }
     list<multics_stack_frame>::iterator stackp = rstackp.base();
+    -- stackp;          // Convert the reverse iterator into a forward iterator
+
     if (stackp != -- multics_stack.end()) {
         // Pop one or more frames
         multics_stack.erase(++stackp, multics_stack.end());
         stackp = -- multics_stack.end();
     }
-#endif
 
     // Check values in saved frame versus the machine
     multics_stack_frame& msf = *stackp;
@@ -995,36 +913,23 @@ void check_autos(int segno)
             return;
         }
         int changed = 0;
-        unsigned sanity = 200;  // BUG
-        if (sfp->automatics.size() > sanity) {
-            log_msg(NOTIFY_MSG, "check_autos", "sanity check fails -- too many automatics...\n");
-            cancel_run(STOP_WARN);
-            return;
-        }
-        for (map<int,string>::const_iterator autos_it = sfp->automatics.begin(); autos_it != sfp->automatics.end(); ++ autos_it) {
-            if (--sanity == 0) {
-                log_msg(NOTIFY_MSG, "show variables", "sanity check fails, too many variables..\n");
-                cancel_run(STOP_WARN);
-                break;
-            }
+        for (map<int, multics_stack_frame::val_t>::iterator autos_it = msf.begin(); autos_it != msf.end(); ++ autos_it) {
             int soffset = (*autos_it).first;
-            if (msf.is_initialized(soffset)) {
-                t_uint64 old = msf[soffset];
-                t_uint64 curr = M[sp_addr + soffset];
-                if (old != curr) {
-                    if (!changed && msf.owner().source && log_any_io(0)) {
-                        log_msg(INFO_MSG, NULL, "Source: %s\n", msf.owner().source->fname.c_str());
-                        const source_line* lnp = msf.owner().source->get_line(PPR.IC); 
-                        if (lnp)
-                            log_msg(INFO_MSG, NULL, "Source:  %3o|%06o, line %5d: > %s\n", segno, PPR.IC, lnp->line_no, lnp->text.c_str());
-                    }
-                    changed = 1;
-                    log_msg(INFO_MSG, NULL, "Source:                            %s = %lld (%012llo)\n", (*autos_it).second.c_str(), curr, curr);
+            multics_stack_frame::val_t& autov = (*autos_it).second;
+            t_uint64 curr = M[sp_addr + soffset];
+            enum multics_stack_frame::change_t chg = autov.change(curr);
+            if (chg == multics_stack_frame::initial_change || chg == multics_stack_frame::changed) {
+                if (!changed && msf.owner().source && log_any_io(0)) {
+                    log_msg(INFO_MSG, NULL, "Source: %s\n", msf.owner().source->fname.c_str());
+                    const source_line* lnp = msf.owner().source->get_line(ic);
+                    if (lnp)
+                        log_msg(INFO_MSG, NULL, "Source:  %3o|%06o, line %5d: > %s\n", segno, ic, lnp->line_no, lnp->text.c_str());
                 }
+                changed = 1;
+                map<int,string>::const_iterator ni = sfp->automatics.find(soffset);
+                const string& name = (*ni).second;
+                log_msg(INFO_MSG, NULL, "Source:                            %s = %lld (%012llo)%s\n", name.c_str(), curr, curr, (chg == multics_stack_frame::initial_change) ? " -- initial value" : "");
             }
-        }
-        if (changed || ! msf.all_initialized()) {
-            msf.refresh();
         }
         log_any_io(0);      // Output of variables doesn't count towards requiring re-display of source
     }

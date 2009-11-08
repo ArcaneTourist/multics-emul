@@ -139,7 +139,7 @@ static void hw6180_init(void)
 
     // CPU Switches
     memset(&switches, 0, sizeof(switches));
-    switches.cpu_num = 0;   // only one cpu
+    switches.cpu_num = 0;   // only one cpu -- CPU 'A"; init_early_config.pl1 implies that 'A' is always the bootload CPU
     // multics uses same vector for interrupts & faults?
     // OTOH, AN87, 1-41 claims faults are at 100o ((flt_base=1)<<5) // BUG 1<<5 is 040...
     // switches.FLT_BASE = 0;   // multics uses same vector for interrupts & faults?

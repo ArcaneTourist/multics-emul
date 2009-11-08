@@ -4,14 +4,15 @@ operating system.
 This is pre-alpha.   The emulator does not yet boot Multics.  There is no
 support for disk drives yet.  It can read an on-disk version of a real boot
 tape and partially process it.  Console output is implemented but not console
-input.  At this time the emulator seems to correctly process just under two
+input.  At this time the emulator seems to correctly process just over two
 million instructions before hitting a bug.  The following console output is
 produced when the appropriate boot tape is used:
-	bootload_0: Booting system MR12.5 generated 01/11/93 0832.3 mst Mon.
-	bootload_0: Unexpected control word on tape.
-	bootload_0: Enter tape drive number for memory dump: 
+   bootload_0: Booting system MR12.5 generated 01/11/93 0832.3 mst Mon.
+   0533>2  scas_init: Size too large on config card for MEM
+   0534>7  Multics not in operation; control process: Initializer.SysDaemon.z.
 
-Actually, the bug related to the last two lines above has since been fixed.
+It's unclear if the problem reported is due to errors in the hardware
+emulation or in simulated configuration settings.
 
 This is alpha and doesn't finish booting.  The only reason for publishing at
 this time is to allow other people to critique and collaborate on the code.

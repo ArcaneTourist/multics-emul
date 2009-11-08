@@ -68,6 +68,7 @@ static int op_dvf(const instr_t* ip);
 static int op_ufa(const instr_t* ip);
 static int op_ufm(const instr_t* ip);
 static void long_right_shift(t_uint64 *hip, t_uint64 *lop, int n, int is_logical);
+static void rsw_get_port_config(int low_port);
 
 static uint saved_tro;
 
@@ -99,17 +100,9 @@ void execute_instr(void)
 static int fetch_op(const instr_t *ip, t_uint64 *wordp)
 {
     if (TPR.is_value) {
-#if 0
-        if (cpu.orig_mode_BUG != get_addr_mode())
-            log_msg(NOTIFY_MSG, "OPU::fetch-op", "addr mode is changed, but operand is a constant.\n");
-#endif
         *wordp = TPR.value;
         return 0;
     }
-#if 0
-    if (cpu.orig_mode_BUG != get_addr_mode())
-        log_msg(NOTIFY_MSG, "OPU::fetch-op", "fetching in changed mode\n");
-#endif
     return fetch_word(TPR.CA, wordp);
 }
 
@@ -124,9 +117,6 @@ static int do_op(instr_t *ip)
     // do_18bit_math = (switches.FLT_BASE != 2);    // diag tape seems to want this, probably inappropriately
 
     addr_modes_t orig_mode = get_addr_mode();
-#if 0
-    cpu.orig_mode_BUG = orig_mode;
-#endif
     uint orig_ic = PPR.IC;
     int ret = do_an_op(ip);
     addr_modes_t mode = get_addr_mode();
@@ -188,19 +178,7 @@ static int do_an_op(instr_t *ip)
             case opcode0_epp2 + 0:
             case opcode0_epp4 + 0:
             case opcode0_epp6 + 0:
-                if (TPR.TSR ==  0427) {
-                    // BUG: horrid hack to allow: eppbp =its(-2,2),*
-                    log_msg(WARN_MSG, "OPU", "Disabling faults for special case instr.\n");
-                    fault_gen_no_fault = 1;
-                    addr_mod(ip);       // note that ip == &cu.IR
-                    fault_gen_no_fault = 0;
-                } else {
-                    addr_mod(ip);       // note that ip == &cu.IR
-#if 0
-                    if (cpu.orig_mode_BUG != get_addr_mode())
-                        log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
-#endif
-                }
+                addr_mod(ip);       // note that ip == &cu.IR
                 break;
             default:
                 addr_mod(ip);       // note that ip == &cu.IR
@@ -219,17 +197,9 @@ static int do_an_op(instr_t *ip)
             case opcode1_epp5 + 0:
             case opcode1_epp7 + 0:
                 addr_mod(ip);       // note that ip == &cu.IR
-#if 0
-                if (cpu.orig_mode_BUG != get_addr_mode())
-                    log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
-#endif
                 break;
             default:
                 addr_mod(ip);       // note that ip == &cu.IR
-#if 0
-                if (cpu.orig_mode_BUG != get_addr_mode())
-                    log_msg(NOTIFY_MSG, "OPU::do-an-op", "Back from addr_mod()\n");
-#endif
         }
     }
     cpu.poa = 0;
@@ -1751,14 +1721,16 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 int ret;
                 if (fetch_pair(TPR.CA, &word0, &word1) != 0)
                     return 1;
-                log_msg(NOTIFY_MSG, "OPU::dfcmp", "AQ = { %012llo, %012llo }, exp %d\n", reg_A, reg_Q, reg_E);
-                log_msg(NOTIFY_MSG, "OPU::dfcmp", "op = { %012llo, %012llo }\n", word0, word1);
+                if (opt_debug) {
+                    log_msg(DEBUG_MSG, "OPU::dfcmp", "AQ = { %012llo, %012llo }, exp %d\n", reg_A, reg_Q, reg_E);
+                    log_msg(DEBUG_MSG, "OPU::dfcmp", "op = { %012llo, %012llo }\n", word0, word1);
+                }
                 uint8 op_exp = getbits36(word0, 0, 8);
                 t_uint64 op_mant_hi = getbits36(word0, 8, 28);  // 36-8=28 bits
                 op_mant_hi <<= 8;
                 op_mant_hi |= getbits36(word1, 0, 8);
                 t_uint64 op_mant_lo = getbits36(word1, 8, 28) << 8;
-                log_msg(NOTIFY_MSG, "OPU::dfcmp", "op:  { %012llo, %012llo }, exp %d\n", op_mant_hi, op_mant_lo, op_exp);
+                if (opt_debug) log_msg(DEBUG_MSG, "OPU::dfcmp", "op:  { %012llo, %012llo }, exp %d\n", op_mant_hi, op_mant_lo, op_exp);
                 t_uint64 reg_a = reg_A;
                 t_uint64 reg_q = getbits36(reg_Q, 0, 28) << 8;  // need 64bit version of aq
 
@@ -1766,7 +1738,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 double op_val = multics_to_double(op_mant_hi, op_mant_lo, 0, 1);
                 double aq_val72 = multics_to_double(reg_A, reg_Q, 0, 1);
                 double aq_val64 = multics_to_double(reg_a, reg_q, 0, 1);
-                log_msg(NOTIFY_MSG, "OPU::dfcmp", "Comparing %f*2^%d aka %f*2^%d to %f*2^%d\n", aq_val72, reg_E, aq_val64, reg_E, op_val, op_exp);
+                log_msg(NOTIFY_MSG, "OPU::dfcmp", "Comparing %.4f*2^%d to %.4f*2^%d\n", aq_val64, reg_E, op_val, op_exp);
 
                 // treat fractions as sign-magnitude for shifting
                 int op_neg = bit36_is_neg(op_mant_hi);
@@ -1880,7 +1852,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
 
             case opcode0_rtcd: {
                 // BUG -- Need to modify APU to check for opcode==rtcd && POA flag
-                log_msg(NOTIFY_MSG, "OPU::rtcd", "Some access checks are not implemented.\n");
+                log_msg(INFO_MSG, "OPU::rtcd", "Some access checks are not implemented.\n");    // TODO
 
                 if (get_addr_mode() == ABSOLUTE_mode) { 
                     log_msg(ERR_MSG, "OPU::rtcd", "Absolute mode not handled\n");
@@ -2261,14 +2233,8 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                     return 1;
                 }
                 int ret = scu_get_calendar(TPR.CA);
-#if 0
-                // AL-39 was just trying to say that the clock is 52 bits...
-                if (ret == 0) {
-                    reg_A = setbits36(reg_A, 0, 20, 0);
-                }
-#endif
-                log_msg(NOTIFY_MSG, "OPU::rccl", "Untested; A = %012llo from %012llo\n", reg_A, calendar_a);
-                //cancel_run(STOP_WARN);
+                // AL-39 was just trying to say that the clock is 52 bits, not that
+                // we need to mask out the upper 20 bits of A.
                 return ret;
             }
 
@@ -2587,7 +2553,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
             // rmcm unimplemented -- read memory controller mask register
 
             case opcode0_rscr: { // priv
-                // read system controller register (to AQ)
+                // read SCU (system controller) register into AQ; See rsw for processor switches
                 int ret = 0;
                 uint y = (TPR.CA >> 16) & 3;    // get bits one and two of 18bit CA
                 uint ea = y << 15;              // and set just those bits in ea
@@ -2647,7 +2613,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 return ret;
             }
 
-            case opcode0_rsw: { // read switches
+            case opcode0_rsw: { // read processor switches (see rscr for scu switches)
                 int low = TPR.CA & 07;
                 switch(low) {
                     case 0: // unformatted; maintenance panel data switches
@@ -2657,21 +2623,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                         reg_A = (t_uint64) 024000717200; // switches: 4, 6, 18, 19, 20, 23, 24, 25, 26, 28
                         break;
                     case 1: // Config switches for ports A, B, C, D
-                        // ADR:3, c, d, e, MEM:3
-                        // ADR: addr assignment; c: port enabled; d: sys init enabled; interlace enabled; coded mem size 111b->4k
-                        reg_A = 0;
-extern cpu_ports_t cpu_ports;
-                        for (int port = 0; port < 4; ++port) {
-                            int adr = 0; // Only one SCU, so ADR is 000b for lowest memory
-                            int byte = adr << 6;
-                            int enabled = cpu_ports.ports[port] > 0;    // port enabled?
-                            byte |= enabled << 5;   // port enabled?
-                            byte |= enabled << 4;   // sys init enabled? -- yes because we only have one CPU
-                            byte |= enabled << 3;   // interlace enabled
-                            if (enabled)
-                                byte |= 7;          // BUG: assume max memory size
-                            reg_A = (reg_A << 9) | byte;
-                        }
+                        rsw_get_port_config(0);
                         log_msg(INFO_MSG, "OPU::opcode::rsw", "function xxx%o sets A=%012llo.\n", low, reg_A);
                         break;
                     case 2:
@@ -2693,6 +2645,10 @@ extern cpu_ports_t cpu_ports;
                         reg_A = setbits36(reg_A, 34, 2, switches.cpu_num);
 #endif
                         log_msg(INFO_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012llo.\n", low, reg_A);
+                        break;
+                    case 3: // Config switches for ports E, F, G, H
+                        rsw_get_port_config(4);
+                        log_msg(INFO_MSG, "OPU::opcode::rsw", "function xxx%o sets A=%012llo.\n", low, reg_A);
                         break;
                     case 4:
                         reg_A = 0;  // see AL-39, configuration switch data; 0 is full memory with 4 word interlace
@@ -2820,31 +2776,18 @@ extern cpu_ports_t cpu_ports;
                         fault_gen(illproc_fault);
                     return 1;
                 }
+                if (opt_debug) log_msg(DEBUG_MSG, "OPU::absa", "Getting segment translation (DSBR.bound = %#o).\n", cpup->DSBR.bound);
                 uint addr;
                 int ret;
-#if 0
-                if (cpu.orig_mode_BUG == ABSOLUTE_mode) {
-                        (void) get_seg_addr(TPR.CA, 0, &addr);
-                        reg_A = (t_uint64) TPR.CA << 12;    // upper 24 bits
-                        if (addr == TPR.CA)
-                            log_msg(NOTIFY_MSG, "OPU::absa", "Ignored segment portion of PR register irrelevent.  Result %#llo\n", reg_A);
-                        else
-                            log_msg(NOTIFY_MSG, "OPU::absa", "Ignoring segment portion of PR register -- Using %#llo instead of %#llo.\n", reg_A, (t_uint64) addr << 12);
-                        ret = 0;
-                } else
-#endif
-                {
-                        if (opt_debug) log_msg(DEBUG_MSG, "OPU::absa", "Getting segment translation (DSBR.bound = %#o).\n", cpup->DSBR.bound);
-                        if ((ret = get_seg_addr(TPR.CA, 0, &addr)) == 0)
-                            reg_A = (t_uint64) addr << 12;  // upper 24 bits
-                        else
-                            log_msg(WARN_MSG, "OPU::absa", "Unable to translate segment offset into absolute address.\n");
-                        if (opt_debug) {
-                            if (addr == TPR.CA)
-                                log_msg(DEBUG_MSG, "OPU::absa", "Using segment portion of PR register yields no change -- %#llo\n", reg_A);
-                            else
-                                log_msg(DEBUG_MSG, "OPU::absa", "Using segment portion of PR register yields %#llo instead of %#llo.\n", reg_A, (t_uint64) TPR.CA << 12);
-                        }
+                if ((ret = get_seg_addr(TPR.CA, 0, &addr)) == 0)
+                    reg_A = (t_uint64) addr << 12;  // upper 24 bits
+                else
+                    log_msg(WARN_MSG, "OPU::absa", "Unable to translate segment offset into absolute address.\n");
+                if (opt_debug) {
+                    if (addr == TPR.CA)
+                        log_msg(DEBUG_MSG, "OPU::absa", "Using segment portion of PR register yields no change -- %#llo\n", reg_A);
+                    else
+                        log_msg(DEBUG_MSG, "OPU::absa", "Using segment portion of PR register yields %#llo instead of %#llo.\n", reg_A, (t_uint64) TPR.CA << 12);
                 }
                 return ret;
             }
@@ -3305,9 +3248,6 @@ int add72(t_uint64 ahi, t_uint64 alow, t_uint64* dest1, t_uint64* dest2, int is_
 
     t_uint64 lo = alow + *dest2;
     int lo_carry = (lo >> 36);
-    if (!lo_carry && (lo>>35) != 0) {
-        log_msg(NOTIFY_MSG, "OPU::add72", "Bug fix: prior version would have incorrectly carried into hi bits\n");
-    }
     lo &= MASK36;
 
     t_uint64 hi = ahi + *dest1;
@@ -3783,7 +3723,7 @@ static int op_tct(const instr_t* ip, int fwd)
 
     IR.tally_runout = 1;
     log_msg(DEBUG_MSG, moi, "No non-zero entry found; setting TRO.\n");
-    log_msg(NOTIFY_MSG, moi, "finished.\n");
+    log_msg(INFO_MSG, moi, "finished.\n");
     PPR.IC += 4;        // BUG: when should we bump IC?  probably not for seg faults, but probably yes for overflow
     return 0;
 }
@@ -4117,11 +4057,11 @@ static int op_btd(const instr_t* ip)
     if (overflow)
         fault_gen(overflow_fault);
     else {
-        log_msg(WARN_MSG, moi, "Storing %d (aka %d) bytes\n", desc2.n, n);
+        log_msg(DEBUG_MSG, moi, "Storing %d (aka %d) bytes\n", desc2.n, n);
         while (desc2.n > 0) {
             // log_msg(WARN_MSG, moi, "Storing byte %d from results[%d]\n", desc2.n, n-desc2.n);
             // if (put_eis_an(&mf2, &desc2, results[n-desc2.n]) != 0)
-            log_msg(WARN_MSG, moi, "Storing byte %d from results[%d]\n", desc2.n, desc2.n-1);
+            log_msg(DEBUG_MSG, moi, "Storing byte %d from results[%d]\n", desc2.n, desc2.n-1);
             if (put_eis_an(&mf2, &desc2, results[desc2.n-1]) != 0) {
                 ret = 1;
                 break;
@@ -4134,8 +4074,8 @@ static int op_btd(const instr_t* ip)
         if (save_eis_an(&mf2, &desc2) != 0)
             return 1;
 
-    log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
-    cancel_run(STOP_IBKPT);
+    //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
+    //cancel_run(STOP_IBKPT);
 
     PPR.IC += 3;        // BUG: when should we bump IC?  probably not for faults, but probably yes for conditions
     return ret;
@@ -4781,9 +4721,8 @@ static int op_mvne(const instr_t* ip)
         // return 1;
         ret = 1;        // BUG: return...
 
-    log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
+    //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
     //cancel_run(STOP_IBKPT);
-    cancel_run(STOP_WARN);
     PPR.IC += 4;        // BUG: when should we bump IC?  probably not for aults, but probably yes for conditions
     return ret;
 }
@@ -4811,8 +4750,6 @@ static int op_ufa(const instr_t* ip)
     if (ret != 0)
         return ret;
     ret = instr_ufa(word);
-    log_msg(WARN_MSG, "OPU::ufa", "Unnormalized Floating Add is untested\n");
-    cancel_run(STOP_WARN);
     return ret;
 }
 
@@ -4835,7 +4772,7 @@ static void long_right_shift(t_uint64 *hip, t_uint64 *lop, int n, int is_logical
     const char *moi = (is_logical) ? "OPU::lrl" : "OPU::lrs";
 
     int init_neg = bit36_is_neg(*hip);
-    log_msg(INFO_MSG, moi, "Debug: Shift %012llo,%012llo of %d bits.\n", *hip, *lop, n);    // BUG: temp
+    if (opt_debug) log_msg(DEBUG_MSG, moi, "Shift %012llo,%012llo of %d bits.\n", *hip, *lop, n);
 
     if (n >= 72) {
         log_msg(NOTIFY_MSG, moi, "Shift of %d bits.\n", n);
@@ -4850,14 +4787,48 @@ static void long_right_shift(t_uint64 *hip, t_uint64 *lop, int n, int is_logical
         if (n <= 36) {
             *lop >>= n;
             *lop = setbits36(*lop, 0, n, *hip);
+            *hip >>= n;
+            if (!is_logical && init_neg)
+                *hip = setbits36(*hip, 0, min(n, 36), ~0);
         } else {
             *lop = *hip >> (n - 36);
             if (!is_logical && init_neg && n != 36)
                 *lop = setbits36(*lop, 0, n-36, ~0);
+            *hip = (!is_logical && init_neg) ? MASK36 : 0;
         }
-        *hip >>= n;
-        if (!is_logical && init_neg)
-            *hip = setbits36(*hip, 0, min(n, 36), ~0);
+        // *hip >>= n;  gcc 4.2.4 didn't complain under c99 but flakes if shift moves more bits than source has
     }
-    log_msg(INFO_MSG, moi, "Debug: Result:  %012llo,%012llo\n", *hip, *lop);    // BUG: temp
+    if (opt_debug) log_msg(DEBUG_MSG, moi, "Debug: Result:  %012llo,%012llo\n", *hip, *lop);
+}
+
+// ============================================================================
+
+static void rsw_get_port_config(int low_port)
+    // low_port should be zero for ports {A,B,C,D} or 4 for ports {E,F,G,H}
+{
+
+    extern cpu_ports_t cpu_ports;
+
+    // ADR:3, c, d, e, MEM:3
+    // ADR: addr assignment; c: port enabled; d: sys init enabled; interlace enabled; coded mem size xxxb
+    reg_A = 0;
+    for (int port = low_port; port < low_port + 4; ++port) {
+        int adr = 0; // Only one SCU, so ADR is 000b for lowest memory
+        int byte = adr << 6;
+        int enabled = cpu_ports.ports[port] > 0;    // port enabled?
+        byte |= enabled << 5;   // port enabled?
+        byte |= enabled << 4;   // sys init enabled? -- yes because we only have one CPU
+        byte |= enabled << 3;   // interlace enabled
+        if (enabled) {
+            // BUG/TODO: we always claim the max possible memory size
+            // Note that AL-39 is incorrect.  The table of sizes in section three under
+            // the description of configuration switch data is obsolete (after an apparently
+            // required hardware FCO).   A value of seven used to mean the maximum possible
+            // memory before MR10.0 and the FCO.  Now 7 means 256K while 2 means 4MW.  See
+            // comments in rsw_util.pl1.
+            byte |= 2;  // 4MW -- AL39 is incorrect; see dps_mem_size_table in rsw_util.pl1
+        }
+        log_msg(INFO_MSG, "OPU::rsw", "CPU port '%c' %s enabled.\n", 'A' + port, enabled ? "is" : "is not");
+        reg_A = (reg_A << 9) | byte;
+    }
 }

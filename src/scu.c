@@ -1,22 +1,16 @@
 /*
     scu.c -- System Controller
     
-    See AN70, section 8.
+    See AN70, section 8 and GB61.
 
-    The term SCU is used throughout this code to match AL39, but the
-    device emulated is closer to a Level 68 System Controller (SC) than
-    to a Series 60 Level 66 Controller (SC).  The emulated device may
-    be closer to a Level 68 4MW SCU than to an Level 68 6000 SCU.
-*/
-
-/*
-SC and SCU -- System Controller Unit (GB61 and AN70)
-    Versions
+    There were a few variations of SCs and SCUs:
         SCU -- Series 60 Level66 Controller
         SC -- Level 68 System Controller
         4MW SCU -- A later version of the L68 SC
+
     SCUs control access to memory.
         Each SCU owns a certain range of absolute memory.
+        This emulator allows the CPU to access memory directly however.
     SCUs contain clocks.
     SCUS also contain facilites which allow CPUS and IOMs to communicate.
         CPUs or IOMS request access to memory via the SCU.
@@ -25,6 +19,21 @@ SC and SCU -- System Controller Unit (GB61 and AN70)
     Other Interesting instructions:
         read system controller reg and set system controller reg (rscr & sscr)
 */
+
+
+/*
+    The following comment is probably wrong:    
+        The term SCU is used throughout this code to match AL39, but the
+        device emulated is closer to a Level 68 System Controller (SC) than
+        to a Series 60 Level 66 Controller (SC).  The emulated device may
+        be closer to a Level 68 4MW SCU than to an Level 68 6000 SCU.
+
+    BUG/TODO: The above is probably wrong; we explicitly report an
+    ID code for SCU via rscr 000001x.  It wouldn't hurt to review
+    all the code to make sure we never act like a SC instead of an
+    SCU.
+*/
+    
 
 /*
 === Initialization and Booting -- Part 1 -- Operator's view
@@ -221,8 +230,7 @@ int scu_set_mask(t_uint64 addr, int port)
         if (found > 1) {
             log_msg(WARN_MSG, "SCU", "Multiple masks assigned to cpu on port %d\n", cpu_no);
             cancel_run(STOP_WARN);
-        }
-        else if (pima > 1) {
+        } else if (pima > 1) {
             log_msg(ERR_MSG, "SCU", "Cannot write to masks other than zero and one: %d\n", pima);
             cancel_run(STOP_BUG);
             return 1;
@@ -246,7 +254,8 @@ int scu_set_mask(t_uint64 addr, int port)
                 }
                 if (found != 1) {
                     log_msg(WARN_MSG, "SCU::set-mask", "%d ports enabled for MASK %c: %#o\n", found, name, scu.eima_data[pima].raw);
-                    cancel_run(STOP_WARN);
+                    if (found != 0 || scu.eima_data[pima].raw != 0)
+                        cancel_run(STOP_WARN);
                 }
             }
         }
@@ -278,10 +287,15 @@ int scu_get_mode_register(t_uint64 addr)
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
 
-    // See scr.incl.pl1 and AN87
+    // See scr.incl.pl1 and AN87 page 2-2
+
+    // Note that rscr 00001X can only report an SC with a memory sizes of up
+    // to 256 K-words, but can report an SCU with up to 4MW.  So, we identify
+    // ourselves as an SCU.
+
     reg_A = 0;  // first 50 bits are padding
     reg_Q = 0;
-    reg_Q |= setbits36(reg_Q, 50-36, 4, 2); // 4MW SCU (level 66 SCU)
+    reg_Q |= setbits36(reg_Q, 50-36, 4, 2); // id for a 4MW SCU (level 66 SCU)
     /*
         remaining bits are only for T&D test and diagnostics
     */
@@ -295,7 +309,7 @@ int scu_get_mode_register(t_uint64 addr)
 
 int scu_get_config_switches(t_uint64 addr)
 {
-    // Implements part of the sscr instruction
+    // Implements part of the rscr instruction
     // Returns info appropriate to a 4MW SCU
     // BUG: addr should determine which SCU is selected
 
@@ -318,7 +332,8 @@ int scu_get_config_switches(t_uint64 addr)
 #else
     reg_A |= setbits36(reg_A, 0, 9, scu.eima_data[0].raw);
 #endif
-    reg_A |= setbits36(reg_A, 9, 3, 7); // size of lower store -- 2^(7+5) == 4096 words
+    //reg_A |= setbits36(reg_A, 9, 3, 7);   // size of lower store -- 2^(7+5) == 4096 K-words
+    reg_A |= setbits36(reg_A, 9, 3, 5); // size of lower store -- 2^(5+5) == 1024 K-words
     reg_A |= setbits36(reg_A, 12, 4, 017);  // all four stores online
     reg_A |= setbits36(reg_A, 16, 4, cpu_no);   // requester's port #
     reg_A |= setbits36(reg_A, 21, 1, 1);    // programmable; BUG

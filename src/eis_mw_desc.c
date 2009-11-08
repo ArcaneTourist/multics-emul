@@ -1011,8 +1011,8 @@ int addr_mod_eis_addr_reg(instr_t *ip)
             cancel_run(STOP_IBKPT);
         case opcode1_a9bd:
         {
-            log_msg(INFO_MSG, "APU::eis-addr-reg", "%s\n", (sign == 1) ? "a9bd" : "s9bd");
             int sign = (op == opcode1_a9bd) ? 1 : -1;
+            log_msg(INFO_MSG, "APU::eis-addr-reg", "%s\n", (sign == 1) ? "a9bd" : "s9bd");
             int oops = sign18(TPR.CA) < 0 || sign < 0;
     oops = 1;
             // if (oops)

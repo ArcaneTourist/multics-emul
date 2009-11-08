@@ -45,11 +45,11 @@ int instr_dvf(t_uint64 word)
     // dvf -- divide fraction; 71-bit signed fractional dividend is
     // divided by a 36-bit fractional divisor
 
-    log_msg(NOTIFY_MSG, "opu::dvf", "AQ = {%012llo,%012llo} aka (%lld,%lld).  Divisor = %012llo aka %lld.\n", reg_A, reg_Q, reg_A, reg_Q, word, word);
+    log_msg(INFO_MSG, "opu::dvf", "AQ = {%012llo,%012llo} aka (%lld,%lld).  Divisor = %012llo aka %lld.\n", reg_A, reg_Q, reg_A, reg_Q, word, word);
 
     double aq = multics_to_double(reg_A, reg_Q, 0, 1);
     double div = multics_to_double(word, 0, 0, 1);
-    log_msg(NOTIFY_MSG, "opu::dvf", "%g/%g\n", aq, div);
+    log_msg(NOTIFY_MSG, "opu::dvf", "%.6g/%.6g\n", aq, div);
     int dividend_is_neg = bit36_is_neg(reg_A);
     int divisor_is_neg = bit36_is_neg(word);
 
@@ -90,9 +90,9 @@ int instr_dvf(t_uint64 word)
     IR.neg = bit36_is_neg(reg_A);
 
     double tmp = multics_to_double(reg_A, 0, 0, 1);
-    log_msg(NOTIFY_MSG, "opu::dvf", "quotient:  A = %012llo => %g\n", reg_A, tmp);
+    log_msg(NOTIFY_MSG, "opu::dvf", "quotient:  A => %.6g\n", tmp);
     tmp = multics_to_double(reg_Q, 0, 0, 1);
-    log_msg(NOTIFY_MSG, "opu::dvf", "remainder: Q = %012llo => %g\n", reg_Q, tmp);
+    log_msg(NOTIFY_MSG, "opu::dvf", "remainder: Q => %.6g\n", tmp);
 
     return 0;
 }
@@ -101,14 +101,14 @@ int instr_dvf(t_uint64 word)
 
 int instr_ufa(t_uint64 word)
 {
-    log_msg(NOTIFY_MSG, "opu::ufa", "E = %03o(%d) AQ = {%012llo,%012llo} aka (%lld,%lld).\n", reg_E, reg_E, reg_A, reg_Q, reg_A, reg_Q);
+    log_msg(INFO_MSG, "opu::ufa", "E = %03o(%d) AQ = {%012llo,%012llo} aka (%lld,%lld).\n", reg_E, reg_E, reg_A, reg_Q, reg_A, reg_Q);
     double x = multics_to_double(reg_A, reg_Q, 0, 1);
-    log_msg(NOTIFY_MSG, "opu::ufa", "AQE is %g * 2^%d\n", x, reg_E);
+    log_msg(NOTIFY_MSG, "opu::ufa", "AQE is %.4g * 2^%d\n", x, reg_E);
 
     // int aq_neg = bit36_is_neg(reg_A);
     uint8 op_exp = getbits36(word, 0, 8);
     uint32 op_mant = getbits36(word, 8, 28);    // 36-8=28 bits
-    log_msg(NOTIFY_MSG, "opu::ufa", "op = %012llo => exp %03o(%d) and mantissa %010o (%d)\n", word, op_exp, (int8) op_exp, op_mant, op_mant);
+    log_msg(INFO_MSG, "opu::ufa", "op = %012llo => exp %03o(%d) and mantissa %010o (%d)\n", word, op_exp, (int8) op_exp, op_mant, op_mant);
     x = multics_to_double(op_mant, 0,  0, 1);
     log_msg(NOTIFY_MSG, "opu::ufa", "op is %g * 2^%d\n", x, op_exp);
 
@@ -119,7 +119,7 @@ int instr_ufa(t_uint64 word)
         IR.exp_overflow = 0;
         IR.exp_underflow = 0;
         IR.carry = 0;
-        log_msg(NOTIFY_MSG, "opu::ufa", "addition of zero, short circuiting otherwise unimplemented code.\n");
+        log_msg(NOTIFY_MSG, "opu::ufa", "addition of zero, short circuiting otherwise untested code.\n");
         return 0;
     }
 
@@ -159,7 +159,11 @@ int instr_ufa(t_uint64 word)
     }
 
     x = multics_to_double(reg_A, reg_Q, 0, 1);
-    log_msg(NOTIFY_MSG, "opu::ufa", "resulting AQE is %g * 2^%d\n", x, reg_E);
+    log_msg(NOTIFY_MSG, "opu::ufa", "resulting AQE is %.6g * 2^%d\n", x, reg_E);
+
+    log_msg(WARN_MSG, "OPU::ufa", "Unnormalized Floating Add is untested\n");
+    cancel_run(STOP_WARN);
+
     return 1;   // untested
 }
 
@@ -169,14 +173,14 @@ int instr_ufm(t_uint64 word)
 {
     int ret = 0;
 
-    log_msg(NOTIFY_MSG, "opu::ufm", "E = %03o(%d) AQ = {%012llo,%012llo} aka (%lld,%lld).\n", reg_E, reg_E, reg_A, reg_Q, reg_A, reg_Q);
+    log_msg(INFO_MSG, "opu::ufm", "E = %03o(%d) AQ = {%012llo,%012llo} aka (%lld,%lld).\n", reg_E, reg_E, reg_A, reg_Q, reg_A, reg_Q);
     double x = multics_to_double(reg_A, reg_Q, 0, 1);
     log_msg(NOTIFY_MSG, "opu::ufm", "AQE is %g * 2^%d\n", x, reg_E);
 
     // int aq_neg = bit36_is_neg(reg_A);
     uint8 op_exp = getbits36(word, 0, 8);
     t_uint64 op_mant = getbits36(word, 8, 28) << 8; // 36-8=28 bits
-    log_msg(NOTIFY_MSG, "opu::ufm", "op = %012llo => exp %03o(%d) and mantissa %012llo (%lld)\n", word, op_exp, (int8) op_exp, op_mant, op_mant);
+    log_msg(INFO_MSG, "opu::ufm", "op = %012llo => exp %03o(%d) and mantissa %012llo (%lld)\n", word, op_exp, (int8) op_exp, op_mant, op_mant);
     x = multics_to_double(op_mant, 0,  0, 1);
     log_msg(NOTIFY_MSG, "opu::ufm", "op is %g * 2^%d\n", x, op_exp);
 
@@ -194,7 +198,7 @@ int instr_ufm(t_uint64 word)
         // ret = 1;
     }
     reg_E = (unsigned) exp & MASKBITS(8);
-    log_msg(NOTIFY_MSG, "opu::ufm", "new exp is %d aka %#o\n", exp, reg_E);
+    log_msg(INFO_MSG, "opu::ufm", "new exp is %d aka %#o\n", exp, reg_E);
 
     int normalize = reg_A == ((t_uint64) 1 << 35) && reg_Q == 0 && op_mant == ((t_uint64) 1 << 35);
 #if 0
@@ -208,7 +212,7 @@ int instr_ufm(t_uint64 word)
         t_uint64 a = reg_A;
         t_uint64 q = reg_Q;
         mpy72fract(reg_A, reg_Q, op_mant, &reg_A, &reg_Q);
-        log_msg(NOTIFY_MSG, "opu::ufm", "Multiplying {%012llo,%012llo} by {%012llo} yields {%012llo,%012llo}\n", a, q, op_mant, reg_A, reg_Q);
+        log_msg(INFO_MSG, "opu::ufm", "Multiplying {%012llo,%012llo} by {%012llo} yields {%012llo,%012llo}\n", a, q, op_mant, reg_A, reg_Q);
     }
 
     if (normalize) {
@@ -219,7 +223,7 @@ int instr_ufm(t_uint64 word)
     x = multics_to_double(reg_A, reg_Q, 0, 1);
     log_msg(NOTIFY_MSG, "opu::ufm", "resulting AQE is %g * 2^%d\n", x, reg_E);
     if (normalize) {
-        log_msg(NOTIFY_MSG, "opu::ufm", "Auto Breakpoint.\n");
+        log_msg(NOTIFY_MSG, "opu::ufm", "Auto Breakpoint for normalize mode.\n");
         (void) cancel_run(STOP_IBKPT);
     }
     return ret;

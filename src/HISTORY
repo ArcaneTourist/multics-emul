@@ -606,3 +606,14 @@ History of pre-release versions
     console.c
         Temporarily disable sending of control chars to the console because current execution
         is spewing garbage on the console.
+
+...
+    Was crashing with the following error
+        bootload_0: Booting system MR12.5 generated 01/11/93 0832.3 mst Mon.
+        0533>2  scas_init: Size too large on config card for MEM
+        0534>7  Multics not in operation; control process: Initializer.SysDaemon.z.
+    The computed size of main memory was 256.
+    The synthetic config deck has a card for 512. 
+    Turns out that rsw switches (but not rscr) *may* need to be set at b010 for 4MW memory size.  A setting of b111 means 256?
+    
+
