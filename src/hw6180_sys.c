@@ -135,7 +135,7 @@ static void hw6180_init(void)
     sim_brk_dflt = SWMASK('E');
 
     // Hardware config -- todo - should be based on config cards!
-    // BUG: need to write config deck at 012000
+    // BUG/TODO: need to write config deck at 012000 ? Probably not
 
     // CPU Switches
     memset(&switches, 0, sizeof(switches));
@@ -170,26 +170,27 @@ static void hw6180_init(void)
         cpu_ports.ports[i] = -1;
 
 
-    init_memory_iom();      // IOX includes unknown instr ldo and has an undocumented mailbox architecture
     //init_memory_iox();
+    init_memory_iom();      // Using IOX causes use of unknown instr "ldo" and IOX has an undocumented mailbox architecture
 
     // Only two of the four SCU masks are used; these correspond to the "A" and "B" rotary switches
     scu.eima_data[0].avail = 1;
     scu.eima_data[1].avail = 1;
 
-    // CPU port 'b'(1) connected to SCU port '7' -- arbitrary
+    // Previously -- CPU port 'b'(1) connected to SCU port '7' -- arbitrary
+    // Now: use SCU port 0 -- scas_init's call to make_card seems to require that CPU be connected to SCU port zero
     int cpu_port = 1;
-    cpu_ports.scu_port = 7;
-    cpu_ports.ports[cpu_port] = cpu_ports.scu_port; // port B connected to SCU
-    scu.ports[cpu_ports.scu_port] = cpu_port;   // SCU port '7' connected to CPU port 'b'
+    cpu_ports.scu_port = 0;
+    cpu_ports.ports[cpu_port] = cpu_ports.scu_port; // port A connected to SCU
+    scu.ports[cpu_ports.scu_port] = cpu_port;   // SCU port '7' connected to CPU port 'a'
     // GB61, pages 9-1 and A-2: Set Mask A to port that the bootload CPU is connected to; Set Mask B to off
     // scu.mask_assign[0] = 1 << cpu_ports.scu_port;
     scu.eima_data[0].raw = 1 << (8 - cpu_ports.scu_port);
     scu.eima_data[0].assigned = 1;
     scu.eima_data[0].port = cpu_ports.scu_port;
 
-    // IOM port 'a'(0) connected to SCU port 0
-    iom.scu_port = 0;
+    // IOM port 'a'(0) connected to SCU port 2
+    iom.scu_port = 2;
     iom.ports[0] = iom.scu_port;    // port A connected to SCU
     scu.ports[iom.scu_port] = 0;
 

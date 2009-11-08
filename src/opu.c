@@ -2448,7 +2448,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 return 0;
             }
             case opcode0_ldt: { // load timer reg (priv)
-                if (get_addr_mode() == BAR_mode || ! is_priv_mode()) {
+                if (get_addr_mode() == BAR_mode || ! PPR.P) {
                     log_msg(WARN_MSG, "OPU::ldt", "Privileged\n");
                     fault_gen(illproc_fault);
                     return 1;
@@ -2524,7 +2524,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                     log_msg(WARN_MSG, "OPU::cams", "Unknown enable/disable mode %06o=>%#o\n", TPR.CA, enable);
                     cancel_run(STOP_WARN);
                 }
-                if (get_addr_mode() == BAR_mode || ! is_priv_mode()) {
+                if (get_addr_mode() == BAR_mode || ! PPR.P) {
                     log_msg(ERR_MSG, "OPU::cams", "fault.\n");
                     fault_gen(illproc_fault);
                     cancel_run(STOP_WARN);
@@ -2686,11 +2686,18 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 }
                 return scu_set_cpu_mask(TPR.CA);    // don't convert via appending
             }
+
             // smic unimplemented
+
             case opcode0_sscr: { // priv
                 // set system controller register (to value in AQ)
-                if (get_addr_mode() == BAR_mode || ! is_priv_mode()) {
-                    log_msg(ERR_MSG, "OPU::sscr", "fault.\n");
+                if (get_addr_mode() == BAR_mode) {
+                    log_msg(ERR_MSG, "OPU::sscr", "fault: BAR mode.\n");
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                if (! PPR.P) {
+                    log_msg(ERR_MSG, "OPU::sscr", "fault: not privileged mode; segment %#o\n", TPR.TSR);
                     fault_gen(illproc_fault);
                     return 1;
                 }
@@ -2704,12 +2711,12 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 if ((TPR.CA & ~7) == ea) {
                     ; // SC mode reg
                     log_msg(DEBUG_MSG, "OPU::opcode::sscr", "mode register selected\n");
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented\n");
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0010) {
                     ; // SC config reg
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented\n");
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0020) {
@@ -2732,26 +2739,26 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                     ret = scu_set_mask(TPR.CA, 7);
                 } else if ((TPR.CA & ~7) == ea + 0030) {
                     // interrupts
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented\n");
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0040) {
                     // calendar
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented\n");
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0050) {
                     // calendar
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented\n");
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0060) {
                     // store unit mode reg
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented\n");
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0070) {
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented\n");
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else {
@@ -2922,7 +2929,7 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
             // ssdr unimplemented
 
             case opcode1_camp: {    // Clear Associative Memory Pages
-                if (get_addr_mode() == BAR_mode || ! is_priv_mode()) {
+                if (get_addr_mode() == BAR_mode || ! PPR.P) {
                     log_msg(WARN_MSG, "OPU::camp", "faulting.\n");
                     fault_gen(illproc_fault);
                     return 1;

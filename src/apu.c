@@ -100,6 +100,7 @@ void set_addr_mode(addr_modes_t mode)
         IR.abs_mode = 1;
         // BUG: T&D tape section 3 wants not-bar-mode true in absolute mode, but section 9 wants false?
         IR.not_bar_mode = 1;    
+        PPR.P = 1;
         if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Setting absolute mode.\n");
     } else if (mode == APPEND_mode) {
         if (opt_debug>0) {
@@ -142,6 +143,7 @@ addr_modes_t get_addr_mode()
 //=============================================================================
 
 int is_priv_mode()
+    // True if in absolute mode or if priv bit is on in segment TPR.TSR
 {
     if (IR.abs_mode)
         return 1;
@@ -158,7 +160,7 @@ int is_priv_mode()
     }
     if (SDWp->priv)
         return 1;
-    if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Priv check fails\n");
+    if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Priv check fails for segment %#o.\n", TPR.TSR);
     return 0;
 }
 
@@ -491,6 +493,13 @@ static int temp_addr_mod(const instr_t *ip)
         ca_temp.soffset = sign18(TPR.CA);
 
         // BUG: Enter append mode & stay if execute a transfer -- fixed?
+    }
+
+    if (cu.instr_fetch) {
+        uint p = is_priv_mode();    // Get priv bit from the SDW for TPR.TSR
+        if (PPR.P != p)
+            log_msg(INFO_MSG, moi, "PPR.P priv flag changing from %c to %c.\n", (PPR.P) ? 'Y' : 'N', p ? 'Y' : 'N');
+        PPR.P = p;
     }
 
     int op = ip->opcode;
