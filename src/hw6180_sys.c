@@ -154,6 +154,7 @@ static void hw6180_init(void)
 
     // Only one SCU
     memset(&scu, 0, sizeof(scu));
+    scu.mode = 1;   // PROGRAM mode
     for (int i = 0; i < ARRAY_SIZE(scu.ports); ++i)
         scu.ports[i] = -1;
 
@@ -179,10 +180,11 @@ static void hw6180_init(void)
 
     // Previously -- CPU port 'b'(1) connected to SCU port '7' -- arbitrary
     // Now: use SCU port 0 -- scas_init's call to make_card seems to require that CPU be connected to SCU port zero
+    // Also, rsw_util$port_info claims base addr is: port-assignment * size/1024
     int cpu_port = 1;
     cpu_ports.scu_port = 0;
-    cpu_ports.ports[cpu_port] = cpu_ports.scu_port; // port A connected to SCU
-    scu.ports[cpu_ports.scu_port] = cpu_port;   // SCU port '7' connected to CPU port 'a'
+    cpu_ports.ports[cpu_port] = cpu_ports.scu_port; // port B connected to SCU
+    scu.ports[cpu_ports.scu_port] = cpu_port;   // SCU port '7' connected to CPU port 'B'
     // GB61, pages 9-1 and A-2: Set Mask A to port that the bootload CPU is connected to; Set Mask B to off
     // scu.mask_assign[0] = 1 << cpu_ports.scu_port;
     scu.eima_data[0].raw = 1 << (8 - cpu_ports.scu_port);

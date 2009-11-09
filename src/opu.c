@@ -2652,6 +2652,8 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                         break;
                     case 4:
                         reg_A = 0;  // see AL-39, configuration switch data; 0 is full memory with 4 word interlace
+                        //for (int i = 0; i < 8; ++i)
+                        //  reg_A = setbits36(reg_A, 13 + (i * 2), 2, 2);
                         log_msg(INFO_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012llo.\n", low, reg_A);
                         break;
                     default:
@@ -2716,7 +2718,8 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0010) {
                     ; // SC config reg
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
+                    log_msg(INFO_MSG, "OPU::opcode::sscr", "sys config switches selected\n");
+                    ret = scu_set_config_switches(TPR.CA);
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else if ((TPR.CA & ~7) == ea + 0020) {
@@ -4820,9 +4823,14 @@ static void rsw_get_port_config(int low_port)
     // ADR: addr assignment; c: port enabled; d: sys init enabled; interlace enabled; coded mem size xxxb
     reg_A = 0;
     for (int port = low_port; port < low_port + 4; ++port) {
+        int enabled = cpu_ports.ports[port] >= 0;   // port enabled?
+#if 0
         int adr = 0; // Only one SCU, so ADR is 000b for lowest memory
+#else
+        int adr = enabled ? cpu_ports.ports[port] & 7 : 0;  // 3 bit port assignment
+        // rsw_util$port_info claims base addr is: port-assignement * size/1024
+#endif
         int byte = adr << 6;
-        int enabled = cpu_ports.ports[port] > 0;    // port enabled?
         byte |= enabled << 5;   // port enabled?
         byte |= enabled << 4;   // sys init enabled? -- yes because we only have one CPU
         byte |= enabled << 3;   // interlace enabled
@@ -4835,7 +4843,10 @@ static void rsw_get_port_config(int low_port)
             // comments in rsw_util.pl1.
             byte |= 2;  // 4MW -- AL39 is incorrect; see dps_mem_size_table in rsw_util.pl1
         }
-        log_msg(INFO_MSG, "OPU::rsw", "CPU port '%c' %s enabled.\n", 'A' + port, enabled ? "is" : "is not");
+        if (enabled)
+            log_msg(INFO_MSG, "OPU::rsw", "CPU port '%c' is enabled for SCU port %d.\n", 'A' + port, adr);
+        else
+            log_msg(INFO_MSG, "OPU::rsw", "CPU port '%c' is not enabled.\n", 'A' + port);
         reg_A = (reg_A << 9) | byte;
     }
 }

@@ -432,14 +432,15 @@ typedef struct {
 } switches_t;
 
 typedef struct {
-    uint ports[8];  // SCU connectivity; designated a..h
+    int ports[8];   // SCU connectivity; designated a..h
     int scu_port;   // What port num are we connected to (same for all SCUs)
 } cpu_ports_t;
 
 typedef struct {
     // int interrupts[32];
     // uint mem_base;   // zero on boot scu
-    // mode reg: not stored here; returned by scu_get_mode_register()
+    // mode reg: mostly not stored here; returned by scu_get_mode_register()
+    int mode;   // program/manual; if 1, sscr instruction can set some fields
 #if 0
     struct {
         unsigned mask_a_assign:9;
@@ -458,7 +459,7 @@ typedef struct {
         unsigned port_mask_4_7:4;
     } config_switches;
 #endif
-    uint ports[8];  // CPU/IOM connectivity; designated 0..7; negative to disable
+    int ports[8];           // CPU/IOM connectivity; designated 0..7; negative to disable
     //t_uint64 masks[4];    // 32bit masks
     //uint mask_assign[4];  //  Bit masks.  Which port(s) is each PIMA reg assigned to?
     struct {
@@ -471,7 +472,7 @@ typedef struct {
 } scu_t;
 
 typedef struct {
-    uint ports[8];  // CPU/IOM connectivity; designated a..h; negative to disable
+    int ports[8];   // CPU/IOM connectivity; designated a..h; negative to disable
     int scu_port;   // which port on the SCU(s) are we connected to?
     enum dev_type channels[64];
     DEVICE* devices[64];

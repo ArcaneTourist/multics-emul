@@ -149,6 +149,7 @@ config panel -- Level 68 System Controller UNIT (4MW SCU)
 
 extern cpu_ports_t cpu_ports;
 extern scu_t scu;   // BUG: we'll need more than one for max memory.  Unless we can abstract past the physical HW's capabilities
+static int pima_parse_raw(int pima, const char *moi);
 
 #if 0
 void scu_dump()
@@ -167,7 +168,7 @@ static int scu_hw_arg_check(const char *tag, t_uint64 addr, int port)
     if (port < 0 || port > 7) {
         log_msg(ERR_MSG, "SCU", "%s: Port %d from sscr is out of range 0..7\n", tag, port);
         cancel_run(STOP_BUG);
-        return 1;
+        return 2;
     }
 
 #if 0
@@ -179,17 +180,17 @@ static int scu_hw_arg_check(const char *tag, t_uint64 addr, int port)
 
     // Verify that HW could have received signal
     if (cpu_port < 0) {
-        log_msg(ERR_MSG, "SCU", "Port %d is disabled\n", cpu_no);
+        log_msg(ERR_MSG, "SCU", "%s: SCU port %d is disabled; it is not connected to anything\n", tag, cpu_no);
         cancel_run(STOP_WARN);
         return 1;
     }
     if (cpu_port > 7) {
-        log_msg(ERR_MSG, "SCU", "Port %d is not enabled (%d).\n", cpu_no, cpu_port);
+        log_msg(ERR_MSG, "SCU", "%s: Port %d is not enabled (%d).\n", tag, cpu_no, cpu_port);
         cancel_run(STOP_WARN);
         return 1;
     }
     if (cpu_ports.ports[cpu_port] != cpu_no) {
-        log_msg(ERR_MSG, "SCU", "Port %d on CPU is not connected to port %d of SCU.\n", cpu_port, cpu_no);
+        log_msg(ERR_MSG, "SCU", "%s: Port %d on CPU is not connected to port %d of SCU.\n", tag, cpu_port, cpu_no);
         cancel_run(STOP_WARN);
         return 1;
     }
@@ -203,8 +204,10 @@ int scu_set_mask(t_uint64 addr, int port)
     // BUG: addr should determine which SCU is selected
     // Implements part of the sscr instruction
 
-    if (scu_hw_arg_check("setmask", addr, port) != 0)
+    if (scu_hw_arg_check("setmask", addr, port) > 1)
         return 1;
+    else
+        log_msg(WARN_MSG, "setmask", "continuing...\n");
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
@@ -237,26 +240,8 @@ int scu_set_mask(t_uint64 addr, int port)
         } else {
             // See AN87
             for (int pima = 0; pima < 2; ++pima) {
-                char name = (pima == 0) ? 'A' : 'B';
                 scu.eima_data[pima].raw = (pima == 0) ? getbits36(reg_A, 0, 9) : getbits36(reg_Q, 0, 9);
-                int found = 0;
-                for (int p = 0; p < 8; ++p)
-                    if (((1<<(8-p) & scu.eima_data[pima].raw)) != 0) {
-                        ++ found;
-                        scu.eima_data[pima].assigned = 1;
-                        scu.eima_data[pima].port = p;
-                        log_msg(NOTIFY_MSG, "SCU::set-mask", "Assigning port %d to MASK %c.\n", p, name);
-                    }
-                if ((scu.eima_data[pima].raw & 1) != 0) {
-                    scu.eima_data[pima].assigned = 0;
-                    log_msg(NOTIFY_MSG, "SCU::set-mask", "Unassigning MASK %c.\n", name);
-                    ++ found;
-                }
-                if (found != 1) {
-                    log_msg(WARN_MSG, "SCU::set-mask", "%d ports enabled for MASK %c: %#o\n", found, name, scu.eima_data[pima].raw);
-                    if (found != 0 || scu.eima_data[pima].raw != 0)
-                        cancel_run(STOP_WARN);
-                }
+                pima_parse_raw(pima, "SCU::set-mask");
             }
         }
     return 0;
@@ -267,8 +252,10 @@ int scu_set_cpu_mask(t_uint64 addr)
 {
     // BUG: addr should determine which SCU is selected
 
-    if (scu_hw_arg_check("smcm", addr, 0) != 0)
+    if (scu_hw_arg_check("smcm", addr, 0) > 1)
         return 1;
+    else
+        log_msg(WARN_MSG, "smcm", "continuing...\n");
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
@@ -281,8 +268,12 @@ int scu_get_mode_register(t_uint64 addr)
     // Implements part of the rscr instruction
     // BUG: addr should determine which SCU is selected
 
+#if 0
+    // BUG: is it really OK for all ports to be disabled?
     if (scu_hw_arg_check("get-mode-register", addr, 0) != 0)
-        return 1;
+        log_msg(ERR_MSG, "get-mode-register", "But proceeding anyway");
+#endif
+
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
@@ -313,8 +304,12 @@ int scu_get_config_switches(t_uint64 addr)
     // Returns info appropriate to a 4MW SCU
     // BUG: addr should determine which SCU is selected
 
-    if (scu_hw_arg_check("get-mode-register", addr, 0) != 0)
+    const char *tag = "get-config-switches";
+    const char *moi = "SCU::get-config-switches";
+#if 0
+    if (scu_hw_arg_check(tag, addr, 0) != 0)
         return 1;
+#endif
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
@@ -324,45 +319,176 @@ int scu_get_config_switches(t_uint64 addr)
     // interrupt mask A port assignment
 #if 0
     if (!scu.eima_data[0].avail)
-        reg_A |= setbits36(reg_A, 0, 9, 0);
+        reg_A = setbits36(reg_A, 0, 9, 0);
     else if (scu.eima_data[0].assigned)
-        reg_A |= setbits36(reg_A, 0, 9, 1);
+        reg_A = setbits36(reg_A, 0, 9, 1);
     else
-        reg_A |= setbits36(reg_A, 0, 9, 1<<(8 - scu.eima_data[0].port));
+        reg_A = setbits36(reg_A, 0, 9, 1<<(8 - scu.eima_data[0].port));
 #else
-    reg_A |= setbits36(reg_A, 0, 9, scu.eima_data[0].raw);
+    reg_A = setbits36(reg_A, 0, 9, scu.eima_data[0].raw);
 #endif
-    //reg_A |= setbits36(reg_A, 9, 3, 7);   // size of lower store -- 2^(7+5) == 4096 K-words
-    reg_A |= setbits36(reg_A, 9, 3, 5); // size of lower store -- 2^(5+5) == 1024 K-words
-    reg_A |= setbits36(reg_A, 12, 4, 017);  // all four stores online
-    reg_A |= setbits36(reg_A, 16, 4, cpu_no);   // requester's port #
-    reg_A |= setbits36(reg_A, 21, 1, 1);    // programmable; BUG
-    reg_A |= setbits36(reg_A, 22, 1, 0);    // non-existent address logic enabled
-    reg_A |= setbits36(reg_A, 23, 7, 0);    // nea size
-    reg_A |= setbits36(reg_A, 30, 1, 1);    // internally interlaced
-    reg_A |= setbits36(reg_A, 31, 1, 0);    // store B is lower?
+    //reg_A = setbits36(reg_A, 9, 3, 7);    // size of lower store -- 2^(7+5) == 4096 K-words
+    reg_A = setbits36(reg_A, 9, 3, 5);  // size of lower store -- 2^(5+5) == 1024 K-words
+    reg_A = setbits36(reg_A, 12, 4, 017);   // all four stores online
+    reg_A = setbits36(reg_A, 16, 4, cpu_no);    // requester's port #
+    reg_A = setbits36(reg_A, 21, 1, 1); // programmable; BUG
+    reg_A = setbits36(reg_A, 22, 1, 0); // non-existent address logic enabled
+    reg_A = setbits36(reg_A, 23, 7, 0); // nea size
+    reg_A = setbits36(reg_A, 30, 1, 1); // internally interlaced
+    reg_A = setbits36(reg_A, 31, 1, 0); // store B is lower?
     for (int i = 0; i < 4; ++ i) {
-        int enabled = scu.ports[i] >= 0;
-        reg_A |= setbits36(reg_A, 32+i, 1, enabled);    // enable masks for ports 0-3
+        int pima = 0;
+        int port = i + pima * 4;
+        int enabled = scu.ports[port] >= 0;
+        reg_A = setbits36(reg_A, 32+i, 1, enabled); // enable masks for ports 0-3
+        if (enabled)
+            log_msg(INFO_MSG, moi, "Port %d is enabled, it points to port %d.\n", port, scu.ports[port]);
+        else
+            log_msg(INFO_MSG, moi, "Port %d is disabled.\n", port);
     }
 
     reg_Q = 0;
 #if 0
     // interrupt mask B port assignment; BUG
     if (!scu.eima_data[0].avail)
-        reg_Q |= setbits36(reg_Q, 0, 9, 0);
+        reg_Q = setbits36(reg_Q, 0, 9, 0);
     else if (scu.eima_data[0].assigned)
-        reg_Q |= setbits36(reg_Q, 0, 9, 1);
+        reg_Q = setbits36(reg_Q, 0, 9, 1);
     else
-        reg_Q |= setbits36(reg_Q, 0, 9, 1<<(8 - scu.eima_data[0].port));
+        reg_Q = setbits36(reg_Q, 0, 9, 1<<(8 - scu.eima_data[0].port));
 #else
-    reg_Q |= setbits36(reg_Q, 0, 9, scu.eima_data[0].raw);
+    reg_Q = setbits36(reg_Q, 0, 9, scu.eima_data[0].raw);
 #endif
-    reg_Q |= setbits36(reg_Q, 57-36, 7, 0); // cyclic port priority switches; BUG
+    reg_Q = setbits36(reg_Q, 57-36, 7, 0);  // cyclic port priority switches; BUG
     for (int i = 0; i < 4; ++ i) {
-        int enabled = scu.ports[i+4] >= 0;
-        reg_Q |= setbits36(reg_Q, 68-36+i, 1, enabled); // enable masks for ports 4-7
+        int pima = 1;
+        int port = i + pima * 4;
+        int enabled = scu.ports[port] >= 0;
+        reg_Q = setbits36(reg_Q, 68-36+i, 1, enabled);  // enable masks for ports 4-7
+        if (enabled)
+            log_msg(INFO_MSG, moi, "Port %d is enabled, it points to port %d.\n", port, scu.ports[port]);
+        else
+            log_msg(INFO_MSG, moi, "Port %d is disabled.\n", port);
     }
+
+    return 0;
+}
+
+
+int scu_set_config_switches(t_uint64 addr)
+{
+    // Implements part of the sscr instruction
+    // Expects info appropriate to a 4MW SCU
+    // BUG: addr should determine which SCU is selected
+    const char* moi = "SCU::set-config-switches";
+
+    if (scu_hw_arg_check(moi, addr, 0) > 1)
+        return 1;
+    else
+        log_msg(WARN_MSG, moi, "continuing...\n");
+    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
+    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+
+
+    // See scr.incl.pl1 
+
+    if (scu.mode != 1) {
+        log_msg(WARN_MSG, moi, "SCU mode is 'PROGRAM', not 'MANUAL' -- sscr not allowed to set switches.\n");
+        cancel_run(STOP_BUG);
+    }
+
+    // get settings from reg A
+
+    int pima = 0;
+    scu.eima_data[pima].raw = getbits36(reg_A, 0, 9);
+    pima_parse_raw(pima, moi);
+
+    // BUG: We don't allow changes to many of the settings
+    //getbits36(reg_A, 9, 3);   // size of lower store -- 2^(5+5) == 1024 K-words
+    //getbits36(reg_A, 12, 4);  // all four stores online
+    // requester's port cannot be set from bits 16..20 of A 
+    scu.mode = getbits36(reg_A, 21, 1); // programmable?
+    // getbits36(reg_A, 22, 1); // non-existent address logic enabled
+    // getbits36(reg_A, 23, 7); // nea size
+    // getbits36(reg_A, 30, 1); // internally interlaced
+    // getbits36(reg_A, 31, 1); // store B is lower?
+    // check enable masks -- see rscr reg a 32..36
+    // Set enable masks for ports 0-3
+    for (int i = 0; i < 4; ++ i) {
+        int enabled = getbits36(reg_A, 32+i, 1);
+        int port = i+pima*4;
+        if (! enabled) {
+            if (scu.ports[port] < 0)
+                log_msg(INFO_MSG, moi, "Port %d still disabled.\n", port);
+            else
+                log_msg(INFO_MSG, moi, "Port %d now disabled.\n", port);
+            scu.ports[port] = -1;
+        } else
+            if (scu.ports[port] < 0) {
+                log_msg(ERR_MSG, moi, "Cannot set port-enable-register flag on port %d\n", port);
+                cancel_run(STOP_BUG);
+            } else
+                log_msg(INFO_MSG, moi, "Port %d still enabled.\n", port);
+        // BUG: switch to using enable/disable flag
+    }
+
+
+    // get settings from reg Q
+    
+    pima = 1;
+    scu.eima_data[pima].raw = getbits36(reg_Q, 0, 9);
+    pima_parse_raw(pima, moi);
+
+    // BUG  getbits36(reg_Q, 57-36, 7, 0);  // cyclic port priority switches; BUG
+    for (int i = 0; i < 4; ++ i) {
+        int enabled = getbits36(reg_Q, 32+i, 1);
+        int port = i+pima*4;
+        if (! enabled) {
+            if (scu.ports[port] < 0)
+                log_msg(INFO_MSG, moi, "Port %d still disabled.\n", port);
+            else
+                log_msg(INFO_MSG, moi, "Port %d now disabled.\n", port);
+            scu.ports[port] = -1;
+        } else
+            if (scu.ports[port] < 0) {
+                log_msg(ERR_MSG, moi, "Cannot set port-enable-register flag on port %d\n", port);
+                cancel_run(STOP_BUG);
+            } else
+                log_msg(INFO_MSG, moi, "Port %d still enabled.\n", port);
+        // BUG: switch to using enable/disable flag
+    }
+
+    log_msg(NOTIFY_MSG, moi, "Doing BUG check.\n");
+    int ret = 0;
+    t_uint64 a = reg_A;
+    t_uint64 q = reg_Q;
+    scu_get_config_switches(addr);
+    if (a == reg_A) {
+        log_msg(NOTIFY_MSG, moi, "we handled reg A correctly\n");
+    } else {
+        log_msg(ERR_MSG, moi, "sscr specified reg A %012llo\n", a);
+        log_msg(ERR_MSG, moi, "we used              %012llo\n", reg_A);
+        reg_A = a;
+        ret = 1;
+    }
+    if (q == reg_Q) {
+        log_msg(NOTIFY_MSG, moi, "we handled reg Q correctly\n");
+    } else {
+        log_msg(ERR_MSG, moi, "sscr specified reg Q %012llo\n", q);
+        log_msg(ERR_MSG, moi, "we used              %012llo\n", reg_Q);
+        reg_Q = q;
+        ret = 1;
+    }
+
+    if (ret == 0) {
+        log_msg(WARN_MSG, moi, "Unfinished but OK.\n");
+        cancel_run(STOP_WARN);
+    }
+    else {
+        log_msg(ERR_MSG, moi, "Unfinished and incorrect.\n");
+        cancel_run(STOP_BUG);
+    }
+    return 1;
 
     return 0;
 }
@@ -373,8 +499,10 @@ int scu_get_mask(t_uint64 addr, int port)
     // BUG: addr should determine which SCU is selected
     // Implements part of the rscr instruction
 
-    if (scu_hw_arg_check("getmask", addr, port) != 0)
+    if (scu_hw_arg_check("getmask", addr, port) > 1)
         return 1;
+    else
+        log_msg(WARN_MSG, "getmask", "continuing...\n");
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
@@ -485,3 +613,27 @@ int scu_cioc(t_uint64 addr)
     return 0;
 }
 
+
+static int pima_parse_raw(int pima, const char *moi)
+{
+    char pima_name = (pima == 0) ? 'A' : 'B';
+    int found = 0;
+    for (int p = 0; p < 8; ++p)
+        if (((1<<(8-p) & scu.eima_data[pima].raw)) != 0) {
+            ++ found;
+            scu.eima_data[pima].assigned = 1;
+            scu.eima_data[pima].port = p;
+            log_msg(NOTIFY_MSG, moi, "Assigning port %d to MASK %c.\n", p, pima_name);
+        }
+    if ((scu.eima_data[pima].raw & 1) != 0) {
+        scu.eima_data[pima].assigned = 0;
+        log_msg(NOTIFY_MSG, moi, "Unassigning MASK %c.\n", pima_name);
+        ++ found;
+    }
+    if (found != 1) {
+        log_msg(WARN_MSG, moi, "%d ports enabled for MASK %c: %#o\n", found, pima_name, scu.eima_data[pima].raw);
+        if (found != 0 || scu.eima_data[pima].raw != 0)
+            cancel_run(STOP_WARN);
+    }
+    return found != 1;
+}
