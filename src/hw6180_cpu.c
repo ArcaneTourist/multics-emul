@@ -84,8 +84,7 @@ int8 reg_E; // Exponent
 // Note: EAQ register is just a combination of the E, A, and Q registers
 uint32 reg_X[8];    // Index Registers, 18 bits; SIMH expects data type to be no larger than needed
 IR_t IR;        // Indicator register
-static t_uint64 saved_IR;   // Only for sending to/from SIMH
-static t_uint64 saved_IC;   // Only for sending to/from SIMH; saved_IC address also stored in sim_PC external
+static uint32 saved_IR; // Only for sending to/from SIMH
 BAR_reg_t BAR;      // Base Addr Register; 18 bits
 static uint16 saved_BAR[2];
 uint32 reg_TR;      // Timer Reg, 27 bits -- only valid after calls to SIMH clock routines
@@ -94,7 +93,9 @@ AR_PR_t AR_PR[8];   // Combined Pointer Registers (42 bits) and Address Register
     // Note that the eight PR registers are also known by the names: ap, ab, bp, bb, lp, lb, sp, sb
 t_uint64 saved_ar_pr[8];    // packed versions of the AR/PR registers; format specific to this simulator
 PPR_t PPR;      // Procedure Pointer Reg, 37 bits, internal only
-static t_uint64 saved_PPR;
+static t_uint64 saved_PPR_addr; // Only for sending to/from SIMH; see also sim_PC and saved_IC
+static uint8 saved_PPR_perms;   // Only for sending to/from SIMH
+static uint32 saved_IC; // Only for sending to/from SIMH; duplicates saved_PPR_addr
 TPR_t TPR;      // Temporary Pointer Reg, 42 bits, internal only
 static t_uint64 saved_DSBR;     // Descriptor Segment Base Register, 51 bits
 // SDWAM_t SDWAM[16];   // Segment Descriptor Word Associative Memory, 88 bits
@@ -118,6 +119,7 @@ cpu_t *cpup = &cpu_info;
 // perhaps PV_ZMSB (most significant bit is numbered zero)
 REG cpu_reg[] = {
     // structure members: name="PC", loc=PC, radix=<8>, width=36, offset=<0>, depth=<1>, flags=, qptr=
+    { ORDATA (PPR, saved_PPR_addr, 64) },       // Packed PPR.PSR and PPR.IC (but not priv flag or rings)
     { ORDATA (IC, saved_IC, 18) },      // saved_IC address also stored in sim_PC external
     { GRDATA (IR, saved_IR, 2, 18, 0), REG_RO | REG_VMIO | REG_USER1},
     { ORDATA (A, reg_A, 36) },
@@ -128,7 +130,7 @@ REG cpu_reg[] = {
     { BRDATA (PR, saved_ar_pr, 8, 42, 8), REG_VMIO | REG_USER2 },
     // stuff needed to yield a save/restore sufficent for examining memory dumps
     { BRDATA (BAR, saved_BAR, 8, 9, 2) },
-    { ORDATA (PPR, saved_PPR, 37) },
+    { GRDATA (PPR_perms, saved_PPR_perms, 2, 4, 0) },
     { ORDATA (DSBR, saved_DSBR, 51) },
     // The following is a hack, but works as long as you don't save/restore across
     // different architectures.
@@ -167,7 +169,8 @@ static t_stat cpu_dep (t_value v, t_addr addr, UNIT *uptr, int32 switches);
 DEVICE cpu_dev = {
     // todo: revisit cpu_dev: add debug, examine, deposit, etc
     "CPU", &cpu_unit, cpu_reg, cpu_mod,
-    1, 8, 24, 1, 8, 36,                     // should we say 18 for awidth?
+    // 1, 8, 24, 1, 8, 36,                      // should we say 18 for awidth?
+    1, 8, 43, 1, 8, 36,                     // we give SIMH "packed" addresses; see addr_emul_to_simh()
     &cpu_ex, &cpu_dep, &cpu_reset,
     &cpu_boot, NULL, NULL,
     NULL, DEV_DEBUG
@@ -336,10 +339,12 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
     // When using an IOX, the bootload_tape_label.alm code will check the result in the
     // status mailbox.   So, we might as well run the IOX to do the I/O.
     // ++ opt_debug; ++ cpu_dev.dctrl;
+    log_msg(INFO_MSG, "CPU::boot", "Issuing IOM interrupt.\n");
     if (cpu_dev.dctrl != 0) opt_debug = 1;  // todo: should CPU control all debug settings?
     iom_interrupt();
     // -- opt_debug; -- cpu_dev.dctrl;
     bootimage_loaded = 1;
+    log_msg(INFO_MSG, "CPU::boot", "Returning to SIMH.\n");
 #endif
 
     return 0;
@@ -571,7 +576,11 @@ ninstr = 0;
 static void save_to_simh(void)
 {
     saved_IC = PPR.IC;
-    save_IR(&saved_IR);
+    addr_modes_t mode = get_addr_mode();    // BUG: wrong after a fault, etc -- need to save mode during fetch
+    saved_PPR_addr = addr_emul_to_simh(mode, PPR.PSR, PPR.IC);
+    t_uint64 sIR;
+    save_IR(&sIR);
+    saved_IR = sIR & MASKBITS(18);
     save_PR_registers();
 if (0)
 {
@@ -587,10 +596,8 @@ if (0)
 
     saved_BAR[0] = BAR.base;
     saved_BAR[1] = BAR.bound;
-    saved_PPR = (PPR.IC) | // 18 bits
-        (PPR.P << 18) | // 1 bits
-        (PPR.PRR << 19) | // 3 bits
-        ((t_uint64) PPR.PSR << 22); // 15 bits
+    saved_PPR_perms = PPR.P | // 1 bit
+        (PPR.PRR << 1); // 3 bits
     saved_DSBR = 
         cpup->DSBR.stack | // 12 bits
         (cpup->DSBR.u << 12) | // 1 bit
@@ -607,10 +614,18 @@ void restore_from_simh(void)
     restore_PR_registers();
     BAR.base = saved_BAR[0];
     BAR.bound = saved_BAR[1];
-    // PPR.IC = saved_PPR & MASK18;
-    PPR.P = (saved_PPR >> 18) & 1;
-    PPR.PRR = (saved_PPR >> 19) & 7;
-    PPR.PSR = (saved_PPR >> 22);
+    PPR.P = saved_PPR_perms & 1;
+    PPR.PRR = saved_PPR_perms >> 1;
+    addr_modes_t mode;
+    unsigned segno;
+    unsigned offset;    // ignored -- we'll use the explicit seperate IC
+    if (addr_simh_to_emul(saved_PPR_addr, &mode, &segno, &offset) != 0) {
+        log_msg(ERR_MSG, "restore-from-simh", "cannot convert PPR.\n");
+        cancel_run(STOP_BUG);
+    }
+    if (segno >= 0)
+        PPR.PSR = segno;
+    PPR.IC = saved_IC;  // allow user to update "IC"
     cpup->DSBR.stack = saved_DSBR & MASKBITS(12);
     cpup->DSBR.u = (saved_DSBR >> 12) & 1;
     cpup->DSBR.bound = (saved_DSBR >> 13) & MASKBITS(14);
@@ -1788,21 +1803,50 @@ char *bin2text(t_uint64 word, int n)
 
 //=============================================================================
 
-static t_stat cpu_ex (t_value *eval_array, t_addr addr, UNIT *uptr, int32 switches)
+static t_stat cpu_ex (t_value *eval_array, t_addr simh_addr, UNIT *uptr, int32 switches)
 {
     // BUG: sanity check args
     // NOTE: We ignore UNIT, because all CPUS see the same memory
     // SIMH Documention is incorrect; SIMH code expects examine() to only
     // write a single value (often a member of an array of size sim_emax)
-    memcpy(eval_array, &M[addr], sizeof(M[0])); // SIMH absolute reference
+
+    // log_msg(INFO_MSG, "CPU:examine", "Examine address is %012llo; uptr is %p\n", simh_addr, uptr);
+
+    addr_modes_t mode;
+    unsigned segno;
+    unsigned offset;
+    if (addr_simh_to_emul(simh_addr, &mode, &segno, &offset) != 0) {
+        log_msg(NOTIFY_MSG, "CPU:examine", "Cannot convert %012llo in unit %p to an address\n", simh_addr, uptr);
+        return SCPE_ARG;    // BUG: is this the right failure code
+    }
+    unsigned abs_addr;
+    if (addr_any_to_abs(&abs_addr, mode, segno, offset) != 0) {
+        if (mode == APPEND_mode)
+            log_msg(NOTIFY_MSG, "CPU:examine", "Cannot convert %012llo=>{%03o|%06o} in unit %p to an address\n", simh_addr, segno, offset, uptr);
+        log_msg(NOTIFY_MSG, "CPU:examine", "Cannot convert %012llo=>{mode=%d,seg=%#o,off=%#o} in unit %p to an address\n", simh_addr, mode, segno, offset, uptr);
+        return SCPE_ARG;    // BUG: is this the right failure code
+    }
+
+    memcpy(eval_array, &M[abs_addr], sizeof(M[0])); // SIMH absolute reference
     return 0;
 }
 
-static t_stat cpu_dep (t_value v, t_addr addr, UNIT *uptr, int32 switches)
+static t_stat cpu_dep (t_value v, t_addr simh_addr, UNIT *uptr, int32 switches)
 {
     // BUG: sanity check args
     // NOTE: We ignore UNIT, because all CPUS see the same memory
-    M[addr] = v;        // SIMH absolute reference; BUG: use store_abs_word in case we need cache invalidation
+
+    addr_modes_t mode;
+    unsigned segno;
+    unsigned offset;
+    if (addr_simh_to_emul(simh_addr, &mode, &segno, &offset) != 0)
+        return SCPE_ARG;    // BUG: is this the right failure code
+    unsigned abs_addr;
+    if (addr_any_to_abs(&abs_addr, mode, segno, offset) != 0)
+        return SCPE_ARG;    // BUG: is this the right failure code
+
+    M[abs_addr] = v;        // SIMH absolute reference; BUG: use store_abs_word in case we need cache invalidation
+
     return 0;
 }
 

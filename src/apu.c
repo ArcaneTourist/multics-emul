@@ -1186,6 +1186,25 @@ SDW_t* get_sdw()
 }
 
 
+//=============================================================================
+
+int addr_any_to_abs(uint *addrp, addr_modes_t mode, int segno, int offset)
+    // Return the 24-bit absolute address
+{
+    if (mode == ABSOLUTE_mode) {
+        *addrp = offset;
+        return 0;
+    }
+    if (mode == BAR_mode) {
+        log_msg(WARN_MSG, "APU::addr_any_to_abs", "BAR mode not supported\n");
+        return -1;
+    }
+    return convert_address(addrp, segno, offset, 0);
+}
+
+//=============================================================================
+
+
 int convert_address(uint* addrp, int seg, int offset, int fault)
 {
     // Return the 24-bit absolute address for an offset in the specified segment
@@ -1219,6 +1238,7 @@ int convert_address(uint* addrp, int seg, int offset, int fault)
 //}
 
 
+//=============================================================================
 
 int get_seg_addr(uint offset, uint perm_mode, uint *addrp)
 {
@@ -1233,6 +1253,8 @@ int get_seg_addr(uint offset, uint perm_mode, uint *addrp)
         log_msg(WARN_MSG, "APU::get_seg_addr", "page-in faulted\n");
     return ret;
 }
+
+//=============================================================================
 
 static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uint *maxaddrp)
 {

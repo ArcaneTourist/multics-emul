@@ -642,6 +642,10 @@ extern void log_msg(enum log_level, const char* who, const char* format, ...);
 //extern void complain_msg(const char* who, const char* format, ...);
 extern void out_msg(const char* format, ...);
 
+/* The emulator gives SIMH a "packed" address form that encodes mode, segment, and offset */
+extern t_uint64 addr_emul_to_simh(addr_modes_t mode, unsigned segno, unsigned offset);
+extern int addr_simh_to_emul(t_uint64 addr, addr_modes_t *modep, unsigned *segnop, unsigned *offsetp);
+
 extern void restore_from_simh(void);    // SIMH has a different form of some internal variables
 extern int cmd_dump_history(int32 arg, char *buf);
 extern int cmd_xdebug(int32 arg, char *buf);
@@ -709,6 +713,7 @@ extern int instr_fno(void);
 
 extern int cmd_dump_vm(int32 arg, char *buf);
 extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
+extern int addr_any_to_abs(uint *addrp, addr_modes_t mode, int segno, int offset);
 extern int convert_address(uint* addrp, int seg, int offset, int fault);
 extern int addr_mod(const instr_t *ip);
 extern SDW_t* get_sdw();

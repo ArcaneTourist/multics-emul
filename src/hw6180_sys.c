@@ -92,9 +92,9 @@ int bootimage_loaded = 0;
 */
 
 // The following are set by parse_addr() and used by fprint_sym()
-static int last_parsed_seg;
-static int last_parsed_offset;
-static t_addr last_parsed_addr;
+//static int last_parsed_seg;
+//static int last_parsed_offset;
+//static t_addr last_parsed_addr;
 
 t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
 {
@@ -199,6 +199,9 @@ static void hw6180_init(void)
     int con_chan = 012; // channels 010 and higher are probed for an operators console
     iom.channels[con_chan] = DEV_CON;
     iom.devices[con_chan] = &opcon_dev;
+
+
+    log_msg(NOTIFY_MSG, "SYS::init", "Sizeof t_addr is %d -- %d bits\n", sizeof(t_addr), sizeof(t_addr) * 8);
 }
 
 
@@ -388,10 +391,20 @@ extern char* print_lpw(t_addr addr);    // BUG: put in hdr
 
 static where_t prior_dump;
 
-t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
+t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int32 sw)
 {
+    //log_msg(INFO_MSG, "SYS:fprint_sym", "addr is %012llo; val-ptr is %p, uptr is %p\n", simh_addr, val, uptr);
+
     if (uptr == &cpu_unit) {
-        // memory request -- print memory specified by SIMH absolute M[addr].  However
+        // memory request -- print memory specified by SIMH 
+        addr_modes_t mode;
+        unsigned segno;
+        unsigned offset;
+        if (addr_simh_to_emul(simh_addr, &mode, &segno, &offset) != 0)
+            return SCPE_ARG;
+        unsigned abs_addr;
+        if (addr_any_to_abs(&abs_addr, mode, segno, offset) != 0)
+            return SCPE_ARG;
         // note that parse_addr() was called by SIMH to determine the absolute addr.
         static int need_init = 1;
         if (need_init) {
@@ -402,22 +415,19 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
         /* First print matching source line if we're dumping instructions */
         if (sw & SWMASK('M')) {
             // M -> instr -- print matching source line if we have one
-            int offset = last_parsed_offset + addr - last_parsed_addr;
-            if (offset >= 0) {
-                where_t where;
-                seginfo_find_all(last_parsed_seg, offset, &where);
-                if (where.line != NULL && prior_dump.line_no != where.line_no && prior_dump.line != where.line) {
-                    fprintf(ofile, "Line %d: %s\n", where.line_no, where.line);
-                    fprintf(ofile, "%06o:\t", addr);
-                    prior_dump.line_no = where.line_no;
-                    prior_dump.line = where.line;
-                }
+            where_t where;
+            seginfo_find_all(segno, offset, &where);
+            if (where.line != NULL && prior_dump.line_no != where.line_no && prior_dump.line != where.line) {
+                fprintf(ofile, "Line %d: %s\n", where.line_no, where.line);
+                fprintf(ofile, "%06o:\t", abs_addr);    // BUG: print seg|offset too
+                prior_dump.line_no = where.line_no;
+                prior_dump.line = where.line;
             }
         }
         /* Next, we always output the numeric value */
-        t_addr alow = addr;
-        t_addr ahi = addr;
-        fprintf(ofile, "%012llo", M[addr]);
+        t_addr alow = abs_addr;
+        t_addr ahi = abs_addr;
+        fprintf(ofile, "%012llo", M[abs_addr]);
         if (sw & SWMASK('S')) {
             // SDWs are two words
             ++ ahi;
@@ -442,18 +452,18 @@ t_stat fprint_sym (FILE *ofile, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
         /* See if any other format was requested (but don't bother honoring multiple formats */
         if (sw & SWMASK('M')) {
             // M -> instr
-            char *instr = print_instr(M[addr]);
+            char *instr = print_instr(M[abs_addr]);
             fprintf(ofile, " %s", instr);
         } else if (sw & SWMASK('L')) {
             // L -> LPW
-            fprintf(ofile, " %s", print_lpw(addr));
+            fprintf(ofile, " %s", print_lpw(abs_addr));
         } else if (sw & SWMASK('P')) {
             // P -> PTW
-            char *s = print_ptw(M[addr]);
+            char *s = print_ptw(M[abs_addr]);
             fprintf(ofile, " %s", s);
         } else if (sw & SWMASK('S')) {
             // S -> SDW
-            char *s = print_sdw(M[addr], M[addr+1]);
+            char *s = print_sdw(M[abs_addr], M[abs_addr+1]);
             fprintf(ofile, " %s", s);
         } else if (sw & SWMASK('A')) {
             // already done
@@ -565,13 +575,22 @@ static int inline is_octal_digit(char x)
 static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
 {
 
-    // SIMH calls this function to parse an address.   SIMH wants the
-    // absolute address.   However, SIMH may pass the resulting address
-    // to fprint_sym() or other simulator functions that need to know
-    // the segment and offset.   So, we set the following globals to in
-    // order to communicate that info:
-    //      int last_parsed_seg, int last_parsed_offset, t_addr last_parsed_addr
+    // SIMH calls this function to parse an address.
+    // We return a packed format that encodes addressing mode, segment, and offset.
+    // Obsolete comments:
+    //      SIMH wants the absolute address.   However, SIMH may pass the
+    //      resulting address to fprint_sym() or other simulator functions
+    //      that need to know the segment and offset.   So, we set the
+    //      following globals to in order to communicate that info:
+    //          int last_parsed_seg, int last_parsed_offset, t_addr last_parsed_addr
 
+    addr_modes_t last_parsed_mode;
+    int last_parsed_seg;
+    int last_parsed_offset;
+    t_addr last_parsed_addr;
+
+    char *cptr_orig = cptr;
+    char debug_strp[1000]; strcpy(debug_strp, cptr);
     *optr = cptr;
     int force_abs = 0;
     int force_seg = 0;
@@ -635,33 +654,18 @@ out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
     
     prior_dump.line = NULL;
 
-    uint addr;
+    // uint addr;
     if (force_abs || (seg == -1 && get_addr_mode() == ABSOLUTE_mode)) {
+        last_parsed_mode = ABSOLUTE_mode;
         *optr = cptr;
-        addr = offset;
+        // addr = offset;
         last_parsed_seg = -1;
         last_parsed_offset = offset;
-        last_parsed_addr = addr;
+        // last_parsed_addr = addr;
     } else {
-        uint saved_seg = -1;
-        if (seg != -1) {
-            saved_seg = TPR.TSR;
-            TPR.TSR = seg;
-        }
-        fault_gen_no_fault = 1;
-        if (get_seg_addr(offset, 0, &addr) != 0) {
-            if (saved_seg != -1)
-                TPR.TSR = saved_seg;
-            fault_gen_no_fault = 0;
-            *optr = cptr;
-            return 0;
-        }
-        fault_gen_no_fault = 0;
-        if (saved_seg != -1)
-            TPR.TSR = saved_seg;
-        last_parsed_seg = seg;
+        last_parsed_mode = APPEND_mode;
+        last_parsed_seg = (seg == -1) ? TPR.TSR : seg;
         last_parsed_offset = offset;
-        last_parsed_addr = addr;
         *optr = cptr;
     }
 
@@ -674,11 +678,97 @@ out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
         addr = word & MASKBITS(24);
     }
 #endif
+
+#if 1
+    if (last_parsed_mode == APPEND_mode)
+        log_msg(INFO_MSG, "SYS::parse_addr", "String '%s' is %03o|%06o\n", debug_strp, last_parsed_seg, last_parsed_offset);
+    else
+        log_msg(INFO_MSG, "SYS::parse_addr", "String '%s' is %08o\n", debug_strp, last_parsed_offset);
+#endif
+    log_msg(INFO_MSG, "SYS::parse_addr", "Used %d chars; residue is '%s'.\n", cptr - cptr_orig, *optr);
+    return addr_emul_to_simh(last_parsed_mode, last_parsed_seg, last_parsed_offset);
+}
+
+
+static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr simh_addr)
+{
+    // log_msg(INFO_MSG, "SYS:fprint_addr", "Device is %s; addr is %012llo; dptr is %p\n", dptr->name, simh_addr, dptr);
+
+    addr_modes_t mode;
+    unsigned segno;
+    unsigned offset;
+    if (addr_simh_to_emul(simh_addr, &mode, &segno, &offset) != 0)
+        fprintf(stream, "<<<%08llo>>>", simh_addr);
+    else
+        if (mode == APPEND_mode)
+            fprintf(stream, "%03o|%06o", segno, offset);
+        else if (mode == BAR_mode)
+            fprintf(stream, "BAR<<<%llo->%08o>>>", simh_addr, offset);  // BUG
+        else
+            fprintf(stream, "%08o", offset);
+}
+
+//=============================================================================
+
+/* The emulator gives SIMH a "packed" address form that encodes mode, segment, and offset */
+
+t_uint64 addr_emul_to_simh(addr_modes_t mode, unsigned segno, unsigned offset)
+{
+    if (mode == APPEND_mode) {
+        if (offset >> 18 != 0) {
+            log_msg(NOTIFY_MSG, "SYS::addr", "EMUL %03o|%06o overflows 18-bit offset.\n", segno, offset);
+            cancel_run(STOP_BUG);
+        }
+        if (segno >> 15 != 0) {
+            log_msg(NOTIFY_MSG, "SYS::addr", "EMUL %03o|%06o overflows 15-bit segment.\n", segno, offset);
+            cancel_run(STOP_BUG);
+        }
+    } else {
+        if (offset >> 24 != 0) {
+            log_msg(NOTIFY_MSG, "SYS::addr", "EMUL %08o overflows 24-bit address.\n", offset);
+            cancel_run(STOP_BUG);
+        }
+        segno = 0;
+    }
+
+    t_uint64 addr = offset & MASKBITS(24);
+    addr |= (t_uint64) (segno & MASKBITS(15)) << 25;
+    addr |= (t_uint64) (mode & MASKBITS(2)) << 41;
+#if 0
+    if (mode == APPEND_mode)
+        log_msg(INFO_MSG, "SYS::addr", "EMUL %03o|%06o packs to %012llo\n", segno, offset, addr);
+    else
+        log_msg(INFO_MSG, "SYS::addr", "EMUL %08o packs to %012llo\n", offset, addr);
+#endif
     return addr;
 }
 
 
-static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr addr)
+int addr_simh_to_emul(t_uint64 addr, addr_modes_t *modep, unsigned *segnop, unsigned *offsetp)
 {
-    fprintf(stream, "%06o", addr);
+    if (((addr >> 24) & 1) != 0) {
+        log_msg(NOTIFY_MSG, "SYS::addr", "SIMH %012llo has an overflow on offset #.\n", addr);
+        return 1;
+    }
+    if (((addr >> 40) & 1) != 0) {
+        log_msg(NOTIFY_MSG, "SYS::addr", "SIMH %012llo has an overflow on segment #.\n", addr);
+        return 1;
+    }
+    *offsetp = addr & MASKBITS(24);
+    *segnop = (addr >> 25) & MASKBITS(15);
+    *modep = (addr >> 41) & MASKBITS(2);
+    if (*modep == APPEND_mode)
+        if (*offsetp >> 18 != 0) {
+            log_msg(NOTIFY_MSG, "SYS::addr", "SIMH %012llo aka %03o|%06o overflows 18-bit offset.\n", addr, *segnop, *offsetp);
+        return 1;
+    }
+#if 0
+    if (*modep == APPEND_mode)
+        log_msg(INFO_MSG, "SYS::addr", "SIMH %012llo is %03o|%06o\n", addr, *segnop, *offsetp);
+    else
+        log_msg(INFO_MSG, "SYS::addr", "SIMH %012llo is %08o\n", addr, *offsetp);
+#endif
+    return 0;
 }
+
+//=============================================================================
