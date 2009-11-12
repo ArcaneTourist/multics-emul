@@ -418,8 +418,13 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
             where_t where;
             seginfo_find_all(segno, offset, &where);
             if (where.line != NULL && prior_dump.line_no != where.line_no && prior_dump.line != where.line) {
+                fprintf(ofile, "\r\n");
+                fprint_addr(ofile, NULL, simh_addr);    // UNIT doesn't include a reference to a DEVICE
+                fprintf(ofile, ":\t");
                 fprintf(ofile, "Line %d: %s\n", where.line_no, where.line);
-                fprintf(ofile, "%06o:\t", abs_addr);    // BUG: print seg|offset too
+                // fprintf(ofile, "%06o:\t", abs_addr); // BUG: print seg|offset too
+                fprint_addr(ofile, NULL, simh_addr);    // UNIT doesn't include a reference to a DEVICE
+                fprintf(ofile, ":\t");
                 prior_dump.line_no = where.line_no;
                 prior_dump.line = where.line;
             }
@@ -679,13 +684,13 @@ out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
     }
 #endif
 
-#if 1
+#if 0
     if (last_parsed_mode == APPEND_mode)
         log_msg(INFO_MSG, "SYS::parse_addr", "String '%s' is %03o|%06o\n", debug_strp, last_parsed_seg, last_parsed_offset);
     else
         log_msg(INFO_MSG, "SYS::parse_addr", "String '%s' is %08o\n", debug_strp, last_parsed_offset);
-#endif
     log_msg(INFO_MSG, "SYS::parse_addr", "Used %d chars; residue is '%s'.\n", cptr - cptr_orig, *optr);
+#endif
     return addr_emul_to_simh(last_parsed_mode, last_parsed_seg, last_parsed_offset);
 }
 

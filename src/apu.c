@@ -997,13 +997,16 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         SDW_t *SDWp = get_sdw();    // Get SDW for TPR.TSR
         uint sdw_r1;
         if (SDWp == NULL) {
-            // BUG 12/05/2008 -- bootload_1.alm, instr 17 triggers this via an epp instr
-            // BUG: it seems odd that we should ignore this fault
-            log_msg(WARN_MSG, "APU:ITS", "Segment %#o is missing.\n", TPR.TSR);
-            if (! cpu.apu_state.fhld)
+            // Note that constructing or copying "null" pointers will trigger this
+            // condition.   We don't fault unless the instruction later tries to
+            // dereference the "bad" pointer.
+            if (! cpu.apu_state.fhld) {
+                log_msg(WARN_MSG, "APU:ITS", "Segment %#o is missing.\n", TPR.TSR);
                 cancel_run(STOP_BUG);
-            sdw_r1 = 7;
-            ret = 1;
+                ret = 1;
+            } else
+                log_msg(INFO_MSG, "APU:ITS", "Segment %#o is missing.\n", TPR.TSR);
+            sdw_r1 = 7;     // BUG/TODO: what ring should we use when there is none?  Currently using worst case -- 7
         } else
             sdw_r1 = SDWp->r1;
         TPR.TRR = max3(its_rn, sdw_r1, TPR.TRR);
@@ -1096,6 +1099,12 @@ int fetch_appended(uint offset, t_uint64 *wordp)
         return fetch_abs_word(offset, wordp);
     }
 
+    t_uint64 simh_addr = addr_emul_to_simh(addr_mode, TPR.TSR, offset);
+    if (sim_brk_summ && sim_brk_test(simh_addr, SWMASK('M'))) {
+        log_msg(WARN_MSG, "APU", "Memory Breakpoint on read.\n");
+        cancel_run(STOP_IBKPT);
+    }
+
     uint addr;
     uint minaddr, maxaddr;  // results unneeded
     int ret = page_in(offset, 0, &addr, &minaddr, &maxaddr);
@@ -1117,6 +1126,12 @@ int store_appended(uint offset, t_uint64 word)
         // impossible
         log_msg(ERR_MSG, "APU::store-append", "Not APPEND mode\n");
         cancel_run(STOP_BUG);
+    }
+
+    t_uint64 simh_addr = addr_emul_to_simh(addr_mode, TPR.TSR, offset);
+    if (sim_brk_summ && sim_brk_test(simh_addr, SWMASK('W') | SWMASK('M'))) {
+        log_msg(WARN_MSG, "APU", "Memory Breakpoint on write.\n");
+        cancel_run(STOP_IBKPT);
     }
 
     uint addr;
@@ -1357,9 +1372,11 @@ static SDWAM_t* page_in_sdw()
         if (segno * 2 >= 16 * (cpup->DSBR.bound + 1))
 #endif
         {
-            cu.word1flags.oosb = 1;         // ERROR: nothing clears
-            log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault now pending.\n", cpup->DSBR.bound, cpup->DSBR.bound);
-            // fault_gen(acc_viol_fault);
+            // Note that this test gets triggered when "null" pointers are created or copied even though
+            // they're not being dereferenced.   We flag for a held fault and don't actually generate the
+            // fault unless the instruction attempts to dereference through the "bad" pointer.
+            cu.word1flags.oosb = 1;         // BUG: nothing clears
+            log_msg(INFO_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault now pending.\n", cpup->DSBR.bound, cpup->DSBR.bound);
             cpu.apu_state.fhld = 1;
             return NULL;
         }
@@ -1370,7 +1387,7 @@ static SDWAM_t* page_in_sdw()
         // Descriptor table is paged
         if (segno * 2 >= 16 * (cpup->DSBR.bound + 1)) {
             // BUG 12/05/2008 -- bootload_1.alm, instr 17 triggers this
-            log_msg(WARN_MSG, "APU::append", "Initial check: Segno outside paged DSBR bound of 0%o(%u) -- OOSB fault now pending.\n", cpup->DSBR.bound, cpup->DSBR.bound);
+            log_msg(INFO_MSG, "APU::append", "Initial check: Segno outside paged DSBR bound of 0%o(%u) -- OOSB fault now pending.\n", cpup->DSBR.bound, cpup->DSBR.bound);
             cu.word1flags.oosb = 1;         // ERROR: nothing clears
             // fault_gen(acc_viol_fault);
             cpu.apu_state.fhld = 1;

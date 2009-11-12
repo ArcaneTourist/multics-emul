@@ -1009,6 +1009,7 @@ int addr_mod_eis_addr_reg(instr_t *ip)
     switch (op) {
         case opcode1_s9bd:
             cancel_run(STOP_IBKPT);
+            // fall through
         case opcode1_a9bd:
         {
             int sign = (op == opcode1_a9bd) ? 1 : -1;
@@ -1068,9 +1069,11 @@ if (AR_PR[ar].wordno == 010000005642) {
                 AR_PR[ar].AR.bitno = creg % 9;
             } else {
                 int creg = sign18(TPR.CA);
-                AR_PR[ar].wordno += soffset + (9 *  AR_PR[ar].AR.charno + 36 * creg + AR_PR[ar].AR.bitno) / 36;
-                AR_PR[ar].AR.charno = (9 * AR_PR[ar].AR.charno + 36 * creg + AR_PR[ar].AR.bitno % 36) / 9;
-                AR_PR[ar].AR.bitno = (9 * AR_PR[ar].AR.charno + 36 * creg + AR_PR[ar].AR.bitno) % 9;
+                // AR_PR[ar].wordno += soffset + (9 *  AR_PR[ar].AR.charno + 36 * creg + AR_PR[ar].AR.bitno) / 36;
+                // The text of AL39 is correct, but the equation is wrong; multiplying creg by 36 makes no sense
+                AR_PR[ar].wordno += soffset + (9 *  AR_PR[ar].AR.charno + 1 * creg + AR_PR[ar].AR.bitno) / 36;
+                AR_PR[ar].AR.charno = (9 * AR_PR[ar].AR.charno + 1 * creg + AR_PR[ar].AR.bitno % 36) / 9;
+                AR_PR[ar].AR.bitno = (9 * AR_PR[ar].AR.charno + 1 * creg + AR_PR[ar].AR.bitno) % 9;
             }
             // handle anomaly (AL39 AR description)
             AR_PR[ar].PR.bitno = AR_PR[ar].AR.charno * 9;   // 0, 9, 18, 27

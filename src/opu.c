@@ -455,14 +455,11 @@ static int do_an_op(instr_t *ip)
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
                     int tag = ip->mods.single.tag;
-log_msg(NOTIFY_MSG, "OPU::stba", "Reg A is        %012llo; tag is %#o.\n", reg_A, tag);
-log_msg(NOTIFY_MSG, "OPU::stba", "fetched word is %012llo\n", word);
                     for (int i = 0; i < 4; ++i) {
                         if ((tag & 040) != 0)
                             word = setbits36(word, i * 9, 9, getbits36(reg_A, i * 9, 9));
                         tag <<= 1;
                     }
-log_msg(NOTIFY_MSG, "OPU::stba", "result word is  %012llo\n", word);
                     ret = store_word(TPR.CA, word);
                 }
                 return ret;
@@ -472,14 +469,11 @@ log_msg(NOTIFY_MSG, "OPU::stba", "result word is  %012llo\n", word);
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
                     int tag = ip->mods.single.tag;
-log_msg(NOTIFY_MSG, "OPU::stbq", "Reg Q is        %012llo; tag is %#o.\n", reg_Q, tag);
-log_msg(NOTIFY_MSG, "OPU::stbq", "fetched word is %012llo\n", word);
                     for (int i = 0; i < 4; ++i) {
                         if ((tag & 040) != 0)
                             word = setbits36(word, i * 9, 9, getbits36(reg_Q, i * 9, 9));
                         tag <<= 1;
                     }
-log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                     ret = store_word(TPR.CA, word);
                 }
                 return ret;
@@ -2554,55 +2548,61 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
 
             case opcode0_rscr: { // priv
                 // read SCU (system controller) register into AQ; See rsw for processor switches
+                // Al-39 is wrong about the location of 'y'; see code for
+                // privileged_mode_ut$rscr in privileged_mode_ut.alm.
                 int ret = 0;
-                uint y = (TPR.CA >> 16) & 3;    // get bits one and two of 18bit CA
-                uint ea = y << 15;              // and set just those bits in ea
-                log_msg(DEBUG_MSG, "OPU::opcode::rscr", "CA is %#o (y0%03ox)\n", TPR.CA, (TPR.CA >> 3) & 077);
-                log_msg(DEBUG_MSG, "OPU::opcode::rscr", "EA is 0%04o\n", ea);
+                uint y = TPR.CA >> 10;
+                if (y > 7) {
+                    log_msg(WARN_MSG, "OPU::opcode::rscr", "CA of %#o has high bits set, yielding port # greater than 7: %d (%#o)n", y, y);
+                    cancel_run(STOP_BUG);
+                }
+                uint ea = TPR.CA & 01770;
+                log_msg((TPR.CA == 040) ? DEBUG_MSG : INFO_MSG, "OPU::opcode::rscr", "CA is %#o; port # is %d; function is %#o\n", TPR.CA, y, ea);
+                // BUG/TODO: calls to scu_xxx below should probably have TPR.CA replaced by 'y' or y<<15 or y*bank_size
                 t_bool show_q = 1;
-                if ((TPR.CA & ~7) == ea) {
+                if (ea == 0) {
                     ; // SC mode reg
                     log_msg(INFO_MSG, "OPU::opcode::rscr", "mode register selected\n");
                     ret = scu_get_mode_register(TPR.CA);
-                } else if ((TPR.CA & ~7) == ea + 0010) {
+                } else if (ea == 0010) {
                     ; // SC config reg
                     log_msg(INFO_MSG, "OPU::opcode::rscr", "sys config switches selected\n");
                     ret = scu_get_config_switches(TPR.CA);
-                } else if ((TPR.CA & ~7) == ea + 0020) {
+                } else if (ea == 0020) {
                     log_msg(DEBUG_MSG, "OPU::opcode::rscr", "port zero selected\n");
                     ret = scu_get_mask(TPR.CA, 0);
-                } else if ((TPR.CA & ~7) == ea + 0120)
+                } else if (ea == 0120)
                     ret = scu_get_mask(TPR.CA, 1);
-                else if ((TPR.CA & ~7) == ea + 0220)
+                else if (ea == 0220)
                     ret = scu_get_mask(TPR.CA, 2);
-                else if ((TPR.CA & ~7) == ea + 0320)
+                else if (ea == 0320)
                     ret = scu_get_mask(TPR.CA, 3);
-                else if ((TPR.CA & ~7) == ea + 0420)
+                else if (ea == 0420)
                     ret = scu_get_mask(TPR.CA, 4);
-                else if ((TPR.CA & ~7) == ea + 0520)
+                else if (ea == 0520)
                     ret = scu_get_mask(TPR.CA, 5);
-                else if ((TPR.CA & ~7) == ea + 0620)
+                else if (ea == 0620)
                     ret = scu_get_mask(TPR.CA, 6);
-                else if ((TPR.CA & ~7) == ea + 0720) {
+                else if (ea == 0720) {
                     ret = scu_get_mask(TPR.CA, 7);
-                } else if ((TPR.CA & ~7) == ea + 0030) {
+                } else if (ea == 0030) {
                     // interrupts
                     log_msg(WARN_MSG, "OPU::opcode::rscr", "interrupts unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
-                } else if ((TPR.CA & ~7) == ea + 0040) {
+                } else if (ea == 0040) {
                     ret = scu_get_calendar(TPR.CA);
                     show_q = 0;
-                } else if ((TPR.CA & ~7) == ea + 0050) {
+                } else if (ea == 0050) {
                     ret = scu_get_calendar(TPR.CA);
                     show_q = 0;
-                } else if ((TPR.CA & ~7) == ea + 0060 || (TPR.CA & ~7) == ea + 0070) {
+                } else if (ea == 0060 || ea == 0070) {
                     // get store unit mode reg
                     log_msg(WARN_MSG, "OPU::opcode::rscr", "get store unit mode reg unimplemented\n");
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else {
-                    log_msg(DEBUG_MSG, "OPU::opcode::rscr", "bad argument, CA %#o\n", TPR.CA);
+                    log_msg(WARN_MSG, "OPU::opcode::rscr", "bad argument, CA %#o => function %#o\n", TPR.CA, ea);
                     cancel_run(STOP_BUG);
                     ret = 1;
                     // error
@@ -2693,6 +2693,8 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
 
             case opcode0_sscr: { // priv
                 // set system controller register (to value in AQ)
+                // Al-39 is wrong about the location of 'y'; see code for
+                // privileged_mode_ut$rscr in privileged_mode_ut.alm.
                 if (get_addr_mode() == BAR_mode) {
                     log_msg(ERR_MSG, "OPU::sscr", "fault: BAR mode.\n");
                     fault_gen(illproc_fault);
@@ -2706,66 +2708,70 @@ log_msg(NOTIFY_MSG, "OPU::stbq", "result word is  %012llo\n", word);
                 log_msg(DEBUG_MSG, "OPU::opcode::sscr", "A = %llo\n", reg_A);
                 log_msg(DEBUG_MSG, "OPU::opcode::sscr", "Q = %llo\n", reg_Q);
                 int ret = 0;
-                uint y = (TPR.CA >> 16) & 3;    // 18bit CA
-                uint ea = y << 15;
-                log_msg(DEBUG_MSG, "OPU::opcode::sscr", "EA is 0%04o\n", ea);
-                log_msg(DEBUG_MSG, "OPU::opcode::sscr", "CA is 0%04o (0%03o=>0%03o)\n", TPR.CA, (TPR.CA >> 3), TPR.CA & ~7);
-                if ((TPR.CA & ~7) == ea) {
+                uint y = TPR.CA >> 10;
+                if (y > 7) {
+                    log_msg(WARN_MSG, "OPU::opcode::rscr", "CA of %#o has high bits set, yielding port # greater than 7: %d (%#o)n", y, y);
+                    cancel_run(STOP_BUG);
+                }
+                uint ea = TPR.CA & 01770;
+                log_msg((TPR.CA == 040) ? DEBUG_MSG : INFO_MSG, "OPU::opcode::sscr", "CA is %#o; port # is %d; function is %#o\n", TPR.CA, y, ea);
+                // BUG/TODO: calls to scu_xxx below should probably have TPR.CA replaced by 'y' or y<<15 or y*bank_size
+                if (ea == 0) {
                     ; // SC mode reg
                     log_msg(DEBUG_MSG, "OPU::opcode::sscr", "mode register selected\n");
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o, yielding function %#o\n", TPR.CA, ea);
                     cancel_run(STOP_BUG);
                     ret = 1;
-                } else if ((TPR.CA & ~7) == ea + 0010) {
+                } else if (ea == 0010) {
                     ; // SC config reg
                     log_msg(INFO_MSG, "OPU::opcode::sscr", "sys config switches selected\n");
                     ret = scu_set_config_switches(TPR.CA);
                     cancel_run(STOP_BUG);
                     ret = 1;
-                } else if ((TPR.CA & ~7) == ea + 0020) {
+                } else if (ea == 0020) {
                     log_msg(DEBUG_MSG, "OPU::opcode::sscr", "port zero selected\n");
                     ret = scu_set_mask(TPR.CA, 0);
-                } else if ((TPR.CA & ~7) == ea + 0120)
+                } else if (ea == 0120)
                     ret = scu_set_mask(TPR.CA, 1);
-                else if ((TPR.CA & ~7) == ea + 0220)
+                else if (ea == 0220)
                     ret = scu_set_mask(TPR.CA, 2);
-                else if ((TPR.CA & ~7) == ea + 0320)
+                else if (ea == 0320)
                     ret = scu_set_mask(TPR.CA, 3);
-                else if ((TPR.CA & ~7) == ea + 0420)
+                else if (ea == 0420)
                     ret = scu_set_mask(TPR.CA, 4);
-                else if ((TPR.CA & ~7) == ea + 0520)
+                else if (ea == 0520)
                     ret = scu_set_mask(TPR.CA, 5);
-                else if ((TPR.CA & ~7) == ea + 0620)
+                else if (ea == 0620)
                     ret = scu_set_mask(TPR.CA, 6);
-                else if ((TPR.CA & ~7) == ea + 0720) {
+                else if (ea == 0720) {
                     log_msg(DEBUG_MSG, "OPU::opcode::sscr", "port seven selected\n");
                     ret = scu_set_mask(TPR.CA, 7);
-                } else if ((TPR.CA & ~7) == ea + 0030) {
+                } else if (ea == 0030) {
                     // interrupts
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o, yielding function %#o\n", TPR.CA, ea);
                     cancel_run(STOP_BUG);
                     ret = 1;
-                } else if ((TPR.CA & ~7) == ea + 0040) {
+                } else if (ea == 0040) {
                     // calendar
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o, yielding function %#o\n", TPR.CA, ea);
                     cancel_run(STOP_BUG);
                     ret = 1;
-                } else if ((TPR.CA & ~7) == ea + 0050) {
+                } else if (ea == 0050) {
                     // calendar
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o, yielding function %#o\n", TPR.CA, ea);
                     cancel_run(STOP_BUG);
                     ret = 1;
-                } else if ((TPR.CA & ~7) == ea + 0060) {
+                } else if (ea == 0060) {
                     // store unit mode reg
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o, yielding function %#o\n", TPR.CA, ea);
                     cancel_run(STOP_BUG);
                     ret = 1;
-                } else if ((TPR.CA & ~7) == ea + 0070) {
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o\n", TPR.CA);
+                } else if (ea == 0070) {
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "unimplemented; CA == %#o, yielding function %#o\n", TPR.CA, ea);
                     cancel_run(STOP_BUG);
                     ret = 1;
                 } else {
-                    log_msg(WARN_MSG, "OPU::opcode::sscr", "bad argument, CA %#o\n", TPR.CA);
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "bad argument, CA %#o, yielding function %#o\n", TPR.CA, ea);
                     cancel_run(STOP_BUG);
                     ret = 1;
                     // error
@@ -4251,7 +4257,7 @@ static int op_csl(const instr_t* ip)
     uint mf2bits = ip->addr & MASKBITS(7);
     eis_mf_t mf2;
     (void) parse_mf(mf2bits, &mf2);
-    log_msg(INFO_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
     char *ops[16] = { "clear", "and", "x&!y", "x", "!x&y", "y", "xor", "or", "!or", "!xor", "!y", "!x&y", "!x", "x|!y", "nand", "set" };
     log_msg(INFO_MSG, moi, "bool oper: %#o =b%d%d%d%d (%s), fill: %d\n", bolr, (bolr>>3)&1, (bolr>>2)&1, (bolr>>1)&1, bolr&1, ops[bolr], fill);
 
@@ -4286,7 +4292,7 @@ static int op_csl(const instr_t* ip)
             break;
         }
         flag_t r = (bolr >> (3 - ((bit1 << 1) | bit2))) & 1;    // like indexing into a truth table
-        log_msg(INFO_MSG, moi, "nbits1=%d, nbits2=%d; %d op(%#o) %d => %d\n", desc1.n, desc2.n, bit1, bolr, bit2, r);
+        log_msg(DEBUG_MSG, moi, "nbits1=%d, nbits2=%d; %d op(%#o) %d => %d\n", desc1.n, desc2.n, bit1, bolr, bit2, r);
         if (r == bit2) {
             // Do an ordinary "get" to advance the ptr
             if (get_eis_bit(&mf2, &desc2, &bit2) != 0) {
@@ -4553,7 +4559,7 @@ static int mop_exec_single(const eis_mf_t *mop_mfp, eis_alpha_desc_t *mop_descp,
                 --mopinfo.n_src;
                 if (src != 0)
                     mopinfo.flags.z = 0;
-                log_msg(ERR_MSG, moi, "Fetched src %#o\n", src);
+                log_msg(DEBUG_MSG, moi, "Fetched src %#o\n", src);
                 if (! mopinfo.flags.es) {
                     if (src == 0)
                         src = mopinfo.eit[1];   // normally " "

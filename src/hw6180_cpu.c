@@ -550,7 +550,7 @@ ninstr = 0;
         }
 #if 0
         if (reason == 0 && PPR.IC == 014256 && reg_A == (t_uint64) 0777771000000) {
-            log_msg(NOTIFY_MSG, "MAIN", "AutoBreakpoint for debug tape\n");
+            log_msg(NOTIFY_MSG, "MAIN", "Auto Breakpoint for debug tape\n");
             reason = STOP_IBKPT;
         }
 #endif
@@ -783,18 +783,24 @@ static t_stat control_unit(void)
                 cpu.cycle = FAULT_cycle;
                 cpu.irodd_invalid = 1;
             } else {
-                if (sim_brk_summ && sim_brk_test (cpu.read_addr, SWMASK ('E'))) {
-                    log_msg(WARN_MSG, "CU", "Execution Breakpoint\n");
+                t_uint64 simh_addr = addr_emul_to_simh(get_addr_mode(), PPR.PSR, PPR.IC - PPR.IC % 2);
+#if 0
+                if (sim_brk_summ && sim_brk_test (simh_addr, SWMASK ('E'))) {
+                    log_msg(WARN_MSG, "CU", "Execution Breakpoint (fetch even)\n");
                     reason = STOP_IBKPT;    /* stop simulation */
                 }
+#endif
                 if (fetch_word(PPR.IC - PPR.IC % 2 + 1, &cu.IRODD) != 0) {
                     cpu.cycle = FAULT_cycle;
                     cpu.irodd_invalid = 1;
                 } else {
-                    if (sim_brk_summ && sim_brk_test (cpu.read_addr, SWMASK ('E'))) {
-                        log_msg(WARN_MSG, "CU", "Execution Breakpoint\n");
+#if 0
+                    t_uint64 simh_addr = addr_emul_to_simh(get_addr_mode(), PPR.PSR, PPR.IC - PPR.IC % 2 + 1);
+                    if (sim_brk_summ && sim_brk_test (simh_addr, SWMASK ('E'))) {
+                        log_msg(WARN_MSG, "CU", "Execution Breakpoint (fetch odd)\n");
                         reason = STOP_IBKPT;    /* stop simulation */
                     }
+#endif
                     cpu.irodd_invalid = 0;
                     if (opt_debug && get_addr_mode() != ABSOLUTE_mode)
                         log_msg(DEBUG_MSG, "CU", "Fetched odd half of instruction pair from %06o\n", PPR.IC - PPR.IC % 2 + 1);
@@ -1078,7 +1084,8 @@ static t_stat control_unit(void)
             }
 
             if (sim_brk_summ) {
-                if (sim_brk_test (PPR.IC, SWMASK ('E'))) {
+                t_uint64 simh_addr = addr_emul_to_simh(get_addr_mode(), PPR.PSR, PPR.IC);
+                if (sim_brk_test (simh_addr, SWMASK ('E'))) {
                     // BUG: misses breakpoints on target of xed, rpt, and similar instructions
                     // because those instructions don't update the IC.  Some of those instructions
                     // do however provide their own breakpoint checks.
@@ -1480,7 +1487,9 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
     }
 
     if (sim_brk_summ) {
-        if (sim_brk_test (addr, SWMASK ('M'))) {
+        // Note that fetch_appended() has its own test
+        t_uint64 simh_addr = addr_emul_to_simh(ABSOLUTE_mode, 0, addr);
+        if (sim_brk_test (simh_addr, SWMASK ('M'))) {
             log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address %#o.  Fetched value %012llo\n", addr, M[addr]);
             (void) cancel_run(STOP_IBKPT);
         }
@@ -1556,18 +1565,26 @@ int store_abs_word(uint addr, t_uint64 word)
             (void) cancel_run(STOP_BUG);
             return 0;
     }
-    if (sim_brk_summ)
-        if (sim_brk_test(addr, SWMASK('W') | SWMASK('M') | SWMASK('E'))) {
-            if (sim_brk_test(addr, SWMASK ('W'))) {
+    if (sim_brk_summ) {
+        // Note that store_appended() has its own test
+        t_uint64 simh_addr = addr_emul_to_simh(ABSOLUTE_mode, 0, addr);
+        uint mask;
+        if ((mask = sim_brk_test(simh_addr, SWMASK('W') | SWMASK('M') | SWMASK('E'))) != 0) {
+            if ((mask & SWMASK ('W')) != 0) {
                 log_msg(NOTIFY_MSG, "CU::store", "Memory Write Breakpoint, address %#o\n", addr);
                 (void) cancel_run(STOP_IBKPT);
-            } else if (sim_brk_test(addr, SWMASK ('M'))) {
+            } else if ((mask & SWMASK ('M')) != 0) {
                 log_msg(NOTIFY_MSG, "CU::store", "Memory Breakpoint, address %#o\n", addr);
                 (void) cancel_run(STOP_IBKPT);
-            } else
+            } else if ((mask & SWMASK ('E')) != 0) {
                 log_msg(NOTIFY_MSG, "CU::store", "Write to a location that has an execution breakpoint, address %#o\n", addr);
+            } else {
+                log_msg(NOTIFY_MSG, "CU::store", "Write to a location that has an unknown type of breakpoint, address %#o\n", addr);
+                (void) cancel_run(STOP_IBKPT);
+            }
             log_msg(INFO_MSG, "CU::store", "Address %08o: value was %012llo, storing %012llo\n", addr, M[addr], word);
         }
+    }
 
     M[addr] = word; // absolute memory reference
     if (addr == cpu.IC_abs) {
