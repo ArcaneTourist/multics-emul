@@ -26,7 +26,6 @@ using namespace std;
 #include <vector>
 
 #include "sim_defs.h"
-#include "symtab.h"
 extern "C" void out_msg(const char* format, ...);
 
 int listing_parse(FILE *f, source_file &src);

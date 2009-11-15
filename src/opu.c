@@ -2235,7 +2235,7 @@ static int do_an_op(instr_t *ip)
             // drl unimplemented
 
             case opcode0_xec: {
-                // todo: combine with xec
+                // todo: combine with xed
                 // todo: re-implement via setting flags and return to control_unit()
                 // todo: fault if xec invokes xec
                 // todo: handle rpd repeats
@@ -4104,7 +4104,7 @@ static int op_cmpb(const instr_t* ip)
     const char* moi = "OPU::cmpb";
 
     uint fill = ip->addr >> 17;
-    uint trunc_enable = (ip->addr >> 8) & 1;
+    // uint trunc_enable = (ip->addr >> 8) & 1; // Ignored for cmpb
     uint mf2bits = ip->addr & MASKBITS(7);
     eis_mf_t mf2;
     (void) parse_mf(mf2bits, &mf2);
@@ -4123,6 +4123,7 @@ static int op_cmpb(const instr_t* ip)
 
     log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_bit_desc_to_text(&ip->mods.mf1, &desc1));
     log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_bit_desc_to_text(&mf2, &desc2));
+    log_msg(DEBUG_MSG, moi, "fill bit %d\n", fill);
 
     int ret = 0;
 

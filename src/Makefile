@@ -28,7 +28,7 @@ mt.o: *.h
 math.o: *.h
 math_real.o: *.h
 console.o: *.h
-symtab.o: *.h
+#symtab.o: *.h
 listing.o: *.h
 seginfo.o: *.h
 debug_run.o: *.h

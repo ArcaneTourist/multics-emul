@@ -480,6 +480,7 @@ static int get_mf_an_addr(const eis_mf_t* mfp, uint y, int nbits, uint *addrp, i
     // TODO, flag_t advance:
     // Would be efficient for VM system to expose the bounds of the page we're
     // addressing.  That would avoid using the VM for every single word.
+    // Done?
     // Could have page-in always set a global.   The fetch/store y-block
     // routines could also benefit.
     
@@ -618,8 +619,10 @@ static int get_eis_an_fwd(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *ni
 
     uint need_fetch = 0;
     if (descp->first) {
-        if (get_eis_an_base(mfp, descp) != 0)
+        if (get_eis_an_base(mfp, descp) != 0) {
+            cancel_run(STOP_WARN);
             return 1;
+        }
         if (opt_debug>0) log_msg(DEBUG_MSG, moi, "First char is at addr %#o, bit offset %d\n", descp->curr.addr, descp->curr.bitpos);
         need_fetch = 1;
     } else {

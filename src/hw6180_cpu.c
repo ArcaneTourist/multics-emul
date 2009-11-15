@@ -2,15 +2,25 @@
     hw6180_cpu.c
 
     Provides the topmost level of instruction processing, the sim_instr()
-    function which fetches instructions and updates the program counter.
-    Provides fault and interrupt handling.
-    See opu.c for implemention of individual instructions.
-    See apu.c for implemention of addressing.
-    Provides routines for fetching from memory and storing to memory.
+    function.  The SIMH package calls our sim_instr() function and expects
+    it to fetch instructions, excecute them, and update the program counter.
+
+    Also provides fault and interrupt handling.
+
+    Also provides routines for fetching from memory and storing to memory.
+    (Note that the physical CPU had no direct access to memory; memory 
+    belonged to the system controllers.)
+
     Also provides the cpu_boot() routine which simulates the way an IOM or
     other hardware would load the first record from a boot tape into memory.
-    Provides definitions of most of the data structures related to
-    a CPU.
+
+    Defines most of the global data structures related to a CPU.
+
+    See opu.c for implemention of individual instructions.
+    See apu.c for implemention of addressing.
+    See README.source for more information about which files hold which
+    parts of the emulator.
+
 */
 
 
@@ -23,84 +33,101 @@
 #include "sim_tape.h"
 #include "bits.h"
 
-#define getbit18(x,n)  ((((x) >> (17-n)) & 1) != 0) // return nth bit of an 18bit half word
-
-// BUG: Make sure all data types referenced in sim_devices[] are sized as the min size for number of bits
-
 //-----------------------------------------------------------------------------
 // *** SIMH specific externs
 
-#define MAXMEMSIZE (16*1024*1024)
-t_uint64 M[MAXMEMSIZE]; /* memory */
+// TODO: Remove these if they become available via the SIMH sim_defs.h header
 extern int32 sim_interval;
 extern uint32 sim_brk_summ;
 extern int32 sim_switches;
 
 //-----------------------------------------------------------------------------
+// *** Main memory
+
+#define MAXMEMSIZE (16*1024*1024)
+t_uint64 M[MAXMEMSIZE];
+
+//-----------------------------------------------------------------------------
 // *** Registers
 
-// We don't have a simple program counter -- we have HW virtual memory
-// PPR pseudo-register is the program counter.   The PPR is composed of
-// registers from the appending unit and the control unit:
-//  AU:PSR -- segment number (15 bits); not used in absolute mode
-//  CU:IC -- offset (18 bits)
-//  See also
-//      AU:P -- privileged
-//      AU:PRR: 3 bits -- ring #
-// We should probably provide SIMH with our own addr rtn and provide for
-// handling absolute, bar, and append modes 
+// We give SIMH a description of our CPU "registers" and pointers to the
+// variables that hold "register" contents.  This allows SIMH to provide the
+// user with commands to display and change the registers.  By SIMH convention,
+// the globals for the registers are defined here and are described in
+// the cpu_reg[] array.  The cpu_reg[] array is itself referenced indirectly
+// by the sim_devices[] array which is known to SIMH.   The sim_devices[]
+// array is defined in h6180_sys.c
 
+// SIMH expects the registers to be sized just large enough to hold the
+// number of bits we claim when we describe the register to SIMH.
+// Thus, the "18-bit" index registers use a 32-bit data type and the
+// 36-bit registers use a 64-bit data type.
 
-/* OBSOLETE PC COMMENTS */
-// todo: Figure this out after fetch and addr code is finished
-//
-// We don't have a simple PC -- we have a segment, page, and offset
-// we should probably use our own addr rtn and provide for handling
-// absolute, bar, and append modes
-//
-// would SIMH accept a reg array?  probably not as good as custom addr rtns
-//
-//  PPR.IC offset
-//  Maybe dump fetched instr to PC?
-//  PPR.PSR Procedure segment register [15 bits]
-//  Probably the following from addr.c:
-/*
-       append unit processing
-       see section 6 -- formation of a virt mem addr
-           we have effective seg num segno and a computed
-           addr (offset) in TPR.SNR and TPR.CA
-       check segment boundries
-       see fig 5-4 flowchart
-*/
-//  OU history has an copy of the CU ICT (offset from PSR)
-//  FYI, APU history  has an ESN effective seg # 
-    
+// TODO -- Re-review to make sure all data types referenced in sim_devices[]
+// are sized as the min size for number of bits
 
+// The first register that SIMH expects is a program counter.   However,
+// we don't have a simple program counter.  We have hardware virtual memory
+// and three addressing modes -- BAR, absolute, and appending (segmented mode).
+// The PPR pseudo-register is really the program counter.   The PPR is
+// composed of registers from the appending unit and the control unit:
+//      AU:PSR -- segment number (15 bits); not used in absolute mode
+//      CU:IC -- instruction counter (18 bits)
+//      See also
+//          AU:P -- privileged mode flag
+//          AU:PRR: 3 bits -- ring number
+//          BAR register -- only for BAR mode which Multics doesn't use.
+// We tell SIMH that our "PC" is the saved_PPR_addr global which contains
+// only the portions of the PPR that are needed to form addresses.
 
-t_uint64 reg_A; // Accumulator, 36 bits
-t_uint64 reg_Q; // Quotient, 36 bits
-// Note: AQ register is just a combination of the A and Q registers
-int8 reg_E; // Exponent
-// Note: EAQ register is just a combination of the E, A, and Q registers
-uint32 reg_X[8];    // Index Registers, 18 bits; SIMH expects data type to be no larger than needed
-IR_t IR;        // Indicator register
+// TODO: If we wanted to support multiple CPUs, all of the following
+// globals would need to be moved into a per-CPU data structure.
+
+// The registers below are listed in the same order as the first page of
+// section 3 of AL-39.
+
+// 'E', 'A', and 'Q' Registers
+// Note that the "AQ" register is just a combination of the A and Q registers
+// Note that the "EAQ" register is a combination of the E, A, and Q registers
+t_uint64 reg_A;         // Accumulator, 36 bits
+t_uint64 reg_Q;         // Quotient, 36 bits
+int8 reg_E;             // Exponent for floating point data
+
+uint32 reg_X[8];        // Index Registers, 18 bits
+
+IR_t IR;                // Indicator register
 static uint32 saved_IR; // Only for sending to/from SIMH
-BAR_reg_t BAR;      // Base Addr Register; 18 bits
-static uint16 saved_BAR[2];
-uint32 reg_TR;      // Timer Reg, 27 bits -- only valid after calls to SIMH clock routines
-uint8 reg_RALR; // Ring Alarm Reg, 3 bits
-AR_PR_t AR_PR[8];   // Combined Pointer Registers (42 bits) and Address Registers (24 bits)
-    // Note that the eight PR registers are also known by the names: ap, ab, bp, bb, lp, lb, sp, sb
-t_uint64 saved_ar_pr[8];    // packed versions of the AR/PR registers; format specific to this simulator
-PPR_t PPR;      // Procedure Pointer Reg, 37 bits, internal only
+
+BAR_reg_t BAR;          // Base Addr Register; 18 bits
+static uint16 saved_BAR[2]; // Only for sending to/from SIMH
+
+uint32 reg_TR;          // Timer Reg, 27 bits -- only valid after calls to SIMH clock routines
+uint8 reg_RALR;         // Ring Alarm Reg, 3 bits
+
+// PR and AR registers (42 bits and 24 bits respectively)
+// We combine the "PR" Pointer Registers and the "AR" Address Registers into
+// a single data structure.
+// Note that the eight PR registers are also known by the names: ap,
+// ab, bp, bb, lp, lb, sp, sb
+AR_PR_t AR_PR[8];
+// Packed versions of the AR/PR registers; format specific to this emulator
+t_uint64 saved_ar_pr[8];    // Only for sending to/from SIMH
+
+// See earlier comments re the PPR and IC
+PPR_t PPR;              // Procedure Pointer Reg, 37 bits, internal only
 static t_uint64 saved_PPR_addr; // Only for sending to/from SIMH; see also sim_PC and saved_IC
 static uint8 saved_PPR_perms;   // Only for sending to/from SIMH
 static uint32 saved_IC; // Only for sending to/from SIMH; duplicates saved_PPR_addr
+
 TPR_t TPR;      // Temporary Pointer Reg, 42 bits, internal only
 static t_uint64 saved_DSBR;     // Descriptor Segment Base Register, 51 bits
+
+// Other registers listed in the processor manual but not implemented
+// as globals.
 // SDWAM_t SDWAM[16];   // Segment Descriptor Word Associative Memory, 88 bits
 // PTWAM_t PTWAM[16];   // Page Table Word Associative Memory, 51 bits
 // static fault_reg_t FR;   // Fault Register, 35 bits
+// mode register
 // CMR;     // Cache Mode Register, 28 bits
 // CU_hist[16];     // 72 bits
 // OU_hist[16];     // 72 bits
@@ -110,13 +137,19 @@ static t_uint64 saved_DSBR;     // Descriptor Segment Base Register, 51 bits
 // CU data  // Control Unit data, 288 bits, internal only
 // DU data  // Decimal Unit data, 288 bits, internal only
 
-// This is a hack
+// A few registers are in a per-cpu data structure.  See also the hack
+// just below where we give SIMH this struct as raw data without a
+// description in order to support a limited save/restore.
 static cpu_t cpu_info;
-cpu_t *cpup = &cpu_info;
+cpu_t *cpup = &cpu_info;    // but we still only have one CPU
 
-// SIMH gets a copy of all (or maybe most) registers
-// todo: modify simh to take a PV_ZLEFT flag (leftmost bit is bit 0) or
-// perhaps PV_ZMSB (most significant bit is numbered zero)
+//-----------------------------------------------------------------------------
+// Descriptions of all of the registers for SIMH.
+//
+// TODO: modify simh to take a PV_ZLEFT flag (leftmost bit is bit 0) or
+// perhaps PV_ZMSB (most significant bit is numbered zero).  Why did
+// I say this... Perhaps that comment was before fprint_sym/fprint_addr?
+
 REG cpu_reg[] = {
     // structure members: name="PC", loc=PC, radix=<8>, width=36, offset=<0>, depth=<1>, flags=, qptr=
     { ORDATA (PPR, saved_PPR_addr, 64) },       // Packed PPR.PSR and PPR.IC (but not priv flag or rings)
@@ -127,13 +160,15 @@ REG cpu_reg[] = {
     { ORDATA (E, reg_E, 8) },
     { BRDATA (X, reg_X, 8, 18, 8) },
     { ORDATA (TR, reg_TR, 27), REG_RO },
+    // TODO: Let SIMH modify the AR/PR registers -- use VM_AD flags, etc
     { BRDATA (PR, saved_ar_pr, 8, 42, 8), REG_VMIO | REG_USER2 },
     // stuff needed to yield a save/restore sufficent for examining memory dumps
     { BRDATA (BAR, saved_BAR, 8, 9, 2) },
     { GRDATA (PPR_perms, saved_PPR_perms, 2, 4, 0) },
     { ORDATA (DSBR, saved_DSBR, 51) },
-    // The following is a hack, but works as long as you don't save/restore across
-    // different architectures.
+    // The following is a hack, but works as long as you don't save/restore
+    // across different architectures, compiler implementations, or phases
+    // of the moon.
         { BRDATA (CPUINFO, (&cpu_info), 8, 8, sizeof(cpu_info)) },
     { NULL }
 };
@@ -166,11 +201,11 @@ t_stat cpu_reset (DEVICE *dptr);
 // SIMH directs requests to examine/change memory to the CPU DEVICE?
 static t_stat cpu_ex (t_value *eval_array, t_addr addr, UNIT *uptr, int32 switches);
 static t_stat cpu_dep (t_value v, t_addr addr, UNIT *uptr, int32 switches);
+
 DEVICE cpu_dev = {
     // todo: revisit cpu_dev: add debug, examine, deposit, etc
     "CPU", &cpu_unit, cpu_reg, cpu_mod,
-    // 1, 8, 24, 1, 8, 36,                      // should we say 18 for awidth?
-    1, 8, 43, 1, 8, 36,                     // we give SIMH "packed" addresses; see addr_emul_to_simh()
+    1, 8, 43, 1, 8, 36,                 // 43 because we give SIMH "packed" addresses; see addr_emul_to_simh()
     &cpu_ex, &cpu_dep, &cpu_reset,
     &cpu_boot, NULL, NULL,
     NULL, DEV_DEBUG
@@ -189,7 +224,6 @@ UNIT mt_unit = {
 
 DEVICE tape_dev = {
     "TAPE", &mt_unit, NULL, NULL,
-    // 1, 10, 31, 1, 8, 8,
     1, 10, 31, 1, 8, 9,
     NULL, NULL, NULL,
     NULL, &sim_tape_attach, &sim_tape_detach,
@@ -213,13 +247,18 @@ DEVICE opcon_dev = {
 
 events_t events;
 switches_t switches;
-cpu_ports_t cpu_ports;
+cpu_ports_t cpu_ports;          // Describes connections to SCUs
 // the following two should probably be combined
 cpu_state_t cpu;
 ctl_unit_data_t cu; 
 
-scu_t scu;  // only one for now
-iom_t iom;  // only one for now
+scu_t scu;                      // only one for now
+iom_t iom;                      // only one for now
+
+// This is an out-of-band flag for the APU.  User commands to
+// display or modify memory can invoke much the APU.  Howeveer, we don't
+// want interactive attempts to access non-existant memory locations
+// to register a fault.
 flag_t fault_gen_no_fault;
 
 // *** Other variables -- These do not need to be part of save/restore
@@ -227,9 +266,12 @@ flag_t fault_gen_no_fault;
 
 //-----------------------------------------------------------------------------
 // ***  Other Externs
-int opt_debug;
+
+// This only controls warning messages
 extern int bootimage_loaded;    // only relevent for the boot CPU ?
-extern uint32 sim_emax;
+
+// Debugging
+int opt_debug;
 t_uint64 calendar_a;
 t_uint64 calendar_q;
 t_uint64 total_cycles;
@@ -259,128 +301,93 @@ static int is_eis[1024];    // hack
 //-----------------------------------------------------------------------------
 // ***  Function prototypes
 
+#define getbit18(x,n)  ((((x) >> (17-n)) & 1) != 0) // return nth bit of an 18bit half word
+
 static t_stat control_unit(void);
-int fetch_instr(uint IC, instr_t *ip);
-void execute_ir(void);
-void fault_gen(enum faults f);
-void decode_instr(instr_t *ip, t_uint64 word);
-static void init_ops(void);
+static void execute_ir(void);
+static void init_opcodes(void);
 static void check_events(void);
 static void save_to_simh(void);
 static void save_PR_registers(void);
 static void restore_PR_registers(void);
 
-void tape_block(unsigned char *p, uint32 len, uint32 addr);
-
 //=============================================================================
 
-#if 0
-static int32 sign18(t_uint64 x)
-{
-    if (bit18_is_neg(x)) {
-        int32 r = - ((1<<18) - (x&MASK18));
-        return r;
-    }
-    else
-        return x;
-}
-#endif
-
-#if 0
-static int32 sign15(uint x)
-{
-    if (bit_is_neg(x,15)) {
-        int32 r = - ((1<<15) - (x&MASKBITS(15)));
-        // log_msg(DEBUG_MSG, "sign15", "%#%#llo => %#o (%+d decimal)\n", x, r, r);
-        return r;
-    }
-    else
-        return x;
-}
-#endif
-
-//=============================================================================
+/*
+ *  cpu_boot()
+ *
+ *  Called by SIMH's BOOT command.
+ *  Copies bootstrap loader from tape and loads into memory.   SIMH also expects
+ *  us to set the program counter.  Instead, cpu_reset() will generate a
+ *  startup fault.
+ */
 
 t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
 {
-    // Boot -- Copy bootstrap loader into memory & set PC (actually send startup fault)
-    // todo: Issue: have to specify boot tape or file out-of-band
 
+    /*
+     *  An earlier version of this code did not make use of an emulated IOM
+     *  or IOX.
+     *  It would be sufficient to read the first block, load it into memory,
+     *  and leave the virtual tape positioned past the first block.   However,
+     *  during attempts to emulate an IOX it was discovered that the code in
+     *  bootload_tape_label.alm will check the result in the status mailbox
+     *  area of main memory if an IOX is detected.
+     *  Emulating an IOX was later abandoned because when using an IOX,
+     *  bootload_tape_label.alm will try to execute the undocumented "ldo"
+     *  instruction.
+     *  However, we might as well run the IOM or IOX to do the I/O.  Note that
+     *  prior to booting, the emulated IOM or IOX must load a tiny IOM control
+     *  program into memory.  This is done in init_memory_iom() or in
+     *  init_memory_iox().
+     *  This approach replaces the dozen or so lines of code that used to live
+     *  here with a single call to iom_interrupt().
+     */
 
-#if 0
-    char *fname = "boot.tape";
-    int ret;
-    uint32 old_switches = sim_switches;
-    sim_switches |= SWMASK ('R');   // Read-only -- don't create an empty boot tape
-    log_msg(DEBUG_MSG, "CPU::boot", "Attaching file %s to tape drive\n", fname);
-    ret = sim_tape_attach(&mt_unit, fname);
-    sim_switches = old_switches;
-    if (ret != 0) {
-        log_msg(ERR_MSG, "CPU::boot", "Cannot attach file '%s' to tape unit.\n", fname);
-        return ret;
-    }
-#endif
-
-#if 0
-    // When using an IOM, we can get away with reading the tape with no involvement
-    // from the IOM.   We just need to leave the virtual tape positioned past the
-    // first block.
-    const size_t bufsz = 4096 * 1024;
-    uint8 buf[bufsz];
-    t_mtrlnt tbc;
-    if ((ret = sim_tape_rdrecf(&mt_unit, buf, &tbc, bufsz)) != 0) {
-        log_msg(ERR_MSG, "CPU::boot", "Cannot read tape\n");
-        return ret;
-    }
-    log_msg(NOTIFY_MSG, "CPU::boot", "Read %d bytes from simulated tape %s\n", (int) tbc, fname);
-    tape_block(buf, tbc, 030);
-    bootimage_loaded = 1;
-#else
-    // When using an IOX, the bootload_tape_label.alm code will check the result in the
-    // status mailbox.   So, we might as well run the IOX to do the I/O.
     // ++ opt_debug; ++ cpu_dev.dctrl;
-    log_msg(INFO_MSG, "CPU::boot", "Issuing IOM interrupt.\n");
     if (cpu_dev.dctrl != 0) opt_debug = 1;  // todo: should CPU control all debug settings?
+
+    log_msg(INFO_MSG, "CPU::boot", "Issuing IOM interrupt.\n");
+    // Send an interrupt to the IOM -- not to the CPU
     iom_interrupt();
+
     // -- opt_debug; -- cpu_dev.dctrl;
+
     bootimage_loaded = 1;
     log_msg(INFO_MSG, "CPU::boot", "Returning to SIMH.\n");
-#endif
 
     return 0;
 }
 
 //=============================================================================
 
+/*
+ *  cpu_reset()
+ *
+ *  Reset -- Reset to initial state -- clear all device flags and cancel any
+ *  any outstanding timing operations. Used by SIMH's RESET, RUN, and BOOT
+ *  commands
+ *
+ *  BUG: Should reset *all* structures to zero.
+ *  
+ *  Note that SIMH doesn't have much difference between reset and power-on
+ *
+ *  Real hardware had to wait for a connect signal from the SCU before
+ *  doing anything -- multicians.org glossary.   So, presumably the CPU
+ *  could not even fetch an instruction until the system controller had
+ *  setup memory and given a go-ahead.   So, it's tempting simulate
+ *  waiting for access to memory or perhaps to load the "idle until interrupt"
+ *  instruction into the IR (instruction register).  However, the emulation
+ *  always initializes memory and/or calls cpu_boot(), so it is sufficient to
+ *  simply record a startup fault or power-on interrupt.
+ */
+
 t_stat cpu_reset (DEVICE *dptr)
 {
-    // Reset -- Reset to initial state -- clear all device flags and cancel
-    // any outstanding timing operations
-    // Used by SIMH's RESET, RUN, and BOOT commands
-
-    // BUG: reset *all* structures to zero
-    // Note that SIMH doesn't have much difference between reset and power-on
-
-    // Real hardware had to wait for a connect signal from the SCU before
-    // doing anything -- multicians.org glossary
-    // Tempting to load "idle until interrupt" into IR.
-    // However, we'll use a flag to simulate watching for a control signal
-    // being seeing after boot load.   Actually, we could just require
-    // the user to load a boot tape image before starting the CPU...
 
     log_msg(DEBUG_MSG, "CPU", "Reset\n");
-if(0) {
-    // BUG -- temp debug hack
-    out_msg("DEBUG: CPU Registers:\n");
-    for (int i = 0; i < ARRAY_SIZE(cpu_reg); ++i) {
-        REG *r = &cpu_reg[i];
-        out_msg("\tRegister %d at %p: '%s': radix %d, width %d, depth %d, offset bit %d, flags %0o, loc %p, qptr %d\n",
-            i, r, r->name, r->radix, r->width, r->depth, r->offset, r->flags, r->loc, r->qptr);
-    }
-    out_msg("\n");
-}
 
-    init_ops();
+    init_opcodes();
     ic_history_init();
 
     bootimage_loaded = 0;
@@ -392,18 +399,22 @@ if(0) {
     cu.PT_ON = 1;
     cpu.ic_odd = 0;
 
-    // BUG: reset *all* other structures to zero
+    // TODO: reset *all* other structures to zero
 
     set_addr_mode(ABSOLUTE_mode);
 
     // We need to execute the pair of instructions at 030 -- a "lda" instruction
-    // and a transfer to the bootload code at 0330.   Location 030 is either part
-    // of the interrupt vector or part of a combined interrupt/fault vector.
-    if (0 && switches.FLT_BASE == 0) {
+    // and a transfer to the bootload code at 0330.   Location 030 is either
+    // part of the interrupt vector or part of a combined interrupt/fault
+    // vector.
+#if 0
+    if (switches.FLT_BASE == 0) {
         // Most documents indicate that the boot process uses the startup fault
         cpu.cycle = FETCH_cycle;
         fault_gen(startup_fault);   // pressing POWER ON button causes this fault
-    } else {
+    } else
+#endif
+    {
         // Simulate an interrupt as described in bootload_tape_label.alm
         cpu.cycle = INTERRUPT_cycle;
         events.int_pending = 1;
@@ -423,6 +434,14 @@ if(0) {
 
 //=============================================================================
 
+/*
+ *  cancel_run()
+ *
+ *  Cancel_run can be called by any portion of the code to let
+ *  sim_instr() know that it should stop looping and drop back
+ *  to the SIMH command prompt.
+ */
+
 static int cancel;
 
 void cancel_run(enum sim_stops reason)
@@ -435,22 +454,32 @@ void cancel_run(enum sim_stops reason)
     log_msg(DEBUG_MSG, "CU", "Cancel requested: %d\n", reason);
 }
 
+//=============================================================================
+
+/*
+ *  sim_instr()
+ *
+ *  This function is called by SIMH to execute one or more instructions (or
+ *  at least perform one or more processor cycles).
+ *
+ *  The principal elements of the 6180 processor are:
+ *      The appending unit (addressing)
+ *      The associative memory assembly (vitual memory registers)
+ *      The control unit (responsible for addr mod, instr_mode, interrupt
+ *      recognition, decode instr & indir words, timer registers
+ *      The operation unit (binary arithmetic, boolean)
+ *      The decimal unit (decimal arithmetic instructions, char string, bit
+ *      string)
+ *
+ *  This code is essentially a wrapper for the "control unit" plus
+ *  housekeeping such as debug controls, displays, and dropping in
+ *  and out of the SIMH command processor.
+ */
+
 uint32 ninstr;
 
 t_stat sim_instr(void)
 {
-    // This function is called by SIMH to execute one or more instructions (or
-    // at least perform one or more processor cycles).
-
-    // principal elements of the 6180 processor:
-    //  appending unit (addressing)
-    //  assoc mem assembly (VM registers)
-    //  control unit (addr mod, instr_mode, interrupt recognition, 
-    //      decode instr & indir words, timer registers
-    //  operation unit (binary arithmetic, boolean)
-    //  decimal unit (decimal arithmetic, char string, bit string)
-    //
-    
     restore_from_simh();
     // setup_streams(); // Route the C++ clog and cdebug streams to match SIMH settings
 
@@ -462,8 +491,6 @@ t_stat sim_instr(void)
     }
 
     // opt_debug = (cpu_dev.dctrl != 0);    // todo: should CPU control all debug settings?
-
-    // BUG: todo: load registers that SIMH user might have modified
 
     // Setup clocks
     (void) sim_rtcn_init(CLK_TR_HZ, TR_CLK);
@@ -500,8 +527,8 @@ ninstr = 0;
 #endif
 
         //
-        // Log a message about where we're at -- if debugging, or if we want procedure call tracing,
-        // or if we're displaying source code
+        // Log a message about where we're at -- if debugging, or if we want
+        // procedure call tracing, or if we're displaying source code
         //
 
         const int show_source_lines = 1;
@@ -521,6 +548,8 @@ ninstr = 0;
         //
 
         reason = control_unit();
+
+        // Show location info
 
         if (saved_cycle != FETCH_cycle) {
             if (!known_loc)
@@ -542,57 +571,53 @@ ninstr = 0;
             log_ignore_ic_change();
             state_dump_changes();
             log_notice_ic_change();
-            state_save();   // no stack or queue, just a single backup but all regs, but not just ic history
+            // Save all registers etc so that we can detect/display changes
+            state_save();
         }
         if (cancel) {
             if (reason == 0)
                 reason = cancel;
         }
-#if 0
-        if (reason == 0 && PPR.IC == 014256 && reg_A == (t_uint64) 0777771000000) {
-            log_msg(NOTIFY_MSG, "MAIN", "Auto Breakpoint for debug tape\n");
-            reason = STOP_IBKPT;
-        }
-#endif
-    }
+    }   // while (reason == 0)
 
     uint32 delta = sim_os_msec() - start;
     total_cycles += ncycles;
     total_msec += delta;
     total_instr += ninstr;
-    //if (delta > 2000)
-    if (delta > 200)
+    if (delta > 500)
         log_msg(INFO_MSG, "CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
             (float) delta / 1000, ncycles, ncycles*1000/delta, ninstr, ninstr*1000/delta);
 
-    // BUG: pack private variables into SIMH's world
-    save_to_simh();
+    save_to_simh();     // pack private variables into SIMH's world
     flush_logs();
         
     return reason;
 }
 
 
+//=============================================================================
+
+/*
+ *  save_to_simh
+ *  
+ *  Some of the data we give to SIMH is in simple encodings instead of
+ *  the more complex structures used internal to the emulator.
+ *  
+*/
+
 static void save_to_simh(void)
 {
+    // Note that we record the *current* IC and addressing mode.  These may
+    // have changed during instruction execution.
+
     saved_IC = PPR.IC;
-    addr_modes_t mode = get_addr_mode();    // BUG: wrong after a fault, etc -- need to save mode during fetch
+    addr_modes_t mode = get_addr_mode();
+    // BUG: We need to always save the segment even if not in appending mode
     saved_PPR_addr = addr_emul_to_simh(mode, PPR.PSR, PPR.IC);
     t_uint64 sIR;
     save_IR(&sIR);
     saved_IR = sIR & MASKBITS(18);
     save_PR_registers();
-if (0)
-{
-    AR_PR_t sv[8];
-    memcpy(sv, AR_PR, sizeof(sv));
-    restore_PR_registers();
-    if (memcmp(sv, AR_PR, sizeof(sv)) != 0) {
-        out_msg("CPU: WARNING: PR[] save/restore broken.  Fixing...\n");
-        (void) cancel_run(STOP_WARN);
-        memcpy(AR_PR, sv, sizeof(AR_PR));
-    }
-}
 
     saved_BAR[0] = BAR.base;
     saved_BAR[1] = BAR.bound;
@@ -604,6 +629,16 @@ if (0)
         ((t_uint64) cpup->DSBR.bound << 13) | // 14 bits
         ((t_uint64) cpup->DSBR.addr << 27); // 24 bits
 }
+
+//=============================================================================
+
+/*
+ *  restore_from_simh(void)
+ *  
+ *  Some of the data we give to SIMH is in simple encodings instead of
+ *  the more complex structures used internal to the emulator.
+ *  
+*/
 
 void restore_from_simh(void)
 {
@@ -635,6 +670,15 @@ void restore_from_simh(void)
     check_seg_debug();
 }
 
+//=============================================================================
+
+/*
+ * load_IR()
+ *
+ * Set the contents of the Indicator Register from the given word.
+ *
+ */
+
 void load_IR(IR_t *irp, t_uint64 word)
 {
     memset(irp, 0, sizeof(*irp));
@@ -656,11 +700,19 @@ void load_IR(IR_t *irp, t_uint64 word)
     // Bits 33..35 not used
 }
 
+//=============================================================================
+
+/*
+ *  save_IR()
+ *
+ *  Write the contents of the Indicator Register into the given word.
+ *
+ *  Saves 14 or 15 IR bits to the lower half of *wordp.
+ *  Unused portions of destination word are zeroed.
+ */
+
 void save_IR(t_uint64* wordp)
 {
-    // Saves 14 or 15 IR bits to the lower half of *wordp.
-    // Upper half of *wordp zeroed and unused lower bits are zeroed.
-
     // Note that most of AN87 and AL39 ignores bit 32.  Only section
     // 3 of AL38 describes this bit which is only available on DPS8M.
     // It's also part of the saved control unit data, but not listed
@@ -686,6 +738,12 @@ void save_IR(t_uint64* wordp)
         
 //=============================================================================
 
+/*
+ * save_PR_registers()
+ *
+ * Convert from the AR/PR structures to an encoded form.
+ */
+
 static void save_PR_registers()
 {
     for (int i = 0; i < ARRAY_SIZE(saved_ar_pr); ++ i) {
@@ -696,6 +754,14 @@ static void save_PR_registers()
             ((t_uint64)(AR_PR[i].wordno & 0777777) << 24);  // 18 bits
     }
 }
+
+//=============================================================================
+
+/*
+ *  restore_PR_registers(void)
+ *
+ *  Convert the encoded values from SIMH into the emulator's structs
+ */
 
 static void restore_PR_registers(void)
 {
@@ -711,20 +777,22 @@ static void restore_PR_registers(void)
 
 //=============================================================================
 
+/*
+ *  control_unit()
+ *
+ *  Emulation of the control unit -- fetch cycle, execute cycle, 
+ *  interrupt handling, fault handling, etc.
+ *
+ *  We allow SIMH to regain control between any of the cycles of
+ *  the control unit.   This includes returning to SIMH on fault
+ *  detection and between the even and odd words of a fetched
+ *  two word instruction pair.   See cancel_run().
+ */
+
 #define XED_NEW 1
 
 static t_stat control_unit(void)
 {
-    // ------------------------------------------------------------------------
-
-    // Emulation of the control unit -- fetch cycle, execute cycle, 
-    // interrupt handling, fault handling, etc.
-    //
-    // We allow SIMH to regain control between any of the cycles of
-    // the control unit.   This includes returning to SIMH on fault
-    // detection and between the even and odd words of a fetched
-    // two word instruction pair.
-
     // ------------------------------------------------------------------------
 
     // See the following portions of AL39:
@@ -738,7 +806,8 @@ static t_stat control_unit(void)
 
     // ------------------------------------------------------------------------
 
-    // BUG: Check non group 7 faults?  No, expect cycle to have been reset to FAULT_cycle
+    // BUG: Check non group 7 faults?  No, expect cycle to have been reset
+    // to FAULT_cycle
 
     int reason = 0;
     int break_on_fault = switches.FLT_BASE == 2;    // on for multics, off for t&d tape
@@ -772,9 +841,10 @@ static t_stat control_unit(void)
                     break;
                 }
             }
-            // fetch a pair of words
-            // AL39, 1-13: for fetches, procedure pointer reg (PPR) is ignored. [PPR IC is a dup of IC]
-            cpu.ic_odd = PPR.IC % 2;    // won't exec even if fetch from odd
+            // Fetch a pair of words
+            // AL39, 1-13: for fetches, procedure pointer reg (PPR) is
+            // ignored. [PPR IC is a dup of IC]
+            cpu.ic_odd = PPR.IC % 2;    // don't exec even if fetch from odd
             cpu.cycle = EXEC_cycle;
             TPR.TSR = PPR.PSR;
             TPR.TRR = PPR.PRR;
@@ -818,7 +888,7 @@ static t_stat control_unit(void)
             // Bring all overlapped functions to an orderly halt -- however,
             // the simulator has no overlapped functions?
             // Also bring asynchronous functions within the processor
-            // to an orderly halt -- todo -- do we have any?
+            // to an orderly halt -- TODO -- do we have any?
             cpu.cycle = FAULT_cycle;
             break;
 #endif
@@ -827,16 +897,12 @@ static t_stat control_unit(void)
             {
             log_msg(DEBUG_MSG, "CU", "Cycle = FAULT\n");
 
-            // find highest fault
+            // First, find the highest fault.   Group 7 type faults are handled
+            // as a special case.  Group 7 faults have different detection
+            // rules and there can be multiple pending  faults for group 7.
+
             int fault = 0;
             int group = 0;
-#if 0
-            // BUG: low_group not used/maintained
-            for (group = 0; group <= 6; ++ group) {
-                if ((fault = events.fault[group]) != 0)
-                    break;
-            }
-#else
             if (events.low_group != 0 && events.low_group <= 6) {
                 group = events.low_group;
                 fault = events.fault[group];
@@ -845,7 +911,6 @@ static t_stat control_unit(void)
                     cancel_run(STOP_BUG);
                 }
             }
-#endif
             if (fault == 0) {
                 if (events.group7 == 0) {
                     // bogus fault
@@ -880,9 +945,17 @@ static t_stat control_unit(void)
             if (fault != trouble_fault)
                 cu_safe_store();
 
-            set_addr_mode(ABSOLUTE_mode); // this mode will remain in effect until execution of a transfer instr whose operand is obtained via explicit use of the appending HW mechanism -- AL39, 1-3
+            // Faults cause the CPU to go into absolute mode.  The CPU will
+            // remain in absolute mode until execution of a transfer instr
+            // whose operand is obtained via explicit use of the appending
+            // HW mechanism -- AL39, 1-3
+            set_addr_mode(ABSOLUTE_mode);
 
-            // BUG: clear fault?  Or does scr instr do that?
+            // We found a fault.
+            // BUG: should we clear the fault?  Or does scr instr do that? Or
+            // maybe the OS's fault handling routines do it?   At the
+            // moment, we clear it and find the next pending fault.
+
             int next_fault = 0;
             if (group == 7) {
                 // BUG: clear group 7 fault
@@ -903,26 +976,32 @@ static t_stat control_unit(void)
             }
             events.any = events.int_pending || events.low_group != 0;
 
-            PPR.PRR = 0;    // set ring zero
-            uint addr = (switches.FLT_BASE << 5) + 2 * fault; // ABSOLUTE mode
             // Force computed addr and xed opcode into the instruction
             // register and execute (during FAULT CYCLE not EXECUTE CYCLE).
+            // The code below is much the same for interrupts and faults...
+
+            PPR.PRR = 0;    // set ring zero
+            uint addr = (switches.FLT_BASE << 5) + 2 * fault; // ABSOLUTE mode
             cu.IR.addr = addr;
             cu.IR.opcode = (opcode0_xed << 1);
             cu.IR.inhibit = 1;
             cu.IR.mods.single.pr_bit = 0;
             cu.IR.mods.single.tag = 0;
 
-            // Maybe just set a flag and run the EXEC case?
-            // Maybe the following increments and tests are handled by EXEC and/or the XED opcode?
+            // Maybe instead of calling execute_ir(), we should just set a
+            // flag and run the EXEC case?  // Maybe the following increments
+            // and tests could be handled by EXEC and/or the XED opcode?
 
-            // todo: Check for SIMH breakpoint on execution for that addr or
-            // maybe in the code for the xed opcode.
-            log_msg(DEBUG_MSG, "CU::fault", "calling execute_ir() for xed\n");
+            // Update history
             uint IC_temp = PPR.IC;
             PPR.IC = addr;
             ic_history_add();       // xed will be listed against the the addr of the first instruction
             PPR.IC = IC_temp;
+
+            // TODO: Check for SIMH breakpoint on execution for the addr of
+            // the XED instruction.  Or, maybe check in the code for the
+            // xed opcode.
+            log_msg(DEBUG_MSG, "CU::fault", "calling execute_ir() for xed\n");
             // BUG: don't we need another ic_history_add() call here?
             execute_ir();   // executing in FAULT CYCLE, not EXECUTE CYCLE
             if (break_on_fault) {
@@ -936,47 +1015,26 @@ static t_stat control_unit(void)
                 // Stay in FAULT CYCLE
                 log_msg(WARN_MSG, "CU", "re-faulted, remaining in fault cycle\n");
             } else {
-#if XED_NEW
                 // cycle = FAULT_EXEC_cycle;
                 cpu.cycle = EXEC_cycle;     // NOTE: scu will be in EXEC not FAULT cycle
                 events.xed = 1;     // BUG: is this a hack?
-#else
-                // BUG: track events.any
-                if (next_fault == 0 && events.group7 == 0) {
-                    events.any = events.int_pending;
-                    cpu.cycle = FETCH_cycle;    // BUG: is this right?
-                } else
-                    events.any = 1;
-                // BUG: kill cpu.trgo or IC_temp
-                if (!cpu.trgo && PPR.IC == IC_temp) {
-                    log_msg(WARN_MSG, "CU", "no re-fault, no transfer -- incrementing IC\n");
-                    // BUG: Faulted instr doesn't get re-invoked?
-                            (void) cancel_run(STOP_IBKPT);
-                    ++ PPR.IC;
-                    if (cpu.ic_odd) {
-                        if (PPR.IC % 2 != 0) { log_msg(ERR_MSG, "CU", "Fault on odd half of instr pair results in next instr being at an odd IC\n"); }
-                        cpu.cycle = FETCH_cycle;
-                    } else {
-                        if (PPR.IC % 2 != 1) { log_msg(ERR_MSG, "CU", "Fault on even half of instr pair results in odd half pending with an even IC\n"); }
-                        cpu.cycle = EXEC_cycle;
-                    }
-                    // Note that we don't automatically return to the original
-                    // ring, but hopefully we're executed an rcu instruction
-                    // to set the correct ring
-                    // set_addr_mode(saved_addr_mode);  // FIXED BUG: this wasn't appropriate
-                } else {
-                    if (opt_debug) log_msg(DEBUG_MSG, "CU", "no re-fault, but a transfer done -- not incrementing IC\n");
-                }
-#endif
             }
             } // end case FAULT_cycle
             break;
 
         case INTERRUPT_cycle: {
-            // This code is just a quick-n-dirty sketch to test booting via an interrupt instead of via a fault
-            set_addr_mode(ABSOLUTE_mode); // this mode will remain in effect until execution of a transfer instr whose operand is obtained via explicit use of the appending HW mechanism -- AL39, 1-3
+            // This code is just a quick-n-dirty sketch to test booting via
+            // an interrupt instead of via a fault
+
+            // TODO: Merge the INTERRUPT_cycle and FAULT_cycle code
+
+            // The CPU will
+            // remain in absolute mode until execution of a transfer instr
+            // whose operand is obtained via explicit use of the appending
+            // HW mechanism -- AL39, 1-3
+            set_addr_mode(ABSOLUTE_mode);
+
             log_msg(WARN_MSG, "CU", "Interrupts only partially implemented\n");
-            PPR.PRR = 0;    // set ring zero
             int intr;
             for (intr = 0; intr < 32; ++intr)
                 if (events.interrupts[intr])
@@ -987,25 +1045,39 @@ static t_stat control_unit(void)
             }
             log_msg(WARN_MSG, "CU", "Interrupt %#o (%d) found.\n", intr, intr);
             events.interrupts[intr] = 0;
-            uint addr = 0 + 2 * intr; // ABSOLUTE mode
+
             // Force computed addr and xed opcode into the instruction
-            // register and execute (during FAULT CYCLE not EXECUTE CYCLE).
+            // register and execute (during INTERRUPT CYCLE not EXECUTE CYCLE).
+            // The code below is much the same for interrupts and faults...
+
+            PPR.PRR = 0;    // set ring zero
+            const int interrupt_base = 0;
+            uint addr = interrupt_base + 2 * intr; // ABSOLUTE mode
             cu.IR.addr = addr;
             cu.IR.opcode = (opcode0_xed << 1);
             cu.IR.inhibit = 1;
             cu.IR.mods.single.pr_bit = 0;
             cu.IR.mods.single.tag = 0;
-            reason = STOP_BUG;
 
-            log_msg(DEBUG_MSG, "CU::interrupt", "calling execute_ir() for xed\n");
+            // Maybe instead of calling execute_ir(), we should just set a
+            // flag and run the EXEC case?  // Maybe the following increments
+            // and tests could be handled by EXEC and/or the XED opcode?
+
+            // Update history
             uint IC_temp = PPR.IC;
             PPR.IC = addr;
-            ic_history_add();
+            ic_history_add();       // xed will be listed against the the addr of the first instruction
             PPR.IC = IC_temp;
+
+            // TODO: Check for SIMH breakpoint on execution for the addr of
+            // the XED instruction.  Or, maybe check in the code for the
+            // xed opcode.
+            log_msg(DEBUG_MSG, "CU::interrupt", "calling execute_ir() for xed\n");
             // BUG: don't we need another ic_history_add() call here?
             execute_ir();   // executing in INTERRUPT CYCLE, not EXECUTE CYCLE
+            log_msg(WARN_MSG, "CU", "Interrupt -- lightly tested\n");
+            (void) cancel_run(STOP_BUG);
 
-#if XED_NEW
             // cpu.cycle = FAULT_EXEC_cycle;
             cpu.cycle = EXEC_cycle;
             events.xed = 1;     // BUG: is this a hack?
@@ -1015,12 +1087,8 @@ static t_stat control_unit(void)
                     events.int_pending = 1;
                     break;
                 }
-#else
-            cpu.cycle = FETCH_cycle;    // BUG: is this right?
-            log_msg(ERR_MSG, "CU", "Interrupts not well tested\n");
-#endif
             break;
-        }
+        }   // end case INTERRUPT_cycle
 
         case EXEC_cycle:
             // Assumption: IC will be at curr instr, even
@@ -1029,31 +1097,21 @@ static t_stat control_unit(void)
             TPR.TSR = PPR.PSR;
             TPR.TRR = PPR.PRR;
             
-            // Possibly obsolete notes:
-            // handle rpt and other repeat instructions
-            // -----
-            // don't switch to fetch cycle or update ic_odd except as noted here
-            // pre-exec: nothing special needed?  Check ic_odd and exec appropriate instr?
-            // post-exec, first: set fetch if needed
-                // rpt@odd: fetch pair (if first -- note this matches non-rpt behavior)
-                // rpt-db@odd: always fetch pair (if first -- note this matches non-rpt behavior)
-                // rpt-dbl@even: always fetch pair (if first)
-                // rpt@even: expect to execute odd ( note this matches non-rpt behavior )
-            // post-exec, not first: rpt, IC unchanged; rpt-dbl: IC swaps even/odd
-            // post-exec: check termination
-            // faults and interrupts ???
-
-        // Fall through -- FAULT_EXEC_cycle is a subset of EXEC_cycle
+            // Fall through -- FAULT_EXEC_cycle is a subset of EXEC_cycle
     
-#if XED_NEW
-        case FAULT_EXEC_cycle: ;
-            // FAULT-EXEC is a pseudo cycle not present in the actual hardware.   The hardware
-            // does execute intructions (e.g. an fault's xed) in a FAULT cycle.   We use the
+        case FAULT_EXEC_cycle:
+            {
+            // FAULT-EXEC is a pseudo cycle not present in the actual
+            // hardware.  The hardware does execute intructions (e.g. a
+            // fault's xed) in a FAULT cycle.   We should be able to use the
             // FAULT-EXEC cycle for this to gain code re-use.
-#endif
 
             flag_t do_odd = 0;
 
+            // We need to know if we should execute an instruction from the
+            // normal fetch process or an extruction loaded by XDE.  The
+            // answer controls whether we execute a buffered even instruction
+            // or a buffered odd instruction.
             int doing_xde = cu.xde;
             int doing_xdo = cu.xdo;
             if (doing_xde)
@@ -1062,16 +1120,23 @@ static t_stat control_unit(void)
                 log_msg(NOTIFY_MSG, "CU", "XDE-EXEC odd\n");
                 do_odd = 1;
             } else if (! cpu.ic_odd) {
-                if (opt_debug) log_msg(DEBUG_MSG, "CU", "Cycle = EXEC, even instr\n");
+                if (opt_debug)
+                    log_msg(DEBUG_MSG, "CU", "Cycle = EXEC, even instr\n");
             } else {
-                if (opt_debug) log_msg(DEBUG_MSG, "CU", "Cycle = EXEC, odd instr\n");
+                if (opt_debug)
+                    log_msg(DEBUG_MSG, "CU", "Cycle = EXEC, odd instr\n");
                 do_odd = 1;
             }
             if (do_odd) {
+                // Our previously buffered odd location instruction may have
+                // later been invalidated by a write to that location.
                 if (cpu.irodd_invalid) {
                     cpu.irodd_invalid = 0;
                     if (cpu.cycle != FETCH_cycle) {
-                        if (switches.FLT_BASE == 2) {   // on for multics, off for t&d tape
+                        // Auto-breakpoint for multics, but not the T&D tape.
+                        // The two tapes use different fault vectors.
+                        if (switches.FLT_BASE == 2) {
+                            // Multics boot tape
                             reason = STOP_IBKPT;    /* stop simulation */
                             log_msg(NOTIFY_MSG, "CU", "Invalidating cached odd instruction; auto breakpoint\n");
                         } else
@@ -1083,11 +1148,13 @@ static t_stat control_unit(void)
                 decode_instr(&cu.IR, cu.IRODD);
             }
 
+            // Do we have a breakpoint here?
             if (sim_brk_summ) {
                 t_uint64 simh_addr = addr_emul_to_simh(get_addr_mode(), PPR.PSR, PPR.IC);
                 if (sim_brk_test (simh_addr, SWMASK ('E'))) {
-                    // BUG: misses breakpoints on target of xed, rpt, and similar instructions
-                    // because those instructions don't update the IC.  Some of those instructions
+                    // BUG: misses breakpoints on target of xed, rpt, and
+                    // similar instructions because those instructions don't
+                    // update the IC.  Some of those instructions
                     // do however provide their own breakpoint checks.
                     log_msg(WARN_MSG, "CU", "Execution Breakpoint\n");
                     reason = STOP_IBKPT;    /* stop simulation */
@@ -1095,24 +1162,30 @@ static t_stat control_unit(void)
                 }
             }
 
-            // We assume IC always points to the correct instr -- should be advanced after even instr
+            // We assume IC always points to the correct instr -- should
+            // be advanced after even instr
             uint IC_temp = PPR.IC;
             ic_history_add();
             execute_ir();
 
             // Check for fault from instr
             // todo: simplify --- cycle won't be EXEC anymore
-            // Note: events.any zeroed by fault handler prior to xed even if other events are
-            // pending, so if it's on now, we have a new fault
+            // Note: events.any zeroed by fault handler prior to xed even
+            // if other events are pending, so if it's on now, we have a
+            // new fault
 
-            flag_t is_fault = events.any && events.low_group && events.low_group < 7;   // Only fault groups 1-6 are recognized here, not interrupts or group 7 faults
+            // Only fault groups 1-6 are recognized here, not interrupts or
+            // group 7 faults
+            flag_t is_fault = events.any && events.low_group && events.low_group < 7;
             if (is_fault) {
-                // faulted
                 log_msg(WARN_MSG, "CU", "Probable fault detected after instruction execution\n");
                 if (doing_xde || doing_xdo) {
                     char *which = doing_xde ? "even" : "odd";
                     log_msg(WARN_MSG, "CU", "XED %s instruction terminated by fault.\n", which);
-                    // Note that we don't clear xde and xdo because they might be about to be stored by scu. Since we'll be in a FAULT cycle next, both flags will be set as part of the fault handler's xed
+                    // Note that we don't clear xde and xdo because they might
+                    // be about to be stored by scu. Since we'll be in a FAULT
+                    // cycle next, both flags will be set as part of the fault
+                    // handler's xed
                 }
                 if (cu.rpt) {
                     log_msg(WARN_MSG, "CU", "Repeat instruction terminated by fault.\n");
@@ -1120,11 +1193,11 @@ static t_stat control_unit(void)
                 }
             }
             if (! is_fault) {
-                // no fault
+                // Special handling for RPT and other "repeat" instructions
                 if (cu.rpt) {
                     if (cu.rpts) {
-                        // Just executed the RPT instr
-                        cu.rpts = 0;
+                        // Just executed the RPT instr.  
+                        cu.rpts = 0;    // finished "starting"
                         ++ PPR.IC;
                         if (! cpu.ic_odd)
                             cpu.ic_odd = 1;
@@ -1134,27 +1207,29 @@ static t_stat control_unit(void)
                         // Executed a repeated instruction
                         // log_msg(WARN_MSG, "CU", "Address handing for repeated instr was probably wrong.\n");
                         // Check for tally runout or termination conditions
-                        uint t = reg_X[0] >> 10;    // bits 0..7 of 18bit register
+                        uint t = reg_X[0] >> 10; // bits 0..7 of 18bit register
                         if (cu.repeat_first && t == 0)
                             t = 256;
                         cu.repeat_first = 0;
                         --t;
                         reg_X[0] = ((t&0377) << 10) | (reg_X[0] & 01777);
-                        // Note that we increment X[n] here, not in the APU. So, for
-                        // instructions like cmpaq, the index register points to the
-                        // entry after the one found.
+                        // Note that we increment X[n] here, not in the APU.
+                        // So, for instructions like cmpaq, the index register
+                        // points to the entry after the one found.
                         int n = cu.tag & 07;
                         reg_X[n] += cu.delta;
                         if (opt_debug) log_msg(DEBUG_MSG, "CU", "Incrementing X[%d] by %#o to %#o.\n", n, cu.delta, reg_X[n]);
-                        // Note that the code in bootload_tape.alm expects that the tally
-                        // runout *not* be set when both the termination condition is met
-                        // and bits 0..7 of reg X[0] hits zero.
+                        // Note that the code in bootload_tape.alm expects that
+                        // the tally runout *not* be set when both the
+                        // termination condition is met and bits 0..7 of
+                        // reg X[0] hits zero.
                         if (t == 0) {
                             IR.tally_runout = 1;
                             cu.rpt = 0;
                             if (opt_debug) log_msg(DEBUG_MSG, "CU", "Repeated instruction hits tally runout; halting rpt.\n");
                         }
-                        // Check for termination conditions -- even if we hit tally runout
+                        // Check for termination conditions -- even if we hit
+                        // the tally runout
                         // Note that register X[0] is 18 bits
                         int terminate = 0;
                         if (getbit18(reg_X[0], 11))
@@ -1171,7 +1246,8 @@ static t_stat control_unit(void)
                             terminate |= ! IR.carry;
                         if (getbit18(reg_X[0], 17)) {
                             log_msg(DEBUG_MSG, "CU", "Checking termination conditions for overflows.\n");
-                            // Process overflows -- BUG: what are all the overflows?
+                            // Process overflows -- BUG: what are all the
+                            // types of overflows?
                             if (IR.overflow || IR.exp_overflow) {
                                 if (IR.overflow_mask)
                                     IR.overflow = 1;
@@ -1205,7 +1281,9 @@ static t_stat control_unit(void)
                         cpu.cycle = FETCH_cycle;
                     } else {
                         log_msg(NOTIFY_MSG, "CU", "Resetting XED even flag\n");
-                        // BUG? -- do we need to reset events.xed if cu.xdo isn't set?  -- but xdo must be set unless xed doesn't really mean double...
+                        // BUG? -- do we need to reset events.xed if cu.xdo
+                        // isn't set?  -- but xdo must be set unless xed
+                        // doesn't really mean double...
                     }
                 } else if (doing_xdo) {
                     log_msg(NOTIFY_MSG, "CU", "Resetting XED odd flag\n");
@@ -1226,9 +1304,11 @@ static t_stat control_unit(void)
                         // ++ PPR.IC;       // this happens after executing the xde; we don't need to do it again
                     }
                 } else if (! cpu.ic_odd) {
-                    // Performed non-repeat instr at even loc (or finished last repetition)
+                    // Performed non-repeat instr at even loc (or finished the
+                    // last repetition)
                     if (cpu.cycle == EXEC_cycle) {
-                            // After an xde, we'll increment PPR.IC.   Setting cpu.ic_odd will be ignored.
+                            // After an xde, we'll increment PPR.IC.   Setting
+                            // cpu.ic_odd will be ignored.
                             if (!cpu.trgo) {
                                 if (PPR.IC == IC_temp) {
                                     cpu.ic_odd = 1; // execute odd instr of current pair
@@ -1245,8 +1325,10 @@ static t_stat control_unit(void)
                         log_msg(WARN_MSG, "CU", "Changed from EXEC cycle to %d, not updating IC\n", cpu.cycle);
                     }
                 } else {
-                    // Performed non-repeat instr at odd loc (or finished last repetition)
-                    // After an xde, we'll increment PPR.IC.   Setting cpu.ic_odd will be ignored.
+                    // Performed non-repeat instr at odd loc (or finished last
+                    // repetition)
+                    // After an xde, we'll increment PPR.IC.   Setting
+                    // cpu.ic_odd will be ignored.
                     if (cpu.cycle == EXEC_cycle) {
                         if (!cpu.trgo) {
                             if (PPR.IC == IC_temp) {
@@ -1260,12 +1342,13 @@ static t_stat control_unit(void)
                         log_msg(NOTIFY_MSG, "CU", "Cycle is %d after EXEC_cycle\n", cpu.cycle);
                     cpu.cycle = FETCH_cycle;
                 }
-            }
+            }   // if (! is_fault)
+            }   // case FAULT_EXEC_cycle
             break;
         default:
             log_msg(ERR_MSG, "CU", "Unknown cycle # %d\n", cpu.cycle);
             reason = STOP_BUG;
-    }
+    }   // switch(cpu.cycle)
 
     return reason;
 }
@@ -1273,23 +1356,33 @@ static t_stat control_unit(void)
 
 //=============================================================================
 
-void execute_ir(void)
-{
-    // execute whatever instruction is in the IR (not whatever the IC points at)
+/*
+ *  execute_ir()
+ *
+ *  execute whatever instruction is in the IR instruction register (and
+ *  not whatever the IC points at)
+ */
 
-    cpu.trgo = 0;
+static void execute_ir(void)
+{
+
+    cpu.trgo = 0;       // will be set true by instructions that alter flow
     execute_instr();    // located in opu.c
     ++ ninstr;  // BUG: exec instructions should increase this
 }
 
 //=============================================================================
 
+/*
+ *  check_events()
+ *
+ *  Called after executing an instruction pair for xed.   The instruction pair
+ *  may have included a rpt, rpd, or transfer.   The instruction pair may even
+ *  have faulted, but if so, it was saved and restarted.
+ */
+
 static void check_events()
 {
-    // Called after executing an instruction pair for xed.   The instruction pair
-    // may have including a rpt, rpd, transfer.   The instruction pair may even
-    // have faulted, but if so, it was saved and restarted.
-
     events.any = events.int_pending || events.low_group || events.group7;
     if (events.any)
         log_msg(NOTIFY_MSG, "CU", "check_events: event(s) found (%d,%d,%d).\n", events.int_pending, events.low_group, events.group7);
@@ -1299,6 +1392,13 @@ static void check_events()
 
 
 //=============================================================================
+
+/*
+ *  fault_gen()
+ *
+ *  Called by instructions or the addressing code to record the
+ *  existance of a fault condition.
+ */
 
 void fault_gen(enum faults f)
 {
@@ -1359,6 +1459,14 @@ void fault_gen(enum faults f)
 
 //=============================================================================
 
+/*
+ * fault_check()
+ *
+ * No longer used.
+ */
+
+#if 0
+
 int fault_check(enum faults f)
 {
     // Find fault
@@ -1378,9 +1486,20 @@ int fault_check(enum faults f)
         return events.fault[group] == f;
 }
 
+#endif
+
+//=============================================================================
+
+/*
+ * fault_check_group
+ *
+ * Returns true if faults exist for the specifed group or for a higher
+ * priority group.
+ *
+ */
+
 int fault_check_group(int group)
 {
-    // Returns whether or not any faults exist for the specifed group or a higher priority group
 
     if (group < 1 || group > 7) {
         log_msg(ERR_MSG, "CU::fault-check-group", "Bad group # %d\n", group);
@@ -1395,33 +1514,40 @@ int fault_check_group(int group)
 
 //=============================================================================
 
+/*
+ * fetch_instr()
+ *
+ * Fetch intstruction
+ *
+ * Note that we allow fetch from an arbitrary address.
+ * Returns non-zero if a fault in groups 1-6 is detected
+ *
+ * TODO: limit this to only the CPU by re-working the "xec" instruction.
+ */
+
 int fetch_instr(uint IC, instr_t *ip)
 {
-    // Returns non-zero if a fault in groups 1-6 is detected
 
     t_uint64 word;
     int ret = fetch_word(IC, &word);
     if (ip)
         decode_instr(ip, word);
-#if 0
-    if (opt_debug) {
-        instr_t i;
-        if (ip == NULL) {
-            ip = &i;
-            decode_instr(ip, word);
-        }
-        if (opt_debug>0) log_msg(DEBUG_MSG, "CU::fetch-instr", "Fetched word %012llo => %s\n", word, instr2text(ip));
-    }
-#endif
     return ret;
 }
 
 //=============================================================================
 
+/*
+ * fetch_word()
+ *
+ * Fetches a word at the specified address according to the current
+ * addressing mode.
+ *
+ * Returns non-zero if a fault in groups 1-6 is detected
+ */
+
 int fetch_word(uint addr, t_uint64 *wordp)
 {
-    // todo: Allow SIMH to use segmented addressing to specify breakpoints. Next, check for such.
-    // Returns non-zero if a fault in groups 1-6 is detected
 
     addr_modes_t mode = get_addr_mode();
 
@@ -1440,7 +1566,6 @@ int fetch_word(uint addr, t_uint64 *wordp)
         log_msg(DEBUG_MSG, "CU::fetch", "Translating offset %#o to %#o.\n", addr, addr + (BAR.base << 9));
         addr += BAR.base << 9;
         return fetch_abs_word(addr, wordp);
-        // return fetch_appended(addr, wordp);
 #if 0
         log_msg(ERR_MSG, "CU::fetch", "Addr=%#o:  BAR mode unimplemented.\n", addr);
         cancel_run(STOP_BUG);
@@ -1454,27 +1579,32 @@ int fetch_word(uint addr, t_uint64 *wordp)
 }
 
 
+//=============================================================================
+
+/*
+ * fetch_abs_word(uint addr, t_uint64 *wordp)
+ *
+ * Fetch word at given 24-bit absolute address.
+ * Returns non-zero if a fault in groups 1-6 is detected
+ *
+ */
+
 int fetch_abs_word(uint addr, t_uint64 *wordp)
 {
-    // Fetch word at 24-bit absolute address addr.
-    // Returns non-zero if a fault in groups 1-6 is detected
 
-    // todo: check for read breakpoints
+#define CONFIG_DECK_LOW 012000
+#define CONFIG_DECK_LEN 010000
 
-    // todo: efficiency: combine into a single min/max with sub-tests
+    // TODO: Efficiency: If the compiler doesn't do it for us, the tests
+    // below should be combined under a single min/max umbrella.
     if (addr >= IOM_MBX_LOW && addr < IOM_MBX_LOW + IOM_MBX_LEN) {
         log_msg(DEBUG_MSG, "CU::fetch", "Fetch from IOM mailbox area for addr %#o\n", addr);
-        //cancel_run(STOP_WARN);
     }
     if (addr >= DN355_MBX_LOW && addr < DN355_MBX_LOW + DN355_MBX_LEN) {
         log_msg(DEBUG_MSG, "CU::fetch", "Fetch from DN355 mailbox area for addr %#o\n", addr);
-        //cancel_run(STOP_WARN);
     }
-#define CONFIG_DECK_LOW 012000
-#define CONFIG_DECK_LEN 010000
     if (addr >= CONFIG_DECK_LOW && addr < CONFIG_DECK_LOW + CONFIG_DECK_LEN) {
         log_msg(DEBUG_MSG, "CU::fetch", "Fetch from CONFIG DECK area for addr %#o\n", addr);
-        //cancel_run(STOP_WARN);
     }
     if (addr <= 030) {
         log_msg(DEBUG_MSG, "CU::fetch", "Fetch from 0..030 for addr %#o\n", addr);
@@ -1487,7 +1617,8 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
     }
 
     if (sim_brk_summ) {
-        // Note that fetch_appended() has its own test
+        // Check for absolute mode breakpoints.  Note that fetch_appended()
+        // has its own test for appending mode breakpoints.
         t_uint64 simh_addr = addr_emul_to_simh(ABSOLUTE_mode, 0, addr);
         if (sim_brk_test (simh_addr, SWMASK ('M'))) {
             log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address %#o.  Fetched value %012llo\n", addr, M[addr]);
@@ -1502,11 +1633,19 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
     return 0;
 }
 
+//=============================================================================
+
+/*
+ * store_word()
+ *
+ * Store a word to the specified address according to the current
+ * addressing mode.
+ *
+ * Returns non-zero if a fault in groups 1-6 is detected
+ */
 
 int store_word(uint addr, t_uint64 word)
 {
-    // todo: Allow SIMH to use segmented addressing to specify breakpoints. Next, check for such.
-    // Returns non-zero if a fault in groups 1-6 is detected
 
     addr_modes_t mode = get_addr_mode();
 
@@ -1533,40 +1672,47 @@ int store_word(uint addr, t_uint64 word)
         //return store_appended(addr, word);
 #endif
     } else {
+        // impossible
         log_msg(ERR_MSG, "CU::store", "Addr=%#o:  Unknown addr mode %d.\n", addr, mode);
         cancel_run(STOP_BUG);
-        return 1;   // BUG: gen fault
+        return 1;
     }
 }
 
+//=============================================================================
+
+/*
+ * store-abs_word()
+ *
+ * Store word to the given 24-bit absolute address.
+ */
 
 int store_abs_word(uint addr, t_uint64 word)
 {
-    // Store word to location given by 24bit abs memory addr
 
-    // todo: efficiency: combine into a single min/max with sub-tests
+    // TODO: Efficiency: If the compiler doesn't do it for us, the tests
+    // below should be combined under a single min/max umbrella.
     if (addr >= IOM_MBX_LOW && addr < IOM_MBX_LOW + IOM_MBX_LEN) {
         log_msg(DEBUG_MSG, "CU::store", "Store to IOM mailbox area for addr %#o\n", addr);
-        //cancel_run(STOP_WARN);
     }
     if (addr >= DN355_MBX_LOW && addr < DN355_MBX_LOW + DN355_MBX_LEN) {
         log_msg(DEBUG_MSG, "CU::store", "Store to DN355 mailbox area for addr %#o\n", addr);
-        //cancel_run(STOP_WARN);
     }
     if (addr >= CONFIG_DECK_LOW && addr < CONFIG_DECK_LOW + CONFIG_DECK_LEN) {
         log_msg(DEBUG_MSG, "CU::store", "Store to CONFIG DECK area for addr %#o\n", addr);
-        //cancel_run(STOP_WARN);
     }
     if (addr <= 030) {
         //log_msg(DEBUG_MSG, "CU::store", "Fetch from 0..030 for addr %#o\n", addr);
     }
+
     if (addr >= ARRAY_SIZE(M)) {
             log_msg(ERR_MSG, "CU::store", "Addr %#o (%d decimal) is too large\n");
             (void) cancel_run(STOP_BUG);
             return 0;
     }
     if (sim_brk_summ) {
-        // Note that store_appended() has its own test
+        // Check for absolute mode breakpoints.  Note that store_appended()
+        // has its own test for appending mode breakpoints.
         t_uint64 simh_addr = addr_emul_to_simh(ABSOLUTE_mode, 0, addr);
         uint mask;
         if ((mask = sim_brk_test(simh_addr, SWMASK('W') | SWMASK('M') | SWMASK('E'))) != 0) {
@@ -1596,10 +1742,20 @@ int store_abs_word(uint addr, t_uint64 word)
     return 0;
 }
 
+//=============================================================================
+
+/*
+ * store_abs_pair()
+ * 
+ * Store to even and odd words at Y-pair given by 24-bit absolute address
+ * addr.  Y-pair addresses are always constrained such that the first
+ * address used will be even.
+ *
+ * Returns non-zero if fault in groups 1-6 detected
+ */
+
 int store_abs_pair(uint addr, t_uint64 word0, t_uint64 word1)
 {
-    // Store to even and odd words at Y-pair given by 24-bit absolute address addr.
-    // Returns non-zero if fault in groups 1-6 detected
 
     int ret;
     uint Y = (addr % 2 == 0) ? addr : addr - 1;
@@ -1613,11 +1769,26 @@ int store_abs_pair(uint addr, t_uint64 word0, t_uint64 word1)
     return 0;
 }
 
+//=============================================================================
+
+/*
+ * store_pair()
+ * 
+ * Store to even and odd words at given Y-pair address according to the
+ * current addressing mode.
+ * Y-pair addresses are always constrained such that the first address used
+ * will be even.
+ *
+ * Returns non-zero if fault in groups 1-6 detected
+ *
+ * BUG: Is it that the given y-pair offset must be even or is it that the
+ * final computed addr must be even?   Note that the question may be moot --
+ * it might be that segements always start on an even address and contain
+ * an even number of words.
+ */
+
 int store_pair(uint addr, t_uint64 word0, t_uint64 word1)
 {
-    // Store to even and odd words at Y-pair given by address addr.
-    // Returns non-zero if fault in groups 1-6 detected
-    // BUG: Is it the offset that must be even or the final addr that must be even?  (Or both?)
 
     int ret;
     uint Y = (addr % 2 == 0) ? addr : addr - 1;
@@ -1631,11 +1802,19 @@ int store_pair(uint addr, t_uint64 word0, t_uint64 word1)
     return 0;
 }
 
+//=============================================================================
+
+/*
+ * fetch_abs_pair()
+ *
+ * Fetch even and odd words at Y-pair given by the specified 24-bit absolute
+ * address.
+ *
+ * Returns non-zero if fault in groups 1-6 detected
+ */
 
 int fetch_abs_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
 {
-    // Fetch even and odd words at Y-pair given by 24-bit absolute address addr.
-    // Returns non-zero if fault in groups 1-6 detected
 
     int ret;
     uint Y = (addr % 2 == 0) ? addr : addr - 1;
@@ -1649,10 +1828,23 @@ int fetch_abs_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
     return 0;
 }
 
+//=============================================================================
+
+/*
+ * fetch_pair()
+ * 
+ * Fetch from the even and odd words at given Y-pair address according to the
+ * current addressing mode.
+ * Y-pair addresses are always constrained such that the first address used
+ * will be even.
+ *
+ * Returns non-zero if fault in groups 1-6 detected
+ *
+ * BUG: see comments at store_pair() re what does "even" mean?
+ */
+
 int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
 {
-    // BUG: Is it the offset that must be even or the final addr that must be even?  (Or both?)
-
     int ret;
     uint Y = (addr % 2 == 0) ? addr : addr - 1;
 
@@ -1665,13 +1857,22 @@ int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p)
     return 0;
 }
 
+//=============================================================================
+
+/*
+ * fetch_yblock()
+ * 
+ * Aligned or un-aligned fetch from the given Y-block address according to
+ * the current addressing mode.
+ *
+ * Returns non-zero if fault in groups 1-6 detected
+ *
+ * BUG: What does "aligned" mean for appending mode?  See comments at
+ * store_pair().
+ */
 
 int fetch_yblock(uint addr, int aligned, uint n, t_uint64 *wordsp)
 {
-    // Fetch words from Y-block addr.
-    // Returns non-zero if fault in groups 1-6 detected
-    // BUG: Is it the offset that must be zero mod n or the final addr that must be zero mod n?  (Or both?)
-
     int ret;
     uint Y = (aligned) ? (addr / n) * n : addr;
 
@@ -1682,18 +1883,42 @@ int fetch_yblock(uint addr, int aligned, uint n, t_uint64 *wordsp)
 }
 
 
+//=============================================================================
+
+/*
+ * fetch_yblock8()
+ * 
+ * Aligned fetch from the given Y-block-8 address according to
+ * the current addressing mode.
+ *
+ * Returns non-zero if fault in groups 1-6 detected
+ *
+ * BUG: What does "aligned" mean for appending mode?  See comments at
+ * fetch_yblock() and store_pair().
+ */
+
 int fetch_yblock8(uint addr, t_uint64 *wordsp)
 {
     return fetch_yblock(addr, 1, 8, wordsp);
 }
 
 
+//=============================================================================
+
+/*
+ * store_yblock()
+ * 
+ * Aligned or un-aligned store to the given Y-block address according to
+ * the current addressing mode.
+ *
+ * Returns non-zero if fault in groups 1-6 detected
+ *
+ * BUG: What does "aligned" mean for appending mode?  See comments at
+ * store_pair().
+ */
+
 static int store_yblock(uint addr, int aligned, int n, const t_uint64 *wordsp)
 {
-    // Store words of to Y-block addr.
-    // Returns non-zero if fault in groups 1-6 detected
-    // BUG: Is it the offset that must be zero mod n or the final addr that must be zero mod n?  (Or both?)
-
     int ret;
     uint Y = (aligned) ? (addr / n) * n : addr;
 
@@ -1703,10 +1928,14 @@ static int store_yblock(uint addr, int aligned, int n, const t_uint64 *wordsp)
     return 0;
 }
 
+//=============================================================================
+
 int store_yblock8(uint addr, const t_uint64 *wordsp)
 {
     return store_yblock(addr, 1, 8, wordsp);
 }
+
+//=============================================================================
 
 int store_yblock16(uint addr, const t_uint64 *wordsp)
 {
@@ -1714,8 +1943,14 @@ int store_yblock16(uint addr, const t_uint64 *wordsp)
 }
 
 
-
 //=============================================================================
+
+/*
+ * decode_instr()
+ *
+ * Convert a 36-bit word into a instr_t struct.
+ * 
+ */
 
 void decode_instr(instr_t *ip, t_uint64 word)
 {
@@ -1733,6 +1968,14 @@ void decode_instr(instr_t *ip, t_uint64 word)
     }
 }
 
+//=============================================================================
+
+/*
+ * encode_instr()
+ *
+ * Convert an instr_t struct into a  36-bit word.
+ * 
+ */
 
 void encode_instr(const instr_t *ip, t_uint64 *wordp)
 {
@@ -1752,50 +1995,14 @@ void encode_instr(const instr_t *ip, t_uint64 *wordp)
 
 //=============================================================================
 
-void anal36 (const char* tag, t_uint64 word);
+/*
+ * bin2text()
+ *
+ * Display as bit string.
+ *
+ */
+
 #include <ctype.h>
-
-void tape_block(unsigned char *p, uint32 len, uint32 addr)
-{
-    log_msg(DEBUG_MSG, "CPU::boot", "Tape block: %u bytes, %u 36-bit words\n", len, len*8/36);
-    if ((len * 8) % 36 != 0) {
-        log_msg(ERR_MSG, "CPU::boot", "Length %u bytes is not a multiple of 36 bits.\n");
-    }
-    bitstream_t *bp = bitstm_new(p, len);
-    uint32 nbits = len * 8;
-    while (nbits >= 36) {
-        bitstm_get(bp, 36, &M[addr++]);     // absolute addresses
-        nbits -= 36;
-    }
-    if (nbits != 0) {
-        log_msg(ERR_MSG, "CPU::boot", "Internal error.   Some bits left over while reading tape\n");
-    }
-}
-
-//=============================================================================
-
-void anal36 (const char* tag, t_uint64 word)
-{
-    unsigned char nines[4];
-    nines[3] = word & 0777;
-    nines[2] = (word >> 9) & 0777;
-    nines[1] = (word >> 18) & 0777;
-    nines[0] = (word >> 27) & 0777;
-    printf("%s: %012llo octal, %llu decimal\n", tag, word, word);
-    printf("bin64: %s\n", bin2text(word, 64));
-    printf("bin36: %s\n", bin2text(word, 36));
-    printf("9bits(oct): %03o %03o %03o %03o\n", nines[0], nines[1], nines[2], nines[3]);
-    printf("9bits(ascii):");
-    int i;
-    for (i = 0; i < 4; ++ i) {
-        if (isprint(nines[i])) {
-            printf(" '%c'", nines[i]);
-        } else {
-            printf(" \\%03o", nines[i]);
-        }
-    }
-    printf("\n");
-}
 
 char *bin2text(t_uint64 word, int n)
 {
@@ -1820,12 +2027,19 @@ char *bin2text(t_uint64 word, int n)
 
 //=============================================================================
 
+/*
+ * cpu_ex()
+ *
+ * Called by SIMH to retrieve memory.
+ *
+ * WARNING: SIMH Documention is incorrect; SIMH code expects examine() to only
+ * write a single value (often a member of an array of size sim_emax)
+ */
+
 static t_stat cpu_ex (t_value *eval_array, t_addr simh_addr, UNIT *uptr, int32 switches)
 {
     // BUG: sanity check args
     // NOTE: We ignore UNIT, because all CPUS see the same memory
-    // SIMH Documention is incorrect; SIMH code expects examine() to only
-    // write a single value (often a member of an array of size sim_emax)
 
     // log_msg(INFO_MSG, "CPU:examine", "Examine address is %012llo; uptr is %p\n", simh_addr, uptr);
 
@@ -1848,6 +2062,15 @@ static t_stat cpu_ex (t_value *eval_array, t_addr simh_addr, UNIT *uptr, int32 s
     return 0;
 }
 
+//=============================================================================
+
+/*
+ * cpu_dep()
+ *
+ * Called by SIMH to write to memory.
+ *
+ */
+
 static t_stat cpu_dep (t_value v, t_addr simh_addr, UNIT *uptr, int32 switches)
 {
     // BUG: sanity check args
@@ -1862,17 +2085,26 @@ static t_stat cpu_dep (t_value v, t_addr simh_addr, UNIT *uptr, int32 switches)
     if (addr_any_to_abs(&abs_addr, mode, segno, offset) != 0)
         return SCPE_ARG;    // BUG: is this the right failure code
 
-    M[abs_addr] = v;        // SIMH absolute reference; BUG: use store_abs_word in case we need cache invalidation
+    // We use the translated absolute reference here.
+    // BUG: We should use store_abs_word() in case we need cache invalidation.
+    M[abs_addr] = v;
 
     return 0;
 }
 
 //=============================================================================
 
-static void init_ops()
-{
-    // hack -- todo: cleanup
+/*
+ * init_opcodes()
+ *
+ * This initializes the is_eis[] array which we use to detect whether or
+ * not an instruction is an EIS instruction. 
+ *
+ * BUG: unimplemented instructions may not be represented
+ */
 
+static void init_opcodes()
+{
     memset(is_eis, 0, sizeof(is_eis));
 
     is_eis[(opcode1_cmpc<<1)|1] = 1;

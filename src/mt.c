@@ -182,9 +182,9 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
             // BUG: There isn't another word to be read from the tape buffer, but the IOM wants
             // another word.
             // BUG: How did this tape hardare handle an attempt to read more data than was present?
-            // For "long" reads, bootload_tape_label.alm seems to assume a 4000 all-clear status.
-            // Boot_tape_io.pl1 also seems to assume that providing an over-large buffer doesn't
-            // yield any error return.
+            // One answer is in bootload_tape_label.alm which seems to assume a 4000 all-clear status.
+            // Boot_tape_io.pl1 seems to assume that "short reads" into an over-large buffer
+            // should not yield any error return.
             // So we'll set the flags to all-ok, but return an out-of-band non-zero status to
             // make the iom stop.
             // BUG: The IOM should be updated to return its DCW tally residue to the caller.
@@ -210,7 +210,7 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
     /*notreached*/
     *majorp = 0;
     *subp = 0;
-    log_msg(ERR_MSG, "MT::iom_io", "Internel error.\n");
+    log_msg(ERR_MSG, "MT::iom_io", "Internal error.\n");
     cancel_run(STOP_BUG);
     return 1;
 }

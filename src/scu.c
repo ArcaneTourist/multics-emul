@@ -18,6 +18,55 @@
         IOMs use interrupts to ask a SCU to signal a CPU.
     Other Interesting instructions:
         read system controller reg and set system controller reg (rscr & sscr)
+
+*/
+
+/*
+    Physical Details & Interconnection -- AN70, section 8.
+
+    SCUs have 8 ports.  Active modules (CPUs and IOMs) have up to four
+    of their ports connected to SCUs.
+
+    SCUs have stores (memory banks) and two sets of registers ("A" and "B")
+    that control interrupt assignment.
+
+    Two sets of interrupt registers -- "A" and "B".  Each set has:
+        * execute interrupt mask register -- 32 bits; enables/disables
+          the corresponding execute interrupt cell
+        * interrupt mask assignment register -- 9 bits total
+          two parts: assigned bit, set of assigned ports (8 bits)
+          In Multics, only one CPU will be assigned in either mask
+          and no CPU appears in both.
+
+    Config panel -- level 68 6000 SCU
+        -- from AM81
+        store A and store B
+            3 position rotary switch: on line, maint, off line
+            size: 32k, 64k, 128k, 256k
+        exec interrupt mask assignment
+            four 10-position rotary switches (a through d): off, 0, .. 7, M
+            One switch for each program interrupt register
+            Assign mask registers to system ports
+            Normally assign one mask reg to each CPU
+        
+    Config panel -- Level 68 System Controller UNIT (4MW SCU)
+        -- from AM81
+        Store A, A1, B, B1 (online/offline)
+        LWR Store Size
+        PORT ENABLE
+            Eight on/off switches
+            Should be on for each port connected to a configured CPU
+        mask/port assignment
+            Two rotary switchs (A & B); set to (off, 0..7)
+            See EXEC INTERRUPT on the 6000 SCU
+            When booting, one should be set to the port connected to
+            the bootload CPU.   The other should be off.
+
+    If memory port B of CPU C goes to SCU D, then memory port B of all
+    other CPUs *and* IOMs must go to SCU D. -- AN70, 8-4.
+
+    The base address of the SCU is the actual memory size * the port
+    assignment. -- AN70, 8-6.
 */
 
 
@@ -48,7 +97,7 @@ Booting Instructions (GB61)
 */
 
 /*
-58009906
+58009906 (DPS8)
     When CPU needs to address the SCU (for a write/read data cycle,
     for example), the ETMCM board int the CU of the CPU issues a $INT
     to the SCU.  This signal is sent ... to the SCAMX active port
@@ -117,28 +166,6 @@ Multics can have 16MW words of memory.
 CPUs have 8 ports, a..h.
 SCUs have 8 ports, 0..7.
 
-config panel -- level 68 6000 SCU
-    store A and store B
-        3 position rotary switch: on line, maint, off line
-        size: 32k, 64k, 128k, 256k
-    exec interrupt mask assignment
-        four 10-position rotary switches (a through d): off, 0, .. 7, M
-        One switch for each program interrupt register
-        Assign mask registers to system ports
-        Normally, assing one mask reg to each CPU
-        
-    ...
-config panel -- Level 68 System Controller UNIT (4MW SCU)
-    PORT ENABLE
-        Eight on/off switches
-        Should be on for each port connected to a configured CPU
-    LWR Store Size
-    Store A, A1, B, B1 (online/offline)
-    mask/port assignment
-        Two rotary switchs (A & B); set to (off, 0..7)
-        See EXEC INTERRUPR on the 6000 SCU
-        When booting, one should be set to the port connected to
-        the bootload CPU.   The other should be off.
 
 */
 
@@ -150,15 +177,6 @@ config panel -- Level 68 System Controller UNIT (4MW SCU)
 extern cpu_ports_t cpu_ports;
 extern scu_t scu;   // BUG: we'll need more than one for max memory.  Unless we can abstract past the physical HW's capabilities
 static int pima_parse_raw(int pima, const char *moi);
-
-#if 0
-void scu_dump()
-{
-    int pima;
-    for (pima = 0; pima < array_size(scu.mask_assign); ++pima)
-        log_msg(DEBUG_MSG, "SCU", "PIMA %d: mask assign = 0%o\n", pima, scu.mask_assign[pima]);
-}
-#endif
 
 static int scu_hw_arg_check(const char *tag, t_uint64 addr, int port)
 {
@@ -202,48 +220,68 @@ static int scu_hw_arg_check(const char *tag, t_uint64 addr, int port)
 int scu_set_mask(t_uint64 addr, int port)
 {
     // BUG: addr should determine which SCU is selected
-    // Implements part of the sscr instruction
+    // Implements part of the sscr instruction -- functions y00[0-7]2x
 
-    if (scu_hw_arg_check("setmask", addr, port) > 1)
+    const char* moi = "SCU::setmask";
+    if (scu_hw_arg_check(moi, addr, port) > 1)
         return 1;
     else
-        log_msg(WARN_MSG, "setmask", "continuing...\n");
+        log_msg(WARN_MSG, moi, "continuing...\n");
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
-    // Find mask reg assigned to processer
-    int pima = 0;
-    int found = 0;
-    for (int p = 0; p < ARRAY_SIZE(scu.eima_data); ++p) {
-        if (! scu.eima_data[p].avail)
+    // Find mask reg assigned to specified port
+    int port_pima = 0;
+    int cpu_pima = 0;
+    int cpu_found = 0;
+    int port_found = 0;
+    for (int p = 0; p < ARRAY_SIZE(scu.interrupts); ++p) {
+        if (! scu.interrupts[p].avail)
             continue;
-        if (! scu.eima_data[p].assigned)
+        if (scu.interrupts[p].mask_assign.unassigned)
             continue;
-        if (scu.eima_data[p].port == cpu_no) {
-            pima = p;
-            log_msg(NOTIFY_MSG, "SCU", "MASK %d is assigned to cpu %d\n", p, cpu_no);
-            ++found;
+        if (scu.interrupts[p].mask_assign.port == port) {
+            port_pima = p;
+            if (cpu_no != port)
+                log_msg(NOTIFY_MSG, moi, "Found MASK %d assigned to port %d\n", p, port);
+            ++ port_found;
+        }
+        if (scu.interrupts[p].mask_assign.port == cpu_no) {
+            cpu_pima = p;
+            log_msg(NOTIFY_MSG, moi, "Found MASK %d assigned to CPU/port %d\n", p, cpu_no);
+            ++ cpu_found;
         }
     }
-    if (!found) {
-        log_msg(WARN_MSG, "SCU", "No masks assigned to cpu on port %d\n", cpu_no);
+
+    if (! cpu_found) {
+        log_msg(WARN_MSG, moi, "No masks assigned to cpu on port %d\n", cpu_no);
         fault_gen(store_fault);
         return 1;
-    } else
-        if (found > 1) {
-            log_msg(WARN_MSG, "SCU", "Multiple masks assigned to cpu on port %d\n", cpu_no);
-            cancel_run(STOP_WARN);
-        } else if (pima > 1) {
-            log_msg(ERR_MSG, "SCU", "Cannot write to masks other than zero and one: %d\n", pima);
-            cancel_run(STOP_BUG);
-            return 1;
-        } else {
-            // See AN87
-            for (int pima = 0; pima < 2; ++pima) {
-                scu.eima_data[pima].raw = (pima == 0) ? getbits36(reg_A, 0, 9) : getbits36(reg_Q, 0, 9);
-                pima_parse_raw(pima, "SCU::set-mask");
-            }
+    }
+    if (cpu_found > 1) {
+        // Not legal for Multics
+        log_msg(WARN_MSG, moi, "Multiple masks assigned to cpu on port %d\n", cpu_no);
+        cancel_run(STOP_WARN);
+    }
+    if (cpu_no != port) {
+        if (! port_found) {
+            log_msg(WARN_MSG, moi, "No masks assigned to port %d\n", cpu_no);
+            return 0;
         }
+        if (port_found > 1)
+            log_msg(WARN_MSG, moi, "Multiple masks assigned to port %d\n", cpu_no);
+    }
+
+    if (port_pima > 1) {
+        log_msg(ERR_MSG, moi, "Cannot write to masks other than zero and one: %d\n", port_pima);
+        cancel_run(STOP_BUG);
+        return 1;
+    }
+
+    // See AN87
+    scu.interrupts[port_pima].exec_intr_mask = 0;
+    scu.interrupts[port_pima].exec_intr_mask |= (getbits36(reg_A, 0, 16) << 16);
+    scu.interrupts[port_pima].exec_intr_mask |= getbits36(reg_Q, 0, 16);
     return 0;
 }
 
@@ -257,18 +295,17 @@ int scu_set_cpu_mask(t_uint64 addr)
     else
         log_msg(WARN_MSG, "smcm", "continuing...\n");
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
-    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
-    return scu_set_mask(addr, cpu_no);  // BUG: is this right?
+    return scu_set_mask(addr, cpu_no);
 }
 
 
 int scu_get_mode_register(t_uint64 addr)
 {
-    // Implements part of the rscr instruction
+    // Implements part of the rscr instruction -- function  y0000x
     // BUG: addr should determine which SCU is selected
 
-#if 0
+#if 1
     // BUG: is it really OK for all ports to be disabled?
     if (scu_hw_arg_check("get-mode-register", addr, 0) != 0)
         log_msg(ERR_MSG, "get-mode-register", "But proceeding anyway");
@@ -280,9 +317,9 @@ int scu_get_mode_register(t_uint64 addr)
 
     // See scr.incl.pl1 and AN87 page 2-2
 
-    // Note that rscr 00001X can only report an SC with a memory sizes of up
-    // to 256 K-words, but can report an SCU with up to 4MW.  So, we identify
-    // ourselves as an SCU.
+    // Note that rscr 0001X can only report an SC with a memory sizes of up
+    // to 256 K-words, but rscr 0001X can report an SCU with up to 4MW.  So,
+    // we identify ourselves as an 4MW SCU.
 
     reg_A = 0;  // first 50 bits are padding
     reg_Q = 0;
@@ -300,15 +337,15 @@ int scu_get_mode_register(t_uint64 addr)
 
 int scu_get_config_switches(t_uint64 addr)
 {
-    // Implements part of the rscr instruction
+    // Implements part of the rscr instruction -- function y0001x
     // Returns info appropriate to a 4MW SCU
     // BUG: addr should determine which SCU is selected
 
     const char *tag = "get-config-switches";
     const char *moi = "SCU::get-config-switches";
-#if 0
+#if 1
     if (scu_hw_arg_check(tag, addr, 0) != 0)
-        return 1;
+        log_msg(ERR_MSG, moi, "But proceeding anyway");
 #endif
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
@@ -317,21 +354,12 @@ int scu_get_config_switches(t_uint64 addr)
     // See scr.incl.pl1 
     reg_A = 0;
     // interrupt mask A port assignment
-#if 0
-    if (!scu.eima_data[0].avail)
-        reg_A = setbits36(reg_A, 0, 9, 0);
-    else if (scu.eima_data[0].assigned)
-        reg_A = setbits36(reg_A, 0, 9, 1);
-    else
-        reg_A = setbits36(reg_A, 0, 9, 1<<(8 - scu.eima_data[0].port));
-#else
-    reg_A = setbits36(reg_A, 0, 9, scu.eima_data[0].raw);
-#endif
-    //reg_A = setbits36(reg_A, 9, 3, 7);    // size of lower store -- 2^(7+5) == 4096 K-words
+    reg_A = setbits36(reg_A, 0, 9, scu.interrupts[0].mask_assign.raw);
+    // We have 4 banks and can have 4M-words, so report banks size 1024K-words
     reg_A = setbits36(reg_A, 9, 3, 5);  // size of lower store -- 2^(5+5) == 1024 K-words
     reg_A = setbits36(reg_A, 12, 4, 017);   // all four stores online
     reg_A = setbits36(reg_A, 16, 4, cpu_no);    // requester's port #
-    reg_A = setbits36(reg_A, 21, 1, 1); // programmable; BUG
+    reg_A = setbits36(reg_A, 21, 1, scu.mode);  // programmable
     reg_A = setbits36(reg_A, 22, 1, 0); // non-existent address logic enabled
     reg_A = setbits36(reg_A, 23, 7, 0); // nea size
     reg_A = setbits36(reg_A, 30, 1, 1); // internally interlaced
@@ -348,17 +376,7 @@ int scu_get_config_switches(t_uint64 addr)
     }
 
     reg_Q = 0;
-#if 0
-    // interrupt mask B port assignment; BUG
-    if (!scu.eima_data[0].avail)
-        reg_Q = setbits36(reg_Q, 0, 9, 0);
-    else if (scu.eima_data[0].assigned)
-        reg_Q = setbits36(reg_Q, 0, 9, 1);
-    else
-        reg_Q = setbits36(reg_Q, 0, 9, 1<<(8 - scu.eima_data[0].port));
-#else
-    reg_Q = setbits36(reg_Q, 0, 9, scu.eima_data[0].raw);
-#endif
+    reg_Q = setbits36(reg_Q, 0, 9, scu.interrupts[1].mask_assign.raw);
     reg_Q = setbits36(reg_Q, 57-36, 7, 0);  // cyclic port priority switches; BUG
     for (int i = 0; i < 4; ++ i) {
         int pima = 1;
@@ -377,14 +395,15 @@ int scu_get_config_switches(t_uint64 addr)
 
 int scu_set_config_switches(t_uint64 addr)
 {
-    // Implements part of the sscr instruction
-    // Expects info appropriate to a 4MW SCU
+    // Implements part of the sscr instruction, function y0001x
+    // Only valid for a 4MW SCU
     // BUG: addr should determine which SCU is selected
     const char* moi = "SCU::set-config-switches";
 
-    if (scu_hw_arg_check(moi, addr, 0) > 1)
+    if (scu_hw_arg_check(moi, addr, 0) > 1) {
+        log_msg(WARN_MSG, moi, "failed...\n");
         return 1;
-    else
+    } else
         log_msg(WARN_MSG, moi, "continuing...\n");
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
@@ -400,14 +419,14 @@ int scu_set_config_switches(t_uint64 addr)
     // get settings from reg A
 
     int pima = 0;
-    scu.eima_data[pima].raw = getbits36(reg_A, 0, 9);
+    scu.interrupts[pima].mask_assign.raw = getbits36(reg_A, 0, 9);
     pima_parse_raw(pima, moi);
 
     // BUG: We don't allow changes to many of the settings
     //getbits36(reg_A, 9, 3);   // size of lower store -- 2^(5+5) == 1024 K-words
     //getbits36(reg_A, 12, 4);  // all four stores online
     // requester's port cannot be set from bits 16..20 of A 
-    scu.mode = getbits36(reg_A, 21, 1); // programmable?
+    // scu.mode = getbits36(reg_A, 21, 1);  // programmable flag; not for sscr
     // getbits36(reg_A, 22, 1); // non-existent address logic enabled
     // getbits36(reg_A, 23, 7); // nea size
     // getbits36(reg_A, 30, 1); // internally interlaced
@@ -436,7 +455,7 @@ int scu_set_config_switches(t_uint64 addr)
     // get settings from reg Q
     
     pima = 1;
-    scu.eima_data[pima].raw = getbits36(reg_Q, 0, 9);
+    scu.interrupts[pima].mask_assign.raw = getbits36(reg_Q, 0, 9);
     pima_parse_raw(pima, moi);
 
     // BUG  getbits36(reg_Q, 57-36, 7, 0);  // cyclic port priority switches; BUG
@@ -488,16 +507,15 @@ int scu_set_config_switches(t_uint64 addr)
         log_msg(ERR_MSG, moi, "Unfinished and incorrect.\n");
         cancel_run(STOP_BUG);
     }
-    return 1;
-
-    return 0;
+    return ret;
 }
 
 
 int scu_get_mask(t_uint64 addr, int port)
 {
     // BUG: addr should determine which SCU is selected
-    // Implements part of the rscr instruction
+    // Implements part of the rscr instruction, function y00[0-7]2x
+    const char *moi = "SCU::get-mask";
 
     if (scu_hw_arg_check("getmask", addr, port) > 1)
         return 1;
@@ -506,26 +524,48 @@ int scu_get_mask(t_uint64 addr, int port)
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
-
     // Find which of the 4 masks are assigned to the specified port
-    int pima = 0;
-    int found = 0;
-    for (int p = 0; p < ARRAY_SIZE(scu.eima_data); ++p) {
-        if (! scu.eima_data[pima].avail)
+    // Unlike sscr scu_set_mask, we don't care about the CPU's port
+    int port_pima = 0;
+    int port_found = 0;
+    for (int p = 0; p < ARRAY_SIZE(scu.interrupts); ++p) {
+        if (! scu.interrupts[p].avail)
             continue;
-        if (! scu.eima_data[pima].assigned)
+        if (scu.interrupts[p].mask_assign.unassigned)
             continue;
-        if (scu.eima_data[pima].port == port) {
-            pima = p;
-            ++found;
+        if (scu.interrupts[p].mask_assign.port == port) {
+            port_pima = p;
+            log_msg(NOTIFY_MSG, moi, "Found MASK %d assigned to port %d\n", p, port);
+            ++ port_found;
         }
     }
 
-    // BUG: we need to return two masks, each of which is assigned to some port
-    if (pima % 2 == 1)
-        -- pima;
-    reg_A = setbits36(0, 0, 9, scu.eima_data[pima].raw);
-    reg_Q = setbits36(0, 0, 9, scu.eima_data[pima+1].raw);
+    if (! port_found) {
+        log_msg(WARN_MSG, moi, "No masks assigned to port %d\n", cpu_no);
+        return 0;
+    }
+    if (port_found > 1)
+        log_msg(WARN_MSG, moi, "Multiple masks assigned to port %d\n", cpu_no);
+
+    // See AN87
+    reg_A = setbits36(0, 0, 16, scu.interrupts[port_pima].exec_intr_mask >> 16);
+    unsigned mask = 0;
+    for (int i = 0; i < 4; ++ i) {
+        int enabled = scu.ports[port] < 0;
+        mask |= enabled;
+        mask <<= 1;
+    }
+    reg_A |= mask;
+
+    reg_Q = setbits36(0, 0, 16, scu.interrupts[port_pima].exec_intr_mask & MASKBITS(16));
+    mask = 0;
+    for (int i = 0; i < 4; ++ i) {
+        int enabled = scu.ports[port+4] < 0;
+        mask |= enabled;
+        mask <<= 1;
+    }
+    reg_Q |= mask;
+
     return 0;
 }
 
@@ -617,23 +657,30 @@ int scu_cioc(t_uint64 addr)
 static int pima_parse_raw(int pima, const char *moi)
 {
     char pima_name = (pima == 0) ? 'A' : 'B';
+    flag_t unassigned = scu.interrupts[pima].mask_assign.raw & 1;
+    if (unassigned) {
+        scu.interrupts[pima].mask_assign.unassigned = 1;
+        log_msg(NOTIFY_MSG, moi, "Unassigning MASK %c.\n", pima_name);
+    }
     int found = 0;
     for (int p = 0; p < 8; ++p)
-        if (((1<<(8-p) & scu.eima_data[pima].raw)) != 0) {
+        if (((1<<(8-p) & scu.interrupts[pima].mask_assign.raw)) != 0) {
             ++ found;
-            scu.eima_data[pima].assigned = 1;
-            scu.eima_data[pima].port = p;
+            scu.interrupts[pima].mask_assign.port = p;
             log_msg(NOTIFY_MSG, moi, "Assigning port %d to MASK %c.\n", p, pima_name);
         }
-    if ((scu.eima_data[pima].raw & 1) != 0) {
-        scu.eima_data[pima].assigned = 0;
-        log_msg(NOTIFY_MSG, moi, "Unassigning MASK %c.\n", pima_name);
-        ++ found;
-    }
-    if (found != 1) {
-        log_msg(WARN_MSG, moi, "%d ports enabled for MASK %c: %#o\n", found, pima_name, scu.eima_data[pima].raw);
-        if (found != 0 || scu.eima_data[pima].raw != 0)
+    if (unassigned) {
+        if (found != 0) {
+            log_msg(WARN_MSG, moi, "%d ports enabled for unassigned MASK %c: %#o\n", found, pima_name, scu.interrupts[pima].mask_assign.raw);
             cancel_run(STOP_WARN);
+        }
+        return found != 0;
+    } else {
+        scu.interrupts[pima].mask_assign.unassigned = found == 0;
+        if (found != 1) {
+            log_msg(WARN_MSG, moi, "%d ports enabled for MASK %c: %#o\n", found, pima_name, scu.interrupts[pima].mask_assign.raw);
+            cancel_run(STOP_WARN);
+        }
+        return found != 1;
     }
-    return found != 1;
 }

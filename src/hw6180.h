@@ -67,8 +67,13 @@ enum sim_stops {
     STOP_ODD_FETCH,
     STOP_IBKPT          // breakpoint
 };
+
 enum dev_type { DEV_NONE, DEV_TAPE, DEV_CON, DEV_DISK };    // devices connected to an IOM
-// Levels debug and info may be routed via debug logging; debug may be suppressed by turning off debug
+
+// Logging levels.  Messages at level "debug" and level "info" may be re-routed
+// to a file via the debug log command (messages at all levels may be
+// re-routed via the console log command.   Messages at level debug
+// may be suppressed by turning off debug.
 enum log_level { DEBUG_MSG, INFO_MSG, NOTIFY_MSG, WARN_MSG, ERR_MSG };
 
 
@@ -115,15 +120,6 @@ typedef struct {
     } mods;
     flag_t is_eis_multiword;    // set true for relevent opcodes
 } instr_t;
-
-//typedef struct {
-//  // 18 bits at 0..17 of an instruction or indir word
-//  // uint raw18;      // all 18 bits
-//  uint pr;        // first 3 bits of above if (pr_bit==1)
-//  uint offset;    // unsigned offset, 15 or 18 bits
-//  int soffset;    // signed offset, 15 or 18 bits
-//} offset_t;
-
 
 /* Indicator register (14 bits [only positions 18..32 have meaning]) */
 typedef struct {
@@ -232,8 +228,6 @@ typedef struct {
     uint TSR;   // Current effective segment number, 15 bits
     uint TBR;   // Current bit offset as calculated from ITS and ITP
     uint CA;    // Current computed addr relative to the segment in TPR.TSR, 18 bits
-    //t_uint64 CA;  // Current computed addr relative to the segment in TPR.TSR, 18 bits
-    //int bitno;    // see TBR
     // BUG: CA value should probably be placed in ctl_unit_data_t
     uint is_value;  // is offset a value or an address? (du or dl modifiers)
     t_uint64 value; // 36bit value from opcode constant via du/dl
@@ -354,7 +348,7 @@ typedef struct {
     // flag_t q;
     // flag_t w;
     // flag_t s;
-    flag_t f;       // directed fault (0=>page non in memory, so fault); bit 33
+    flag_t f;       // directed fault (0=>page not in memory, so fault); bit 33
     uint fc;        // which directed fault; bits 34..35
 } PTW_t;
 
@@ -366,7 +360,7 @@ typedef struct {
     struct {
         uint ptr;       // 15 bits; effective segment #
         uint pageno;    // 12 bits; 12 high order bits of CA used to fetch this PTW from mem
-        uint is_full;   // flag; PTW is valid
+        flag_t is_full; // PTW is valid
         uint use;       // counter, 4 bits
         uint enabled;   // internal flag, not part of the register
     } assoc;
@@ -431,17 +425,19 @@ typedef struct {
     int cpu_num;    // zero for CPU 'A', one for 'B' etc.
 } switches_t;
 
+// Physical ports on the CPU
 typedef struct {
     int ports[8];   // SCU connectivity; designated a..h
     int scu_port;   // What port num are we connected to (same for all SCUs)
 } cpu_ports_t;
 
+// System Controller
 typedef struct {
-    // int interrupts[32];
     // uint mem_base;   // zero on boot scu
     // mode reg: mostly not stored here; returned by scu_get_mode_register()
     int mode;   // program/manual; if 1, sscr instruction can set some fields
 #if 0
+    // The info below isn't used.  Instead scu.c returns hard coded values.
     struct {
         unsigned mask_a_assign:9;
         unsigned a_online:1;    // bank a online?
@@ -460,17 +456,27 @@ typedef struct {
     } config_switches;
 #endif
     int ports[8];           // CPU/IOM connectivity; designated 0..7; negative to disable
-    //t_uint64 masks[4];    // 32bit masks
-    //uint mask_assign[4];  //  Bit masks.  Which port(s) is each PIMA reg assigned to?
+
+    /* The interrupt registers.
+        Four exist; only two "A" and "B" used.
+        Two parts -- execute interrupt mask register and a 9-bit mask assignment
+    */
     struct {
-        unsigned raw;       // 9 bits; raw mask; decoded below
-        flag_t avail;       // does mask exist?
-        flag_t assigned;    // is it assigned to a port?
-        uint port;          // 3 bits; port to which mask is assigned
-    } eima_data[4];
-    
+        flag_t avail;       // Not physical.  Does mask really exist?
+        // Part 1 -- the execute interrupt mask register
+        unsigned exec_intr_mask;    // 32 bits, one for each intr or "cell"
+        // Part 2 -- the interrupt mask assignment register -- 9 bits total
+        struct {
+            unsigned raw;       // 9 bits; raw mask; decoded below
+            flag_t unassigned;  // is it assigned to a port?
+            // We only list one port -- Multics only allowed one port at a time
+            // even though the SCU hardware would have allowed all 8 ports
+            uint port;          // port to which mask is assigned (0..7)
+        } mask_assign;  // eima_data[4];
+    } interrupts[4];
 } scu_t;
 
+// I/O Multiplexer
 typedef struct {
     int ports[8];   // CPU/IOM connectivity; designated a..h; negative to disable
     int scu_port;   // which port on the SCU(s) are we connected to?
@@ -479,6 +485,8 @@ typedef struct {
 } iom_t;
 
 
+// EIS instructions use argument descriptors that provide addressing,
+// type information, counters, etc.
 typedef struct {
     uint address;   // 18 bits at  0..17
     uint cn;    //  3 bits at 18..20; character position
@@ -613,7 +621,7 @@ extern int opt_debug;
 extern t_uint64 reg_A;      // Accumulator, 36 bits
 extern t_uint64 reg_Q;      // Quotient, 36 bits
 extern int8 reg_E;          // Floating Point exponent, 8 bits
-extern uint32 reg_X[8];     // Index Registers, 18 bits; SIMH expects data type to be no larger than needed
+extern uint32 reg_X[8];     // Index Registers, 18 bits
 extern IR_t IR;             // Indicator Register
 extern BAR_reg_t BAR;       // Base Address Register (BAR); 18 bits
 extern uint32 reg_TR;       // Timer Reg, 27 bits -- only valid after calls to SIMH clock routines
