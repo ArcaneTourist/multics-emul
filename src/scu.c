@@ -300,6 +300,21 @@ int scu_set_cpu_mask(t_uint64 addr)
 }
 
 
+int scu_get_cpu_mask(t_uint64 addr)
+{
+    // BUG: addr should determine which SCU is selected
+
+    const char *moi = "SCU::rmcm";
+
+    if (scu_hw_arg_check(moi, addr, 0) > 1)
+        return 1;
+    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
+
+    reg_A = 0;
+    reg_Q = 0;
+    return scu_get_mask(addr, cpu_no);
+}
+
 int scu_get_mode_register(t_uint64 addr)
 {
     // Implements part of the rscr instruction -- function  y0000x
@@ -541,6 +556,11 @@ int scu_get_mask(t_uint64 addr, int port)
     }
 
     if (! port_found) {
+        // TODO: AL-39 doesn't say what to do if the port has no mask
+        // assigned.   However, rmcm zeros register A and Q for a
+        // similar case...
+        reg_A = 0;
+        reg_Q = 0;
         log_msg(WARN_MSG, moi, "No masks assigned to port %d\n", cpu_no);
         return 0;
     }

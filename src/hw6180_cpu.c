@@ -1114,10 +1114,13 @@ static t_stat control_unit(void)
             // or a buffered odd instruction.
             int doing_xde = cu.xde;
             int doing_xdo = cu.xdo;
-            if (doing_xde)
-                log_msg(NOTIFY_MSG, "CU", "XDE-EXEC even\n");
-            else if (doing_xdo) {
-                log_msg(NOTIFY_MSG, "CU", "XDE-EXEC odd\n");
+            if (doing_xde) {
+                if (cu.xdo)     // xec too common
+                    log_msg(INFO_MSG, "CU", "XDE-EXEC even\n");
+                else
+                    log_msg(DEBUG_MSG, "CU", "XDE-EXEC even\n");
+            } else if (doing_xdo) {
+                log_msg(INFO_MSG, "CU", "XDE-EXEC odd\n");
                 do_odd = 1;
             } else if (! cpu.ic_odd) {
                 if (opt_debug)
@@ -1280,13 +1283,18 @@ static t_stat control_unit(void)
                         events.xed = 0;
                         cpu.cycle = FETCH_cycle;
                     } else {
-                        log_msg(NOTIFY_MSG, "CU", "Resetting XED even flag\n");
+                        if (cu.xdo) // xec is very common
+                            log_msg(INFO_MSG, "CU", "Resetting XED even flag\n");
+                        else {
+                            log_msg(DEBUG_MSG, "CU", "Resetting XED even flag\n");
+                            ++ PPR.IC;
+                        }
                         // BUG? -- do we need to reset events.xed if cu.xdo
                         // isn't set?  -- but xdo must be set unless xed
                         // doesn't really mean double...
                     }
                 } else if (doing_xdo) {
-                    log_msg(NOTIFY_MSG, "CU", "Resetting XED odd flag\n");
+                    log_msg(INFO_MSG, "CU", "Resetting XED odd flag\n");
                     cu.xdo = 0;
                     if (events.xed) {
                         events.xed = 0;
@@ -1301,7 +1309,7 @@ static t_stat control_unit(void)
                     if (!cpu.trgo) {
                         if (PPR.IC != IC_temp)
                             log_msg(NOTIFY_MSG, "CU", "No transfer instruction in XED, but IC changed from %#o to %#o\n", IC_temp, PPR.IC);
-                        // ++ PPR.IC;       // this happens after executing the xde; we don't need to do it again
+                        ++ PPR.IC;
                     }
                 } else if (! cpu.ic_odd) {
                     // Performed non-repeat instr at even loc (or finished the
@@ -1309,17 +1317,24 @@ static t_stat control_unit(void)
                     if (cpu.cycle == EXEC_cycle) {
                             // After an xde, we'll increment PPR.IC.   Setting
                             // cpu.ic_odd will be ignored.
-                            if (!cpu.trgo) {
+                            if (cpu.trgo) {
+                                // IC changed; previously fetched instr for odd location isn't any good now
+                                cpu.cycle = FETCH_cycle;
+                            } else {
                                 if (PPR.IC == IC_temp) {
+                                    // cpu.ic_odd ignored if cu.xde or cu.xdo
                                     cpu.ic_odd = 1; // execute odd instr of current pair
-                                    ++ PPR.IC;
+                                    if (! cu.xde && ! cu.xdo)
+                                        ++ PPR.IC;
+                                    else
+                                        log_msg(DEBUG_MSG, "CU", "Not advancing IC after even instr because of xde/xdo\n");
                                 } else {
-                                    if (! cpu.irodd_invalid)
+                                    if (cpu.irodd_invalid) {
+                                        // possibly an EIS multi-word instr
+                                    } else
                                         log_msg(NOTIFY_MSG, "CU", "No transfer instruction and IRODD not invalidated, but IC changed from %#o to %#o; changing to fetch cycle\n", IC_temp, PPR.IC);
                                     cpu.cycle = FETCH_cycle;
                                 }
-                            } else {
-                                cpu.cycle = FETCH_cycle;    // IC changed; previously fetched instr for odd location isn't any good now
                             }
                     } else {
                         log_msg(WARN_MSG, "CU", "Changed from EXEC cycle to %d, not updating IC\n", cpu.cycle);
@@ -1327,20 +1342,28 @@ static t_stat control_unit(void)
                 } else {
                     // Performed non-repeat instr at odd loc (or finished last
                     // repetition)
-                    // After an xde, we'll increment PPR.IC.   Setting
-                    // cpu.ic_odd will be ignored.
                     if (cpu.cycle == EXEC_cycle) {
-                        if (!cpu.trgo) {
+                        if (cpu.trgo) {
+                            cpu.cycle = FETCH_cycle;
+                        } else {
                             if (PPR.IC == IC_temp) {
-                                cpu.ic_odd = 0; // finished with odd half; BUG: restart issues?
-                                ++ PPR.IC;
-                            } else
+                                if (cu.xde || cu.xdo)
+                                    log_msg(INFO_MSG, "CU", "Not advancing IC or fetching because of cu.xde or cu.xdo.\n");
+                                else {
+                                    cpu.ic_odd = 0; // finished with odd half; BUG: restart issues?
+                                    ++ PPR.IC;
+                                    cpu.cycle = FETCH_cycle;
+                                }
+                            } else {
                                 if (!cpu.irodd_invalid)
-                                    log_msg(NOTIFY_MSG, "CU", "No transfer instruction and IRODD not invalidated, but IC changed from %#o to %#o\n", IC_temp, PPR.IC);  // DEBUGGING
+                                    log_msg(NOTIFY_MSG, "CU", "No transfer instruction and IRODD not invalidated, but IC changed from %#o to %#o\n", IC_temp, PPR.IC);  // DEBUGGING; BUG: this shouldn't happen?
+                                cpu.cycle = FETCH_cycle;
+                            }
                         }
-                    } else
+                    } else {
                         log_msg(NOTIFY_MSG, "CU", "Cycle is %d after EXEC_cycle\n", cpu.cycle);
-                    cpu.cycle = FETCH_cycle;
+                        //cpu.cycle = FETCH_cycle;
+                    }
                 }
             }   // if (! is_fault)
             }   // case FAULT_EXEC_cycle

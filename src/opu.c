@@ -2235,17 +2235,19 @@ static int do_an_op(instr_t *ip)
             // drl unimplemented
 
             case opcode0_xec: {
-                // todo: combine with xed
-                // todo: re-implement via setting flags and return to control_unit()
                 // todo: fault if xec invokes xec
-                // todo: handle rpd repeats
                 // BUG: EIS multiword instructions may not be handled
                 t_uint64 word0;
                 instr_t IR;
-                if (fetch_instr(TPR.CA, &IR) != 0) {
+                if (fetch_word(TPR.CA, &word0) != 0) {
                     log_msg(NOTIFY_MSG, "OPU::opcode::xec", "fetch instr: error or fault\n");
                     return 1;   // faulted
                 }
+#if 0
+                // todo: combine with xed
+                // todo: re-implement via setting flags and return to control_unit()
+                // todo: handle rpd repeats
+                decode_instr(&IR, word0);
                 // extern DEVICE cpu_dev; ++ opt_debug; ++ cpu_dev.dctrl;
                 log_msg(DEBUG_MSG, "OPU::opcode::xec", "executing instr at %#o\n", TPR.CA);
                 int ret;
@@ -2253,8 +2255,25 @@ static int do_an_op(instr_t *ip)
                     log_msg(NOTIFY_MSG, "OPU::opcode::xec", "fault or error executing instr\n");
                 log_msg(DEBUG_MSG, "OPU::opcode::xec", "finished\n");
                 // -- opt_debug; -- cpu_dev.dctrl;
-                return ret;
+#else
+                if (sim_brk_summ)
+                    if (sim_brk_test(TPR.CA, SWMASK ('E'))) {
+                        log_msg(NOTIFY_MSG, "opu::xec", "Breakpoint on target instruction pair at %#o\n", TPR.CA);
+                        cancel_run(STOP_IBKPT);
+                    }
+                if (cpu.ic_odd) {
+                    cu.xdo = 1;
+                    cu.IRODD = word0;
+                    cpu.irodd_invalid = 0;
+                } else {
+                    decode_instr(&cu.IR, word0);
+                    cu.xde = 1;
+                }
+                log_msg(DEBUG_MSG, "opu::xec", "Flags are set for exec of instruction at %#o\n", TPR.CA);
+#endif
+                return 0;
             }
+
             case opcode0_xed: {
                 // extern DEVICE cpu_dev; ++ opt_debug; if (! cpu_dev.dctrl) ++ cpu_dev.dctrl;
                 // Load IR and IRODD, set flags, and return to the control unit
@@ -2544,7 +2563,12 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
 
-            // rmcm unimplemented -- read memory controller mask register
+            case opcode0_rmcm:  // read memory controller mask register
+                if (get_addr_mode() == BAR_mode || ! PPR.P) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                return scu_get_cpu_mask(TPR.CA);    // don't convert via appending
 
             case opcode0_rscr: { // priv
                 // read SCU (system controller) register into AQ; See rsw for processor switches
@@ -2682,7 +2706,7 @@ static int do_an_op(instr_t *ip)
                 return scu_cioc(addr);  // we do convert via appending
             }
             case opcode0_smcm: { // priv
-                if (get_addr_mode() != ABSOLUTE_mode) {
+                if (get_addr_mode() == BAR_mode || ! PPR.P) {
                     fault_gen(illproc_fault);
                     return 1;
                 }
