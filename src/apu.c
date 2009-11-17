@@ -38,57 +38,12 @@ static void register_mod(uint td, uint off, uint *bitnop, int nbits);
 
 //=============================================================================
 
-static int32 sign18(t_uint64 x)
-{
-    if (bit18_is_neg(x)) {
-        int32 r = - ((1<<18) - (x&MASK18));
-        return r;
-    }
-    else
-        return x;
-}
-
-static int32 sign15(uint x)
-{
-    if (bit_is_neg(x,15)) {
-        int32 r = - ((1<<15) - (x&MASKBITS(15)));
-        return r;
-    }
-    else
-        return x;
-}
-
-#if  0
-static int32 signbits(int nbits, t_uint64 x)
-{
-    if (bit_is_neg(nbits, x)) {
-        int32 r = - ((1<<nbits) - (x&MASKBITS(nbits)));
-        return r;
-    }
-    else
-        return x;
-}
-#endif
-
-#if 0
-static int32 sign12(uint x)
-{
-    if (bit_is_neg(x,12)) {
-        int32 r = - ((1<<12) - (x&MASKBITS(12)));
-        return r;
-    }
-    else
-        return x;
-}
-#endif
-
 static inline uint max3(uint a, uint b, uint c)
 {
     return (a > b) ?
         ((a > c) ? a : c) :
         ((b > c) ? b : c);
 }
-
 
 //=============================================================================
 
@@ -332,7 +287,7 @@ int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, 
         // EIS indirect pointers to operand descriptors use PR registers.
         // However, Operand Descriptors use AR registers according to the description of the AR registers
         // and the description of EIS operand descriptors.   However, the description of the MF field
-        // claims that operands use PR registers.
+        // claims that operands use PR registers.   The AR doesn't have a segment field.
         if (pr)
             TPR.TSR = AR_PR[n].PR.snr;
         else {
@@ -365,9 +320,14 @@ int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, 
         register_mod(reg, offset, bitnop, nbits);
         offset = TPR.CA;
         TPR.CA = saved_CA;
-        if (bits != *bitnop || bits != 0 || *bitnop != 0)
-            log_msg(DEBUG_MSG, moi, "Register mod 0%o: offset was 0%o, now 0%o; bit offset was %d, now %d.\n", reg, o, offset, bits, *bitnop);
-        else
+        if (bits != *bitnop || bits != 0 || *bitnop != 0) {
+            int err = *bitnop < 0 || *bitnop > 35 || bits < 0 || bits > 35;
+            log_msg(err ? ERR_MSG : DEBUG_MSG, moi, "Register mod 0%o: offset was 0%o, now 0%o; bit offset was %d, now %d.\n", reg, o, offset, bits, *bitnop);
+            if (err) {
+                log_msg(ERR_MSG, moi, "Bit offset %d and/or %d outside range of 0..35\n", bits, *bitnop);
+                cancel_run(STOP_BUG);
+            }
+        } else
             log_msg(DEBUG_MSG, moi, "Register mod 0%o: offset was 0%o, now 0%o\n", reg, o, offset);
         //log_msg(WARN_MSG, moi, "Auto-breakpoint\n");
         //cancel_run(STOP_IBKPT);
@@ -488,8 +448,13 @@ static int temp_addr_mod(const instr_t *ip)
         TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
         TPR.CA = (AR_PR[pr].wordno + ca_temp.soffset) & MASK18;
         TPR.TBR = AR_PR[pr].PR.bitno;
-        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Using PR[%d]: TSR=0%o, TRR=0%o, CA=0%o(0%o+0%o<=>%d+%d), bitno=0%o\n",
+        int err = TPR.TBR < 0 || TPR.TBR > 35;
+        if (opt_debug||err) log_msg(err ? WARN_MSG : DEBUG_MSG, moi, "Using PR[%d]: TSR=0%o, TRR=0%o, CA=0%o(0%o+0%o<=>%d+%d), bitno=0%o\n",
             pr, TPR.TSR, TPR.TRR, TPR.CA, AR_PR[pr].wordno, ca_temp.soffset, AR_PR[pr].wordno, ca_temp.soffset, TPR.TBR);
+        if (err) {
+            log_msg(ERR_MSG, moi, "Bit offset %d outside range of 0..35\n", TPR.TBR);
+            cancel_run(STOP_BUG);
+        }
         ca_temp.soffset = sign18(TPR.CA);
 
         // BUG: Enter append mode & stay if execute a transfer -- fixed?
@@ -835,7 +800,11 @@ static void chars_to_words(int n, uint nbits, uint *offp, uint *bitnop)
     if (nchars != 0) {
         log_msg(INFO_MSG, moi, "Reg mod for %d-bit data: Value %d isn't evenly divisible by %d; result will contain a bit offset.\n", nbits, n, chars_per_word);
         *bitnop += nchars * nbits;
-        if (*bitnop > 36) {
+        if (*bitnop >= 36) {
+            if (*bitnop == 36) {
+                log_msg(WARN_MSG, "APU", "BUG Fix: Reg mod for %d-bit data: Result exactly 36 bits.  Wrapping.\n", nbits);
+                cancel_run(STOP_BUG);
+            }
             log_msg(WARN_MSG, "APU", "Reg mod for %d-bit data: Result is over 36 bits.  Wrapping.\n", nbits);
             *offp += *bitnop / 36;
             *bitnop = *bitnop % 36;
@@ -1011,6 +980,11 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
             sdw_r1 = SDWp->r1;
         TPR.TRR = max3(its_rn, sdw_r1, TPR.TRR);
         TPR.TBR = getbits36(word2, 21, 6);
+        if (TPR.TBR > 35) {
+            // NOTE: AL-39 says appending unit doesn't detect bad bit offsets but that decimal unit does.
+            log_msg(ERR_MSG, "APU:ITS", "ITS specifies a bit offset of %d bits\n", TPR.TBR);
+            cancel_run(STOP_WARN);
+        }
         ca_tempp->tag = word2 & MASKBITS(6);
 
         uint i_mod_tm = ca_tempp->tag >> 4;

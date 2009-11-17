@@ -223,10 +223,8 @@ int scu_set_mask(t_uint64 addr, int port)
     // Implements part of the sscr instruction -- functions y00[0-7]2x
 
     const char* moi = "SCU::setmask";
-    if (scu_hw_arg_check(moi, addr, port) > 1)
+    if (scu_hw_arg_check(moi, addr, port) > 0)
         return 1;
-    else
-        log_msg(WARN_MSG, moi, "continuing...\n");
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
@@ -243,12 +241,12 @@ int scu_set_mask(t_uint64 addr, int port)
         if (scu.interrupts[p].mask_assign.port == port) {
             port_pima = p;
             if (cpu_no != port)
-                log_msg(NOTIFY_MSG, moi, "Found MASK %d assigned to port %d\n", p, port);
+                log_msg(INFO_MSG, moi, "Found MASK %d assigned to port %d\n", p, port);
             ++ port_found;
         }
         if (scu.interrupts[p].mask_assign.port == cpu_no) {
             cpu_pima = p;
-            log_msg(NOTIFY_MSG, moi, "Found MASK %d assigned to CPU/port %d\n", p, cpu_no);
+            log_msg(INFO_MSG, moi, "Found MASK %d assigned to CPU/port %d\n", p, cpu_no);
             ++ cpu_found;
         }
     }
@@ -265,7 +263,7 @@ int scu_set_mask(t_uint64 addr, int port)
     }
     if (cpu_no != port) {
         if (! port_found) {
-            log_msg(WARN_MSG, moi, "No masks assigned to port %d\n", cpu_no);
+            log_msg(INFO_MSG, moi, "No masks assigned to port %d\n", cpu_no);
             return 0;
         }
         if (port_found > 1)
@@ -290,10 +288,8 @@ int scu_set_cpu_mask(t_uint64 addr)
 {
     // BUG: addr should determine which SCU is selected
 
-    if (scu_hw_arg_check("smcm", addr, 0) > 1)
+    if (scu_hw_arg_check("smcm", addr, 0) > 0)
         return 1;
-    else
-        log_msg(WARN_MSG, "smcm", "continuing...\n");
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
 
     return scu_set_mask(addr, cpu_no);
@@ -306,7 +302,7 @@ int scu_get_cpu_mask(t_uint64 addr)
 
     const char *moi = "SCU::rmcm";
 
-    if (scu_hw_arg_check(moi, addr, 0) > 1)
+    if (scu_hw_arg_check(moi, addr, 0) > 0)
         return 1;
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
 
@@ -415,11 +411,8 @@ int scu_set_config_switches(t_uint64 addr)
     // BUG: addr should determine which SCU is selected
     const char* moi = "SCU::set-config-switches";
 
-    if (scu_hw_arg_check(moi, addr, 0) > 1) {
-        log_msg(WARN_MSG, moi, "failed...\n");
+    if (scu_hw_arg_check(moi, addr, 0) > 0)
         return 1;
-    } else
-        log_msg(WARN_MSG, moi, "continuing...\n");
     int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
     int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
 
@@ -532,7 +525,7 @@ int scu_get_mask(t_uint64 addr, int port)
     // Implements part of the rscr instruction, function y00[0-7]2x
     const char *moi = "SCU::get-mask";
 
-    if (scu_hw_arg_check("getmask", addr, port) > 1)
+    if (scu_hw_arg_check("getmask", addr, port) > 0)
         return 1;
     else
         log_msg(WARN_MSG, "getmask", "continuing...\n");

@@ -1,57 +1,87 @@
 /*
     eis_mw_desc.c
+
     Routines related to descriptors for EIS multi-word instructions.
     Descriptors describe operand locations and looping controls used
     by many EIS multi-word instructions.
+
     This code was originally in apu.c because the descriptors are used
     for addressing.
 */
 
 // Supposedly, appending unit HW controls fault recognition?
 
+/*
+    Regarding all of the eis_an routines
+
+    TODO, flag_t advance:
+
+    Paging:
+    We call the APU to translate segmented addresses into absolute
+    memory addresses.  We get the page boundries from the APU and
+    most or all functions avoid violating the page boundries.  This
+    is more efficient than using the VM for every single word.  However,
+    note that instruction restart could not assume anything previously
+    retrieved is still valid -- pages may have been paged out or moved.
+    Instead of mixing the functionality into the EIS descriptors, we
+    should probably create an addressing object similar to an AR_PR that
+    automatically only calls the APU when needed.
+
+    BUG: We get a base addr and assume everything we want is paged in
+    instead of checking for faults?  Fixed?
+*/
+
+/*
+ * All three descriptor types are jumbled together in a single struct.
+ * At the least, it needs some cleanup.
+ * We provide forward and reverse "get", but only forward "put"
+ */
+
+/*
+    Notes on "put"
+
+    put_eis_an()
+        Allows writing a single "char" (of whatever size).  The chars
+        are buffered in the descriptor.  If the first character isn't
+        destined for postion zero of the destination word, then the
+        destination word is read and loaded into the buffer.
+        BUG: Maybe we should record the starting offset and combine
+        during write.
+        Whenever the buffer fills it is written.  When the instruction
+        terminates, it should call save_eis_an() to flush any remaining
+        partial buffer.
+    save_eis_an()
+        Flushes a full or partial buffer. If the buffer isn't full the
+        destination word is read and merged.
+*/
+
+/*
+ * BUG: OPU::csl calls a mix of retr and put. It used to also call get
+ * sometimes instead of put to advance the index when a put wasn't needed.
+ * However, that was unsafe.   Need to re-check that mixing get and put
+ * works as expected.
+ */
+
+//=============================================================================
+
 #include "hw6180.h"
 
 enum atag_tm { atag_r = 0, atag_ri = 1, atag_it = 2, atag_ir = 3 }; // BUG: move to hdr
 
-//static int get_via_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, int index, uint *nib);
 static int get_eis_an_fwd(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib, flag_t advance);
 static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits);
 static int get_mf_an_addr(const eis_mf_t* mfp, uint y, int nbits, uint *addrp, int* bitnop, uint *minaddrp, uint *maxaddrp);
 static int put_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib, flag_t advance);
+static int save_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, flag_t complain_full);
+static int fetch_mf_op(uint opnum, const eis_mf_t* mfp, t_uint64* wordp);
 
 //=============================================================================
 
-static int32 sign18(t_uint64 x)
-{
-    if (bit18_is_neg(x)) {
-        int32 r = - ((1<<18) - (x&MASK18));
-        return r;
-    }
-    else
-        return x;
-}
-
-static int32 sign15(uint x)
-{
-    if (bit_is_neg(x,15)) {
-        int32 r = - ((1<<15) - (x&MASKBITS(15)));
-        return r;
-    }
-    else
-        return x;
-}
-
-static inline int32 negate18(t_uint64 x)
-{
-    // overflow not detected
-    if (bit18_is_neg(x))
-        return ((~x & MASK18) + 1) & MASK18;    // todo: only one mask needed?
-    else
-        return (- x) & MASK18;
-}
-
-//=============================================================================
-
+/*
+ * parse_mf()
+ *
+ * Convert a 7-bit quantity into a eis_mf_t struct.
+ */
 
 eis_mf_t* parse_mf(uint mf, eis_mf_t* mfp)
 {
@@ -66,12 +96,63 @@ eis_mf_t* parse_mf(uint mf, eis_mf_t* mfp)
 
 //=============================================================================
 
+/*
+ * fetch_mf_ops()
+ *
+ * Fetch the multiple operands that follow an EIS multi-word instruction.  Note
+ * that interpretation of the operand words is opcode dependent -- we're
+ * just doing the two or three (possibly indirect) fetches here.
+ * The MF arguments control whether the words are assumed to be operands
+ * or treated as indirect pointers.
+ */
+
+int fetch_mf_ops(const eis_mf_t* mf1p, t_uint64* word1p, const eis_mf_t* mf2p, t_uint64* word2p, const eis_mf_t* mf3p, t_uint64* word3p)
+{
+
+    if (fetch_mf_op(1, mf1p, word1p) != 0)
+        return 1;
+
+    if (word2p != NULL)
+        if (fetch_mf_op(2, mf2p, word2p) != 0)
+            return 1;
+    if (word3p != NULL)
+        if (fetch_mf_op(3, mf3p, word3p) != 0)
+            return 1;
+
+    return 0;
+}
+
+//=============================================================================
+
+/*
+ * get_eis_indir_addr
+ *
+ * Interpret an EIS indirect pointer word.  EIS multi-word instructions follow
+ * a format where several words of "operand descriptors" or "indirect
+ * pointers to operands" follow the EIS instruction.  (Flags in the
+ * instruction word control which words are operand descriptors and
+ * which words are pointers.)   This function interprets the given
+ * word as an indirect pointer to an operand and returns the associated
+ * 24-bit absolute memory address.
+ *
+ * Only called by OPU for those EIS multi-word instructions that use an
+ * indirect pointer to specify the address of an operand word (for example
+ * scm).
+ *
+ * This function could be called by other EIS routines when an MF specifes
+ * that an indirect pointer to an operand descriptor should be expected.
+ * However, it isn't...
+ *
+ * WARNING: Does not return any information about segment or page
+ * boundries to the caller.
+ * BUG: Caller may safely use the returned address to access a single
+ * word, but using the returned address to access a table or other
+ * multi-word object may result in violating page boundries.
+ *
+ */
+
 int get_eis_indir_addr(t_uint64 word, uint* addrp)
 {
-    // Could be called by other EIS routines when an MF specifes that an indirect pointer to
-    // an operand descriptor should be expected. -- But isn't.
-    // Only called by OPU for those EIS multi-word instructions that use an indirect
-    // pointer to specify the address of an operand word (for example scm).
     const char *moi = "APU::EIS-indir-ptr";
 
     uint y = word >> 18;
@@ -111,6 +192,19 @@ int get_eis_indir_addr(t_uint64 word, uint* addrp)
     return ret;
 }
 
+//=============================================================================
+
+/*
+ * fetch_mf_op()
+ *
+ * Fetch a single operand that follows an EIS multi-word instruction.  The
+ * opnum argument provides an offset against the IC for fetching any of
+ * the multiple operands.  Note that interpretation of operand words is
+ * instruction dependent -- we're just doing the (possibly indirect) fetch
+ * here.  The MF argument controls whether the word following the EIS
+ * instruction is assumed to be an operand or is treated as an indirect
+ * pointer.
+ */
 
 static int fetch_mf_op(uint opnum, const eis_mf_t* mfp, t_uint64* wordp)
 {
@@ -121,6 +215,7 @@ static int fetch_mf_op(uint opnum, const eis_mf_t* mfp, t_uint64* wordp)
         return 1;
     if (mfp != NULL && mfp->id) {
         // don't implement until we see an example
+        // Should probably use get_eis_indir_addr()
         log_msg(ERR_MSG, "APU", "Fetch EIS multi-word op: MF with indir bit set is unsupported:\n");
         uint addr = *wordp >> 18;
         uint a = getbits36(*wordp, 29, 1);
@@ -146,27 +241,13 @@ static int fetch_mf_op(uint opnum, const eis_mf_t* mfp, t_uint64* wordp)
     return 0;
 }
 
-
-int fetch_mf_ops(const eis_mf_t* mf1p, t_uint64* word1p, const eis_mf_t* mf2p, t_uint64* word2p, const eis_mf_t* mf3p, t_uint64* word3p)
-{
-    // Read in the operands that follow an EIS multi-word instruction
-    // Note that interpretation is opcode dependent -- we're just doing the two 
-    // or three (possibly indirect) fetches here
-
-    if (fetch_mf_op(1, mf1p, word1p) != 0)
-        return 1;
-
-    if (word2p != NULL)
-        if (fetch_mf_op(2, mf2p, word2p) != 0)
-            return 1;
-    if (word3p != NULL)
-        if (fetch_mf_op(3, mf3p, word3p) != 0)
-            return 1;
-
-    return 0;
-}
-
 //=============================================================================
+
+/*
+ * mf2text()
+ *
+ * Display a MF
+ */
 
 const char* mf2text(const eis_mf_t* mfp)
 {
@@ -178,6 +259,15 @@ const char* mf2text(const eis_mf_t* mfp)
     return bufp;
 }
 
+
+//-----------------------------------------------------------------------------
+
+/*
+ * mf_desc_to_text()
+ *
+ * Internal function to do part of the work of displaying
+ * a MF and EIS descriptor.
+ */
 
 static void mf_desc_to_text(char *abuf, char *rbuf, const eis_mf_t* mfp, const eis_alpha_desc_t* descp)
 {
@@ -196,6 +286,15 @@ static void mf_desc_to_text(char *abuf, char *rbuf, const eis_mf_t* mfp, const e
         sprintf(abuf, "%#o", descp->address);
 }
 
+
+//-----------------------------------------------------------------------------
+
+
+/*
+ * eis_alpha_desc_to_text()
+ * 
+ * Display an EIS alpha-numeric descriptor
+ */
 
 const char* eis_alpha_desc_to_text(const eis_mf_t* mfp, const eis_alpha_desc_t* descp)
 {
@@ -217,6 +316,15 @@ const char* eis_alpha_desc_to_text(const eis_mf_t* mfp, const eis_alpha_desc_t* 
 }
 
 
+//-----------------------------------------------------------------------------
+
+
+/*
+ * eis_bit_desc_to_text()
+ * 
+ * Display an EIS bit descriptor
+ */
+
 const char* eis_bit_desc_to_text(const eis_mf_t* mfp, const eis_bit_desc_t* descp)
 {
     static char bufs[2][100];
@@ -236,6 +344,16 @@ const char* eis_bit_desc_to_text(const eis_mf_t* mfp, const eis_bit_desc_t* desc
     }
     return bufp;
 }
+
+
+//-----------------------------------------------------------------------------
+
+
+/*
+ * eis_num_desc_to_text()
+ * 
+ * Display an EIS numeric descriptor
+ */
 
 const char* eis_num_desc_to_text(const eis_mf_t* mfp, const eis_num_desc_t* descp)
 {
@@ -259,6 +377,12 @@ const char* eis_num_desc_to_text(const eis_mf_t* mfp, const eis_num_desc_t* desc
 
 //=============================================================================
 
+/*
+ * parse_eis_alpha_desc()
+ *
+ * Interpret given word as an EIS alpha-numeric descriptor.
+ * The MF controls interpretation of the length field.
+ */
 
 void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* descp)
 {
@@ -309,7 +433,14 @@ int n = descp->n;
     descp->curr.bitpos = 0;
 }
 
-//=============================================================================
+//-----------------------------------------------------------------------------
+
+/*
+ * parse_eis_bit_desc()
+ *
+ * Interpret given word as an EIS bit descriptor.
+ * The MF controls interpretation of the length field.
+ */
 
 void parse_eis_bit_desc(t_uint64 word, const eis_mf_t* mfp, eis_bit_desc_t* descp)
 {
@@ -338,7 +469,14 @@ void parse_eis_bit_desc(t_uint64 word, const eis_mf_t* mfp, eis_bit_desc_t* desc
     descp->curr.bitpos = 0;
 }
 
-//=============================================================================
+//-----------------------------------------------------------------------------
+
+/*
+ * parse_eis_num_desc()
+ *
+ * Interpret given word as an EIS numeric descriptor.
+ * The MF controls interpretation of the length field.
+ */
 
 void parse_eis_num_desc(t_uint64 word, const eis_mf_t* mfp, eis_num_desc_t* descp)
 {
@@ -355,38 +493,46 @@ void parse_eis_num_desc(t_uint64 word, const eis_mf_t* mfp, eis_num_desc_t* desc
     descp->nbits = (descp->ta == 0) ? 9 : 4;
 
 int n = descp->n;
-    fix_mf_len(&descp->n, mfp, descp->nbits);
-    if (descp->nbits == 9) {
-#if 1
-        if ((descp->cn & 1) != 0) {
-            log_msg(ERR_MSG, "APU::EIS", "TA of 0 (9bit) not legal with cn of %d\n", descp->cn);
-            fault_gen(illproc_fault);
-        } else
-            descp->cn /= 2;
-#else
-        // The btd instruction doesn't seem to adhere to the numeric CN conventions
-        log_msg(WARN_MSG, "APU::EIS", "CN of %0o (%d) for numeric operand.\n", descp->cn, descp->cn);
-        if (descp->cn > 3) {
-            log_msg(ERR_MSG, "APU::EIS", "Bad CN %d\n", descp->cn);
-            cancel_run(STOP_BUG);
-        }
-#endif
-    }
-    if (descp->nbits * descp->cn >= 36) {
-        log_msg(ERR_MSG, "APU::EIS", "Data type TA of %d (%d bits) does not allow char pos of %d\n", descp->ta, descp->nbits, descp->cn);
-        fault_gen(illproc_fault);
-    }
+            fix_mf_len(&descp->n, mfp, descp->nbits);
+            if (descp->nbits == 9) {
+        #if 1
+                if ((descp->cn & 1) != 0) {
+                    log_msg(ERR_MSG, "APU::EIS", "TA of 0 (9bit) not legal with cn of %d\n", descp->cn);
+                    fault_gen(illproc_fault);
+                } else
+                    descp->cn /= 2;
+        #else
+                // The btd instruction doesn't seem to adhere to the numeric CN conventions
+                log_msg(WARN_MSG, "APU::EIS", "CN of %0o (%d) for numeric operand.\n", descp->cn, descp->cn);
+                if (descp->cn > 3) {
+                    log_msg(ERR_MSG, "APU::EIS", "Bad CN %d\n", descp->cn);
+                    cancel_run(STOP_BUG);
+                }
+        #endif
+            }
+            if (descp->nbits * descp->cn >= 36) {
+                log_msg(ERR_MSG, "APU::EIS", "Data type TA of %d (%d bits) does not allow char pos of %d\n", descp->ta, descp->nbits, descp->cn);
+                fault_gen(illproc_fault);
+            }
 
-    descp->first = 1;
+            descp->first = 1;
 
-    descp->area.addr = 0123;
-    descp->area.bitpos = 0;
-    // Set the "current" addr and bitpos in case we need to display them
-    descp->curr.addr = 0123;
-    descp->curr.bitpos = 0;
+            descp->area.addr = 0123;
+            descp->area.bitpos = 0;
+            // Set the "current" addr and bitpos in case we need to display them
+            descp->curr.addr = 0123;
+            descp->curr.bitpos = 0;
 }
 
 //=============================================================================
+
+/*
+ * fix_mf_len()
+ *
+ * Update the length field of an EIS operand descriptor according
+ * to the register length flag in the MF.  See AL-39, table 4-1
+ * and the description of EIS "MF" modification fields.
+ */
 
 static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
 {
@@ -453,11 +599,19 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
 
 //=============================================================================
 
+/*
+ * get_mf_an_addr()
+ *
+ * Internal function to translate the address as represented by a an EIS
+ * Alphanumeric Data Descriptor into an absolute 24-bit address.
+ *
+ * BUG: some callers may keep results.  This isn't valid for multi-page
+ * segments.  However, minaddrp and maxaddrp indicate the range of
+ * addresses for the page containing the returned address.
+ */
+
 static int get_mf_an_addr(const eis_mf_t* mfp, uint y, int nbits, uint *addrp, int* bitnop, uint *minaddrp, uint *maxaddrp)
 {
-    // Return absolute address for EIS operand in Alphanumeric Data Descriptor Format
-    // BUG: some callers may keep results.  This isn't valid for multi-page segments.
-    //
     const char *moi = "eis::mf";
 
     log_msg(DEBUG_MSG, moi, "Calling get-address.\n");
@@ -476,25 +630,18 @@ static int get_mf_an_addr(const eis_mf_t* mfp, uint y, int nbits, uint *addrp, i
 
 //=============================================================================
 
-// Regarding all of the eis_an routines
-    // TODO, flag_t advance:
-    // Would be efficient for VM system to expose the bounds of the page we're
-    // addressing.  That would avoid using the VM for every single word.
-    // Done?
-    // Could have page-in always set a global.   The fetch/store y-block
-    // routines could also benefit.
-    
-    // BUG: We get a base addr and assume everything we want is paged in
 
-//=============================================================================
-
+/*
+ * get_eis_an_base()
+ *
+ * This function is called just prior to the first usage of a descriptor.
+ * Translates the descriptor's address field into an absolute memory address.
+ * Sets the area and curr member structs of the descriptor to reflect
+ * page boundries.
+ */
 
 static int get_eis_an_base(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
 {
-    // This function is called just prior to the first usage of a
-    // descriptor.  Translates the descriptor's address field into an
-    // absolute memory address.  Sets the area and curr member structs of
-    // the descriptor.
 
     const char* moi = "APU::eis-an-addr(base)";
 
@@ -540,13 +687,19 @@ static int get_eis_an_base(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
 }
 
 
-// ----------------------------------------------------------------------------
+//=============================================================================
 
+/*
+ * get_eis_an_next_page()
+ *
+ * Called when a descriptor hits either bound of a paged segment.
+ *
+ * Determines the absolute addresses of the next (higher or lower) page.
+ *
+ */
 
 static int get_eis_an_next_page(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
 {
-    // Called when a descriptor hits either bound of a paged
-    // segment.
 
     const char* moi = "APU::eis-an-addr(next-page)";
 
@@ -666,6 +819,8 @@ static int get_eis_an_fwd(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *ni
     }
 
     *nib = getbits36(descp->word, descp->curr.bitpos, descp->nbits);
+// ERROR:    getbits36:          bad args (72000000000,i=36,n=1)
+
     //if (opt_debug)
     //  log_msg(DEBUG_MSG, moi, "%dbit char at bit %d of word %012llo, value is %#o\n", descp->nbits, descp->bitpos, descp->word, *nib);
     if (advance) {
@@ -782,10 +937,16 @@ int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
     return put_eis_an_x(mfp, descp, nib, 1);
 }
 
+/*
+ * put_eis_an_x()
+ *
+ * Internal function to save a single char via an EIS descriptor.  Results
+ * are internall buffered and stored when the buffer fills. Call save_eis_an()
+ * flush the buffer and force a store.
+ */
+
 static int put_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib, flag_t advance)
 {
-    // Save a single char via an EIS descriptor.  Stores words when needed.  Call
-    // save_eis_an() to force a store.
 
     const char* moi = "APU::eis-an-put";
 
@@ -835,7 +996,7 @@ static int put_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib, 
         // BUG: this might be possible if page faulted on earlier write attempt?
         log_msg(WARN_MSG, moi, "Internal error, prior call did not flush buffer\n");
         cancel_run(STOP_WARN);
-        if (save_eis_an(mfp, descp) != 0) {
+        if (save_eis_an_x(mfp, descp, 0) != 0) {
             opt_debug = saved_debug;
             return 1;
         }
@@ -883,6 +1044,11 @@ static int put_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib, 
 
 int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
 {
+    return save_eis_an_x(mfp, descp, 1);
+}
+
+static int save_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, flag_t complain_full)
+{
     // Save buffered output to memory via an EIS descriptor.  Call this at the
     // end of loops in EIS opcodes.
 
@@ -912,8 +1078,11 @@ int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp)
     }
 
     if (descp->curr.bitpos == 36) {
-        log_msg(WARN_MSG, moi, "Odd, dest is a full word.\n");  // why didn't we write it during loop?
-        cancel_run(STOP_WARN);
+        if (complain_full) {
+            // BUG: Due to OPU::csl mixing retr, get, and put
+            log_msg(WARN_MSG, moi, "Odd, dest is a full word.\n");  // why didn't we write it during loop?
+            cancel_run(STOP_WARN);
+        }
     } else {
         //log_msg(DEBUG_MSG, moi, "Dest word isn't full.  Loading dest from memory %#o and folding.\n", addr2);
         t_uint64 word;
@@ -951,6 +1120,8 @@ int get_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t *bitp)
     return get_eis_an_fwd(mfp, descp, bitp, 1);
 }
 
+//-----------------------------------------------------------------------------
+
 int retr_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t *bitp)
 {
     // Return a single bit via an EIS descriptor.  No auto-advance to next bit after each retrieval.
@@ -958,10 +1129,14 @@ int retr_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t *bitp)
     return get_eis_an_fwd(mfp, descp, bitp, 0);
 }
 
+//-----------------------------------------------------------------------------
+
 int put_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t bitval)
 {
     return put_eis_an_x(mfp, descp, bitval, 1);
 }
+
+//-----------------------------------------------------------------------------
 
 int save_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp)
 {
@@ -970,18 +1145,27 @@ int save_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp)
 
 //=============================================================================
 
+/*
+ * addr_mod_eis_addr_reg()
+ *
+ * Called by OPU for selected EIS instructions -- instructions in the
+ * EIS Address register Special Arithmetic group such as a9bd, awd, etc.
+ * See the first part of the code below for a full list of opcodes.
+ * Note that the OPU calls addr_mod() for the instructions that aren't
+ * handled here.
+ *
+ * TODO: instr2text() also needs to understand this
+ */
+
 int addr_mod_eis_addr_reg(instr_t *ip)
 {
-    // Called by OPU for selected EIS instructions.  OPU calls addr_mod() for
-    // other instructions.
-
-    // TODO: instr2text() also needs to understand this
     uint op = ip->opcode;
     int bit27 = op % 2;
     op >>= 1;
 
     int nbits;
     switch (op) {
+        case opcode1_awd: nbits = 36; break;
         case opcode1_a9bd: nbits = 9; break;
         case opcode1_a6bd: nbits = 6; break;
         case opcode1_a4bd: nbits = 4; break;
@@ -1010,6 +1194,15 @@ int addr_mod_eis_addr_reg(instr_t *ip)
 
 
     switch (op) {
+        case opcode1_awd:
+            if (a == 0)
+                AR_PR[ar].wordno = soffset + sign18(TPR.CA);
+            else
+                AR_PR[ar].wordno += soffset + sign18(TPR.CA);
+            AR_PR[ar].PR.bitno = 0;
+            AR_PR[ar].AR.charno = 0;
+            AR_PR[ar].AR.bitno = 0;
+            return 0;
         case opcode1_s9bd:
             cancel_run(STOP_IBKPT);
             // fall through
@@ -1074,19 +1267,15 @@ if (AR_PR[ar].wordno == 010000005642) {
                 int creg = sign18(TPR.CA);
                 // AR_PR[ar].wordno += soffset + (9 *  AR_PR[ar].AR.charno + 36 * creg + AR_PR[ar].AR.bitno) / 36;
                 // The text of AL39 is correct, but the equation is wrong; multiplying creg by 36 makes no sense
-                AR_PR[ar].wordno += soffset + (9 *  AR_PR[ar].AR.charno + 1 * creg + AR_PR[ar].AR.bitno) / 36;
-                AR_PR[ar].AR.charno = (9 * AR_PR[ar].AR.charno + 1 * creg + AR_PR[ar].AR.bitno % 36) / 9;
-                AR_PR[ar].AR.bitno = (9 * AR_PR[ar].AR.charno + 1 * creg + AR_PR[ar].AR.bitno) % 9;
+                int nbits = 9 * AR_PR[ar].AR.charno + creg + AR_PR[ar].AR.bitno;
+                AR_PR[ar].wordno += soffset + nbits / 36;
+                AR_PR[ar].AR.charno = (nbits % 36) / 9;
+                AR_PR[ar].AR.bitno = nbits % 9;
             }
             // handle anomaly (AL39 AR description)
             AR_PR[ar].PR.bitno = AR_PR[ar].AR.charno * 9;   // 0, 9, 18, 27
             if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Addr mod: AR[%d]: wordno = %#o, charno=%#o, bitno=%#o; PR bitno=%d\n",
                 ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
-if (AR_PR[ar].wordno == 010000005642) {
-                log_msg(WARN_MSG, "APU", "a=%d; CA is %#o\n", a, TPR.CA);
-                log_msg(WARN_MSG, "APU", "soffset is %d\n", soffset);
-                cancel_run(STOP_BUG);
-}
             if (oops) -- opt_debug;
             return 0;
         }

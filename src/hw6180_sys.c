@@ -180,23 +180,29 @@ static void hw6180_init(void)
     scu.interrupts[0].avail = 1;
     scu.interrupts[1].avail = 1;
 
-    // CPU port 'b' (1) connected to SCU port '0'
+    // CPU port 'd' (1) connected to SCU port '0'
     // scas_init's call to make_card seems to require that the CPU be connected
     // to SCU port zero.
     // Also, rsw_util$port_info claims base addr is: port-assignment * size/1024
-    int cpu_port = 1;
+    int cpu_port = 4;       // CPU port 'd' or 4
+    // int cpu_port = 1;        // CPU port 'b' or 1
     cpu_ports.scu_port = 0;
-    cpu_ports.ports[cpu_port] = cpu_ports.scu_port; // CPU port B connected to SCU
-    scu.ports[cpu_ports.scu_port] = cpu_port;   // SCU port '7' connected to CPU port 'B'
-    // GB61, pages 9-1 and A-2: Set Mask A to port that the bootload CPU is connected to; Set Mask B to off
+    cpu_ports.ports[cpu_port] = cpu_ports.scu_port; // CPU connected to SCU
+    scu.ports[cpu_ports.scu_port] = cpu_port;   // SCU connected to CPU
+    // GB61, pages 9-1 and A-2: Set Mask A to port that the bootload CPU is
+    // connected to; Set Mask B to off
     scu.interrupts[0].mask_assign.unassigned = 0;
     scu.interrupts[0].mask_assign.port = cpu_ports.scu_port;
     scu.interrupts[0].mask_assign.raw = 1 << (8 - cpu_ports.scu_port);
 
     // IOM connected to SCU port 2
-    // We must use the same port (a-h) on the IOM as we used on the CPU
-    iom.scu_port = 2;
-    int iom_port = cpu_port;    // required by AM81 and AN70
+    // Some sources say that we must use the same port (a-h) on the IOM as
+    // we used on the CPU.  However, scas_init.pl1 will complain about being
+    // unable to setup cyclic port priority if IOMS and CPUS use the same
+    // SCU ports.
+    int iom_port = 3;
+    // int iom_port = cpu_port; // required by AM81 and AN70
+    iom.scu_port = 1;
     iom.ports[iom_port] = iom.scu_port; // port A connected to SCU
     scu.ports[iom.scu_port] = iom_port;
 
@@ -526,7 +532,7 @@ int activate_timer()
 {
     uint32 t;
     log_msg(DEBUG_MSG, "SYS::clock", "TR is %lld %#llo.\n", reg_TR, reg_TR);
-    if (bit27_is_neg(reg_TR)) {
+    if (bit_is_neg(reg_TR, 27)) {
         if ((t = sim_is_active(&TR_clk_unit)) != 0)
             log_msg(DEBUG_MSG, "SYS::clock", "TR cancelled with %d time units left.\n", t);
         else

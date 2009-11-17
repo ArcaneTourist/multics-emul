@@ -30,10 +30,7 @@ extern uint32 sim_brk_summ;
 static inline t_uint64 lrotate36(t_uint64 x, unsigned n);
 static inline void lrotate72(t_uint64* ap, t_uint64* bp, unsigned n);
 static inline int32 negate18(t_uint64 x);
-static inline t_int64 negate36(t_uint64 x);
 static inline void negate72(t_uint64* a, t_uint64* b);
-static int32 sign18(t_uint64 x);
-static t_int64 sign36(t_uint64 x);
 static inline uint min(uint a, uint b);
 static inline uint max(uint a, uint b);
 static inline uint max3(uint a, uint b, uint c);
@@ -189,6 +186,7 @@ static int do_an_op(instr_t *ip)
             case opcode1_a6bd + 0:
             case opcode1_a9bd + 0:
             case opcode1_abd + 0:
+            case opcode1_awd + 0:
             case opcode1_s9bd + 0:
                 addr_mod_eis_addr_reg(ip);
                 break;
@@ -954,8 +952,23 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
-            // sbla unimplemented
+
+            case opcode0_sbla: {        // Subtract logical from A
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    uint sign = reg_A >> 35;
+                    reg_A = (reg_A - word) & MASK36;
+                    uint rsign = reg_A >> 35;
+                    IR.zero = reg_A == 0;
+                    IR.neg = rsign;
+                    IR.carry = sign != rsign;
+                }
+                return ret;
+            }
+
             // sblaq unimplemented
+
             case opcode0_sblq: {    // Subtract logical from Q
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
@@ -2083,6 +2096,10 @@ static int do_an_op(instr_t *ip)
                         AR_PR[i].PR.snr = getbits36(words[2*i], 3, 15);
                         AR_PR[i].wordno = getbits36(words[2*i+1], 0, 18);
                         AR_PR[i].PR.bitno = getbits36(words[2*i+1], 21, 6); // 36-(72-57)
+                        if (AR_PR[i].PR.bitno < 0 || AR_PR[i].PR.bitno  > 35) {
+                            log_msg(ERR_MSG, "OPU::lpri", "PR%d now has a bitno of %d\n", i, AR_PR[i].PR.bitno );
+                            cancel_run(STOP_BUG);
+                        }
                         AR_PR[i].AR.charno = AR_PR[i].PR.bitno / 9;
                         AR_PR[i].AR.bitno = AR_PR[i].PR.bitno % 9;
                         log_msg(DEBUG_MSG, "OPU::lpri", "PR[%d]: rnr=%o, snr=%o, wordno=%0o, bitno=%#o\n",
@@ -2114,6 +2131,10 @@ static int do_an_op(instr_t *ip)
                         return 1;
                     }
                     AR_PR[n].PR.bitno = getbits36(word, 0, 6);
+                    if (AR_PR[n].PR.bitno < 0 || AR_PR[n].PR.bitno  > 35) {
+                        log_msg(ERR_MSG, "OPU::lprp*", "PR%d now has a bitno of %d\n", n, AR_PR[n].PR.bitno );
+                        cancel_run(STOP_BUG);
+                    }
                     AR_PR[n].AR.charno = AR_PR[n].PR.bitno / 9;
                     AR_PR[n].AR.bitno = AR_PR[n].PR.bitno % 9;
                     if (getbits36(word, 6, 12) == 07777)
@@ -3031,7 +3052,10 @@ static int do_an_op(instr_t *ip)
                 log_msg(DEBUG_MSG, "OPU::a9bd", "APU does our work for us\n");
                 return 0;
 
-            // awd unimplemented
+            case opcode1_awd:
+                log_msg(DEBUG_MSG, "OPU::awd", "APU does our work for us\n");
+                return 0;
+
             // s4bd unimplemented
             // s6bd unimplemented
 
@@ -3376,65 +3400,6 @@ static inline void lrotate72(t_uint64* ap, t_uint64* bp, unsigned n)
 
 // ============================================================================
 
-static inline int32 negate18(t_uint64 x)
-{
-    // overflow not detected
-    if (bit18_is_neg(x))
-        return ((~x & MASK18) + 1) & MASK18;    // todo: only one mask needed?
-    else
-        return (- x) & MASK18;
-}
-
-static inline t_int64 negate36(t_uint64 x)
-{
-    // overflow not detected
-    if (bit36_is_neg(x))
-        return ((~x & MASK36) + 1) & MASK36;    // todo: only one mask needed?
-    else
-        return (- x) & MASK36;
-}
-
-static inline void negate72(t_uint64* a, t_uint64* b)
-{
-    // BUG? -- overflow not detected
-    *a = (~ *a) & MASK36;
-    *b = (~ *b) & MASK36;
-    ++ *b;
-    if ((*b >> 36) != 0) {
-        *b &= MASK36;
-        ++ *a;
-        *a = *a & MASK36;
-    }
-}
-
-// ============================================================================
-
-#if 1
-static int32 sign18(t_uint64 x)
-{
-    if (bit18_is_neg(x)) {
-        int32 r = - ((1<<18) - (x&MASK18));
-        // log_msg(DEBUG_MSG, "OPU::sign18", "%#llo => %#o (%+d decimal)\n", x, r, r);
-        return r;
-    }
-    else
-        return x;
-}
-#endif
-
-static t_int64 sign36(t_uint64 x)
-{
-    if (bit36_is_neg(x)) {
-        t_int64 r = - (((t_int64)1<<36) - (x&MASK36));
-        return r;
-    }
-    else
-        return x;
-}
-
-
-// ============================================================================
-
 static inline uint min(uint a, uint b)
 {
     return (a < b) ? a : b;
@@ -3465,6 +3430,10 @@ static int do_epp(int epp)
     AR_PR[epp].PR.snr = TPR.TSR;
     AR_PR[epp].wordno = TPR.CA & MASK18;
     AR_PR[epp].PR.bitno = TPR.TBR;
+    if (AR_PR[epp].PR.bitno < 0 || AR_PR[epp].PR.bitno > 35) {
+        log_msg(ERR_MSG, "OPU::epp*", "PR%d now has a bitno of %d\n", epp, AR_PR[epp].PR.bitno );
+        cancel_run(STOP_BUG);
+    }
     AR_PR[epp].AR.charno = AR_PR[epp].PR.bitno / 9;
     AR_PR[epp].AR.bitno = AR_PR[epp].PR.bitno % 9;
     char buf[20];
@@ -3530,6 +3499,10 @@ static int do_eawp(int n)
     }
     AR_PR[n].wordno = TPR.CA;
     AR_PR[n].PR.bitno = TPR.TBR;
+    if (AR_PR[n].PR.bitno < 0 || AR_PR[n].PR.bitno > 35) {
+        log_msg(ERR_MSG, "OPU::eawp", "PR%d now has a bitno of %d\n", n, AR_PR[n].PR.bitno );
+        cancel_run(STOP_BUG);
+    }
     AR_PR[n].AR.charno = AR_PR[n].PR.bitno / 9;
     AR_PR[n].AR.bitno = AR_PR[n].PR.bitno % 9;
     return 0;
@@ -4270,7 +4243,19 @@ static int op_scm(const instr_t* ip)
 
 // ============================================================================
 
+static int op_csl_x(const instr_t* ip);
 static int op_csl(const instr_t* ip)
+{
+    extern DEVICE cpu_dev;
+    int saved_debug = opt_debug;
+    int saved_dctrl = cpu_dev.dctrl;
+    ++ opt_debug; ++ cpu_dev.dctrl;
+    int ret = op_csl_x(ip);
+    opt_debug = saved_debug;
+    cpu_dev.dctrl = saved_dctrl;
+    return ret;
+}
+static int op_csl_x(const instr_t* ip)
 {
     // Combine bit strings left
 
@@ -4318,6 +4303,10 @@ static int op_csl(const instr_t* ip)
         }
         flag_t r = (bolr >> (3 - ((bit1 << 1) | bit2))) & 1;    // like indexing into a truth table
         log_msg(DEBUG_MSG, moi, "nbits1=%d, nbits2=%d; %d op(%#o) %d => %d\n", desc1.n, desc2.n, bit1, bolr, bit2, r);
+#if 0
+        // BAD idea.  Get is safe after retr in the sense that it won't fetch.  However, it could cause the next
+        // retr to fetch -- without writing the buffer.
+        // It also confuses save_eis_an() into wondering why a full buffer wasn't flushed.
         if (r == bit2) {
             // Do an ordinary "get" to advance the ptr
             if (get_eis_bit(&mf2, &desc2, &bit2) != 0) {
@@ -4325,6 +4314,7 @@ static int op_csl(const instr_t* ip)
                 break;
             }
         } else
+#endif
             if (put_eis_bit(&mf2, &desc2, r) != 0) {
                 ret = 1;
                 break;

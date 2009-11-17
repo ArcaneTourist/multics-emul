@@ -6,8 +6,6 @@
 #include <limits.h>
 #include <gmp.h>
 
-static inline void negate72(t_uint64* a, t_uint64* b);
-
 static inline void set36u(mpz_t rop, t_uint64 val)
 {
 #if LONG_MAX > 2147483647L
@@ -263,18 +261,4 @@ void div72(t_uint64 hi, t_uint64 low, t_uint64 divisor, t_uint64* quotp, t_uint6
     mpz_clear(denom);
     mpz_clear(quot);
     mpz_clear(rem);
-}
-
-
-static inline void negate72(t_uint64* a, t_uint64* b)
-{
-    // BUG? -- overflow not detected
-    *a = (~ *a) & MASK36;
-    *b = (~ *b) & MASK36;
-    ++ *b;
-    if ((*b >> 36) != 0) {
-        *b &= MASK36;
-        ++ *a;
-        *a = *a & MASK36;
-    }
 }

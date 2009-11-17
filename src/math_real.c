@@ -15,31 +15,6 @@ double multics_to_double(t_uint64 xhi, t_uint64 xlo, int show, int is_signed);
 
 // ============================================================================
 
-static inline t_int64 negate36(t_uint64 x)
-{
-    // overflow not detected
-    if (bit36_is_neg(x))
-        return ((~x & MASK36) + 1) & MASK36;    // todo: only one mask needed?
-    else
-        return (- x) & MASK36;
-}
-
-
-static inline void negate72(t_uint64* a, t_uint64* b)
-{
-    // BUG? -- overflow not detected
-    *a = (~ *a) & MASK36;
-    *b = (~ *b) & MASK36;
-    ++ *b;
-    if ((*b >> 36) != 0) {
-        *b &= MASK36;
-        ++ *a;
-        *a = *a & MASK36;
-    }
-}
-
-// ============================================================================
-
 int instr_dvf(t_uint64 word)
 {
     // dvf -- divide fraction; 71-bit signed fractional dividend is

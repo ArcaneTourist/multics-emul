@@ -31,7 +31,7 @@
 
 #include "hw6180.h"
 #include "sim_tape.h"
-#include "bits.h"
+// #include "bits.h"
 
 //-----------------------------------------------------------------------------
 // *** SIMH specific externs

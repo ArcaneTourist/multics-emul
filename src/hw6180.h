@@ -5,9 +5,7 @@
 extern "C" {
 #endif
 
-
 #include "sim_defs.h"
-
 
 /* These are from SIMH, but not listed in sim_defs.h */
 extern t_addr (*sim_vm_parse_addr)(DEVICE *, char *, char **);
@@ -526,90 +524,6 @@ typedef struct {
 typedef eis_alpha_desc_t eis_bit_desc_t;
 typedef eis_alpha_desc_t eis_num_desc_t;
 
-
-// ============================================================================
-// === Operations on 36-bit pseudo words
-/*
-    Operations on 36-bit pseudo words
-
-    Multics 36bit words are simulated with 64bit integers.  Multics
-    documentation refers to the right-most or least significant bit
-    as position 35.   Position zero is the leftmost bit.   This is
-    unusual.  Usually, we refer to the LSB as position zero and the
-    MSB (most significant bit) as the highest position number.  The latter
-    convention matches up the value of a bit position with its
-    twos-complement value, e.g. turning only bit #4 results is a value
-    of 2 raised to the 4th power.  With the Multics notational convention,
-    turning on only bit 35 results in the twos-complement value of one.
-
-    The following macros support operating on 64bit words as though the
-    right-most bit were bit 35.  This means that bit positon zero is
-    in the 36th bit from the right -- in the middle of the 64 bit word.
-*/
-
-static const t_uint64 MASK36 = ~(~((t_uint64)0)<<36);   // lower 36 bits all ones
-static const t_uint64 MASK18 = ~(~((t_uint64)0)<<18);   // lower 18 bits all ones
-#define MASKBITS(x) ( ~(~((t_uint64)0)<<x) )    // lower (x) bits all ones
-
-extern void log_msg(enum log_level, const char* who, const char* format, ...);
-extern int log_ignore_ic_change(void);
-extern int log_notice_ic_change(void);
-extern void log_forget_ic(void);
-extern int log_any_io(int val);
-extern int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp);
-
-extern int scan_seg(uint segno, int msgs);  // scan definitions section for procedure entry points
-t_stat cmd_seginfo(int32 arg, char *buf);   // display segment info
-extern int cmd_symtab_parse(int32 arg, char *buf);
-
-/*  Extract (i)th bit of a 36 bit word (held in a uint64). */
-#define bitval36(word,i) ( ((word)>>(35-i)) & (uint64_t) 1 )
-/*  Value of a 36bit word (held in a uint64) after setting or clearing the
-    the (i)th bit. */
-#define bitset36(word,i) ( (word) | ( (uint64_t) 1 << (35 - i)) )
-#define bitclear36(word,i) ( (word) & ~ ( (uint64_t) 1 << (35 - i)) )
-
-static inline t_uint64 getbits36(t_uint64 x, int i, unsigned n) {
-    // bit 35 is right end, bit zero is 36th from the right
-    int shift = 35-i-n+1;
-    if (shift < 0 || shift > 35) {
-        log_msg(ERR_MSG, "getbits36", "bad args (%Lo,i=%d,n=%d)\n", x, i, n);
-        return 0;
-    } else
-        return (x >> (unsigned) shift) & ~ (~0 << n);
-}
-
-static inline t_uint64 setbits36(t_uint64 x, int p, unsigned n, t_uint64 val)
-{
-    // return x with n bits starting at p set to n lowest bits of val 
-    // return (x & ((~0 << (p + 1)) | (~(~0 << (p + 1 - n))))) | ((val & ~(~0 << n)) << (p + 1 - n));
-
-    t_uint64 mask = ~ (~0<<n);  // n low bits on
-        // 1 => ...1
-        // 2 => ..11
-    int shift = 36 - p - n;
-    if (shift < 0 || shift > 35) {
-        log_msg(ERR_MSG, "setbits36", "bad arg, shift = %d\n", shift);
-        return 0;
-    }
-    mask <<= (unsigned) shift;  // shift 1s to proper position; result 0*1{n}0*
-            // 0,1 => 35 => 1000... (35 zeros)
-            // 1,1 => 34 => 0100... (34 z)
-            // 0,2 = 34 => 11000 (34 z)
-            // 1,2 = 33 => 011000 (33 z)
-            // 35,1 => 0 => 0001 (0 z)
-    // caller may provide val that is too big, e.g., a word with all bits set to one
-    t_uint64 result = (x & ~ mask) | ((val&MASKBITS(n)) << (36 - p - n));
-    return result;
-}
-
-
-// #define bit36_is_neg(x) ( ((x)>>35) == 1 )
-#define bit36_is_neg(x) (((x) & (((t_uint64)1)<<35)) != 0)
-#define bit27_is_neg(x) (((x) & (((t_uint64)1)<<26)) != 0)
-#define bit18_is_neg(x) (((x) & (((t_uint64)1)<<17)) != 0)
-#define bit_is_neg(x,n) (((x) & (((t_uint64)1)<<(n-1))) != 0)
-
 // obsolete typedef -- hold named register sub-fields in their inefficient
 // native format.
 /* #define CU_PPR_P(CU) (bitval36(CU.word0bits, 18)) */
@@ -643,6 +557,18 @@ extern t_uint64 total_msec;
 
 // ============================================================================
 // === Functions
+
+extern void log_msg(enum log_level, const char* who, const char* format, ...);
+extern int log_ignore_ic_change(void);
+extern int log_notice_ic_change(void);
+extern void log_forget_ic(void);
+extern int log_any_io(int val);
+extern int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp);
+
+extern int scan_seg(uint segno, int msgs);  // scan definitions section for procedure entry points
+t_stat cmd_seginfo(int32 arg, char *buf);   // display segment info
+extern int cmd_symtab_parse(int32 arg, char *buf);
+
 
 extern void log_msg(enum log_level, const char* who, const char* format, ...);
 //extern void debug_msg(const char* who, const char* format, ...);
@@ -780,7 +706,7 @@ extern int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 #endif
 
 #include "opcodes.h"
-// #include "symtab.h"
 #include "seginfo.h"
+#include "bit36.h"
 
 #endif  // _HW6180_H

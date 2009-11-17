@@ -5,7 +5,7 @@
 
 #include "hw6180.h"
 #include "sim_tape.h"
-#include "bits.h"
+#include "bitstream.h"
 
 extern iom_t iom;
 
