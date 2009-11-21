@@ -23,16 +23,6 @@
 // ============================================================================
 
 /*
- * Constants and a function for ordinary masking of low (rightmost) bits.
- */
-
-static const t_uint64 MASK36 = ~(~((t_uint64)0)<<36);   // lower 36 bits all on
-static const t_uint64 MASK18 = ~(~((t_uint64)0)<<18);   // lower 18 bits all on
-#define MASKBITS(x) ( ~(~((t_uint64)0)<<x) )    // lower (x) bits all ones
-
-// ============================================================================
-
-/*
  * Extract, set, or clear the (i)th bit of a 36-bit word (held in a uint64).
  */
 

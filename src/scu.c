@@ -24,19 +24,25 @@
 /*
     Physical Details & Interconnection -- AN70, section 8.
 
-    SCUs have 8 ports.  Active modules (CPUs and IOMs) have up to four
-    of their ports connected to SCUs.
+    SCUs have 8 ports.
+        * Active modules (CPUs and IOMs) have up to four of their ports
+          connected to SCU ports.
+        * The 4MW SCU has eight on/off switches to enable or disable
+          the ports.  However, the associated registers allow for 
+          values of enabled, disabled, and program control.
 
-    SCUs have stores (memory banks) and two sets of registers ("A" and "B")
-    that control interrupt assignment.
+    SCUs have stores (memory banks).
 
-    Two sets of interrupt registers -- "A" and "B".  Each set has:
-        * execute interrupt mask register -- 32 bits; enables/disables
+    SCUs have four sets of registers controlling interrupts.  Only two
+    of these sets, designated "A" and "B" are used.  Each set has:
+        * Execute interrupt mask register -- 32 bits; enables/disables
           the corresponding execute interrupt cell
-        * interrupt mask assignment register -- 9 bits total
+        * Interrupt mask assignment register -- 9 bits total
           two parts: assigned bit, set of assigned ports (8 bits)
           In Multics, only one CPU will be assigned in either mask
-          and no CPU appears in both.
+          and no CPU appears in both.   Earlier hardware versions had
+          four 10-position rotary switches.  Later hardware versions had
+          two 9-position (0..7 and off) rotary switches.
 
     Config panel -- level 68 6000 SCU
         -- from AM81
@@ -177,6 +183,17 @@ SCUs have 8 ports, 0..7.
 extern cpu_ports_t cpu_ports;
 extern scu_t scu;   // BUG: we'll need more than one for max memory.  Unless we can abstract past the physical HW's capabilities
 static int pima_parse_raw(int pima, const char *moi);
+int scu_get_mask(t_uint64 addr, int port);
+
+// ============================================================================
+
+const char* adev2text(enum active_dev type)
+{
+    static char* types[] = { "", "CPU", "IOM" };
+    return (type >= ARRAY_SIZE(types)) ? "" : types[type];
+}
+
+// ============================================================================
 
 static int scu_hw_arg_check(const char *tag, t_uint64 addr, int port)
 {
@@ -193,25 +210,26 @@ static int scu_hw_arg_check(const char *tag, t_uint64 addr, int port)
     return 0;
 #else
     // Verify that HW could have received signal
-    int cpu_no = cpu_ports.scu_port;    // port-no that rscr instr came in on
-    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+
+    // port-no that rscr instr came in on
+    // We only have one CPU, so...
+    int rcv_port = cpu_ports.scu_port;
+
+    if (rcv_port < 0 || rcv_port > 7)  {
+        log_msg(ERR_MSG, "SCU", "%s: CPU is not connected to any port.  Port %d does nto exist on the SCU.\n", rcv_port);
+        cancel_run(STOP_WARN);
+        return 1;
+    }
+
+    int cpu_port = scu.ports[rcv_port].dev_port;    // which port on the CPU?
 
     // Verify that HW could have received signal
-    if (cpu_port < 0) {
-        log_msg(ERR_MSG, "SCU", "%s: SCU port %d is disabled; it is not connected to anything\n", tag, cpu_no);
+    if (cpu_port < 0 || cpu_port > 7) {
+        log_msg(ERR_MSG, "SCU", "%s: Port %d is connected to nonsense port %d of CPU %d\n", tag, rcv_port, cpu_port, scu.ports[rcv_port].idnum);
         cancel_run(STOP_WARN);
         return 1;
     }
-    if (cpu_port > 7) {
-        log_msg(ERR_MSG, "SCU", "%s: Port %d is not enabled (%d).\n", tag, cpu_no, cpu_port);
-        cancel_run(STOP_WARN);
-        return 1;
-    }
-    if (cpu_ports.ports[cpu_port] != cpu_no) {
-        log_msg(ERR_MSG, "SCU", "%s: Port %d on CPU is not connected to port %d of SCU.\n", tag, cpu_port, cpu_no);
-        cancel_run(STOP_WARN);
-        return 1;
-    }
+    // TODO: Check that cpu_ports.ports[cpu_port] is this SCU
     return 0;
 #endif
 }
@@ -225,8 +243,9 @@ int scu_set_mask(t_uint64 addr, int port)
     const char* moi = "SCU::setmask";
     if (scu_hw_arg_check(moi, addr, port) > 0)
         return 1;
-    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
-    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+    int rcv_port = cpu_ports.scu_port;  // port-no that instr came in on
+    // int cpu_no = scu.ports[rcv_port].idnum;  // CPU 0->'A', 1->'B', etc
+    // int cpu_port = scu.ports[rcv_port].devnum    // which port on the CPU?
 
     // Find mask reg assigned to specified port
     int port_pima = 0;
@@ -240,34 +259,34 @@ int scu_set_mask(t_uint64 addr, int port)
             continue;
         if (scu.interrupts[p].mask_assign.port == port) {
             port_pima = p;
-            if (cpu_no != port)
-                log_msg(INFO_MSG, moi, "Found MASK %d assigned to port %d\n", p, port);
+            if (port != rcv_port)
+                log_msg(INFO_MSG, moi, "Found MASK %d assigned to %s on port %d\n", p, adev2text(scu.ports[port].type), port);
             ++ port_found;
         }
-        if (scu.interrupts[p].mask_assign.port == cpu_no) {
+        if (scu.interrupts[p].mask_assign.port == rcv_port) {
             cpu_pima = p;
-            log_msg(INFO_MSG, moi, "Found MASK %d assigned to CPU/port %d\n", p, cpu_no);
+            log_msg(INFO_MSG, moi, "Found MASK %d assigned to invoking CPU on port %d\n", p, rcv_port);
             ++ cpu_found;
         }
     }
 
     if (! cpu_found) {
-        log_msg(WARN_MSG, moi, "No masks assigned to cpu on port %d\n", cpu_no);
+        log_msg(WARN_MSG, moi, "No masks assigned to cpu on port %d\n", rcv_port);
         fault_gen(store_fault);
         return 1;
     }
     if (cpu_found > 1) {
         // Not legal for Multics
-        log_msg(WARN_MSG, moi, "Multiple masks assigned to cpu on port %d\n", cpu_no);
+        log_msg(WARN_MSG, moi, "Multiple masks assigned to cpu on port %d\n", rcv_port);
         cancel_run(STOP_WARN);
     }
-    if (cpu_no != port) {
+    if (rcv_port != port) {
         if (! port_found) {
-            log_msg(INFO_MSG, moi, "No masks assigned to port %d\n", cpu_no);
+            log_msg(INFO_MSG, moi, "No masks assigned to port %d\n", port);
             return 0;
         }
         if (port_found > 1)
-            log_msg(WARN_MSG, moi, "Multiple masks assigned to port %d\n", cpu_no);
+            log_msg(WARN_MSG, moi, "Multiple masks assigned to port %d\n", port);
     }
 
     if (port_pima > 1) {
@@ -290,9 +309,11 @@ int scu_set_cpu_mask(t_uint64 addr)
 
     if (scu_hw_arg_check("smcm", addr, 0) > 0)
         return 1;
-    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
+    int rcv_port = cpu_ports.scu_port;  // port-no that instr came in on
+    // int cpu_no = scu.ports[rcv_port].idnum;  // CPU 0->'A', 1->'B', etc
+    // int cpu_port = scu.ports[rcv_port].devnum    // which port on the CPU?
 
-    return scu_set_mask(addr, cpu_no);
+    return scu_set_mask(addr, rcv_port);
 }
 
 
@@ -304,11 +325,13 @@ int scu_get_cpu_mask(t_uint64 addr)
 
     if (scu_hw_arg_check(moi, addr, 0) > 0)
         return 1;
-    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
+    int rcv_port = cpu_ports.scu_port;  // port-no that instr came in on
+    // int cpu_no = scu.ports[rcv_port].idnum;  // CPU 0->'A', 1->'B', etc
+    // int cpu_port = scu.ports[rcv_port].devnum    // which port on the CPU?
 
     reg_A = 0;
     reg_Q = 0;
-    return scu_get_mask(addr, cpu_no);
+    return scu_get_mask(addr, rcv_port);
 }
 
 int scu_get_mode_register(t_uint64 addr)
@@ -322,8 +345,9 @@ int scu_get_mode_register(t_uint64 addr)
         log_msg(ERR_MSG, "get-mode-register", "But proceeding anyway");
 #endif
 
-    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
-    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+    int rcv_port = cpu_ports.scu_port;  // port-no that instr came in on
+    // int cpu_no = scu.ports[rcv_port].idnum;  // CPU 0->'A', 1->'B', etc
+    // int cpu_port = scu.ports[rcv_port].devnum    // which port on the CPU?
 
 
     // See scr.incl.pl1 and AN87 page 2-2
@@ -358,8 +382,9 @@ int scu_get_config_switches(t_uint64 addr)
     if (scu_hw_arg_check(tag, addr, 0) != 0)
         log_msg(ERR_MSG, moi, "But proceeding anyway");
 #endif
-    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
-    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+    int rcv_port = cpu_ports.scu_port;  // port-no that instr came in on
+    // int cpu_no = scu.ports[rcv_port].idnum;  // CPU 0->'A', 1->'B', etc
+    // int cpu_port = scu.ports[rcv_port].devnum    // which port on the CPU?
 
 
     // See scr.incl.pl1 
@@ -369,7 +394,7 @@ int scu_get_config_switches(t_uint64 addr)
     // We have 4 banks and can have 4M-words, so report banks size 1024K-words
     reg_A = setbits36(reg_A, 9, 3, 5);  // size of lower store -- 2^(5+5) == 1024 K-words
     reg_A = setbits36(reg_A, 12, 4, 017);   // all four stores online
-    reg_A = setbits36(reg_A, 16, 4, cpu_no);    // requester's port #
+    reg_A = setbits36(reg_A, 16, 4, rcv_port);  // requester's port #
     reg_A = setbits36(reg_A, 21, 1, scu.mode);  // programmable
     reg_A = setbits36(reg_A, 22, 1, 0); // non-existent address logic enabled
     reg_A = setbits36(reg_A, 23, 7, 0); // nea size
@@ -378,10 +403,10 @@ int scu_get_config_switches(t_uint64 addr)
     for (int i = 0; i < 4; ++ i) {
         int pima = 0;
         int port = i + pima * 4;
-        int enabled = scu.ports[port] >= 0;
+        int enabled = scu.ports[port].is_enabled;
         reg_A = setbits36(reg_A, 32+i, 1, enabled); // enable masks for ports 0-3
         if (enabled)
-            log_msg(INFO_MSG, moi, "Port %d is enabled, it points to port %d.\n", port, scu.ports[port]);
+            log_msg(INFO_MSG, moi, "Port %d is enabled, it points to port %d on %s %c.\n", port, scu.ports[port].dev_port, adev2text(scu.ports[port].type), scu.ports[port].idnum + 'A');
         else
             log_msg(INFO_MSG, moi, "Port %d is disabled.\n", port);
     }
@@ -392,10 +417,10 @@ int scu_get_config_switches(t_uint64 addr)
     for (int i = 0; i < 4; ++ i) {
         int pima = 1;
         int port = i + pima * 4;
-        int enabled = scu.ports[port] >= 0;
+        int enabled = scu.ports[port].is_enabled;
         reg_Q = setbits36(reg_Q, 68-36+i, 1, enabled);  // enable masks for ports 4-7
         if (enabled)
-            log_msg(INFO_MSG, moi, "Port %d is enabled, it points to port %d.\n", port, scu.ports[port]);
+            log_msg(INFO_MSG, moi, "Port %d is enabled, it points to port %d on %s %c.\n", port, scu.ports[port].dev_port, adev2text(scu.ports[port].type), scu.ports[port].idnum + 'A');
         else
             log_msg(INFO_MSG, moi, "Port %d is disabled.\n", port);
     }
@@ -413,8 +438,9 @@ int scu_set_config_switches(t_uint64 addr)
 
     if (scu_hw_arg_check(moi, addr, 0) > 0)
         return 1;
-    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
-    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+    int rcv_port = cpu_ports.scu_port;  // port-no that instr came in on
+    // int cpu_no = scu.ports[rcv_port].idnum;  // CPU 0->'A', 1->'B', etc
+    // int cpu_port = scu.ports[rcv_port].devnum    // which port on the CPU?
 
 
     // See scr.incl.pl1 
@@ -445,18 +471,17 @@ int scu_set_config_switches(t_uint64 addr)
         int enabled = getbits36(reg_A, 32+i, 1);
         int port = i+pima*4;
         if (! enabled) {
-            if (scu.ports[port] < 0)
+            if (! scu.ports[port].is_enabled)
                 log_msg(INFO_MSG, moi, "Port %d still disabled.\n", port);
             else
                 log_msg(INFO_MSG, moi, "Port %d now disabled.\n", port);
-            scu.ports[port] = -1;
+            scu.ports[port].is_enabled = 0;
         } else
-            if (scu.ports[port] < 0) {
-                log_msg(ERR_MSG, moi, "Cannot set port-enable-register flag on port %d\n", port);
-                cancel_run(STOP_BUG);
+            if (!scu.ports[port].is_enabled) {
+                log_msg(INFO_MSG, moi, "Port %d is now enabled; it points to port %d on %s %c.\n", port, scu.ports[port].dev_port, adev2text(scu.ports[port].type), scu.ports[port].idnum + 'A');
+                scu.ports[port].is_enabled = 1;
             } else
-                log_msg(INFO_MSG, moi, "Port %d still enabled.\n", port);
-        // BUG: switch to using enable/disable flag
+                log_msg(INFO_MSG, moi, "Port %d is still enabled; it points to port %d on %s %c.\n", port, scu.ports[port].dev_port, adev2text(scu.ports[port].type), scu.ports[port].idnum + 'A');
     }
 
 
@@ -471,18 +496,17 @@ int scu_set_config_switches(t_uint64 addr)
         int enabled = getbits36(reg_Q, 32+i, 1);
         int port = i+pima*4;
         if (! enabled) {
-            if (scu.ports[port] < 0)
+            if (!scu.ports[port].is_enabled)
                 log_msg(INFO_MSG, moi, "Port %d still disabled.\n", port);
             else
                 log_msg(INFO_MSG, moi, "Port %d now disabled.\n", port);
-            scu.ports[port] = -1;
+            scu.ports[port].is_enabled = 0;
         } else
-            if (scu.ports[port] < 0) {
-                log_msg(ERR_MSG, moi, "Cannot set port-enable-register flag on port %d\n", port);
-                cancel_run(STOP_BUG);
+            if (!scu.ports[port].is_enabled) {
+                log_msg(INFO_MSG, moi, "Port %d is now enabled; it points to port %d on %s %c.\n", port, scu.ports[port].dev_port, adev2text(scu.ports[port].type), scu.ports[port].idnum + 'A');
+                scu.ports[port].is_enabled = 1;
             } else
-                log_msg(INFO_MSG, moi, "Port %d still enabled.\n", port);
-        // BUG: switch to using enable/disable flag
+                log_msg(INFO_MSG, moi, "Port %d is still enabled; it points to port %d on %s %c.\n", port, scu.ports[port].dev_port, adev2text(scu.ports[port].type), scu.ports[port].idnum + 'A');
     }
 
     log_msg(NOTIFY_MSG, moi, "Doing BUG check.\n");
@@ -527,10 +551,9 @@ int scu_get_mask(t_uint64 addr, int port)
 
     if (scu_hw_arg_check("getmask", addr, port) > 0)
         return 1;
-    else
-        log_msg(WARN_MSG, "getmask", "continuing...\n");
-    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
-    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+    int rcv_port = cpu_ports.scu_port;  // port-no that instr came in on
+    // int cpu_no = scu.ports[rcv_port].idnum;  // CPU 0->'A', 1->'B', etc
+    // int cpu_port = scu.ports[rcv_port].devnum    // which port on the CPU?
 
     // Find which of the 4 masks are assigned to the specified port
     // Unlike sscr scu_set_mask, we don't care about the CPU's port
@@ -543,7 +566,6 @@ int scu_get_mask(t_uint64 addr, int port)
             continue;
         if (scu.interrupts[p].mask_assign.port == port) {
             port_pima = p;
-            log_msg(NOTIFY_MSG, moi, "Found MASK %d assigned to port %d\n", p, port);
             ++ port_found;
         }
     }
@@ -554,30 +576,38 @@ int scu_get_mask(t_uint64 addr, int port)
         // similar case...
         reg_A = 0;
         reg_Q = 0;
-        log_msg(WARN_MSG, moi, "No masks assigned to port %d\n", cpu_no);
+        log_msg(WARN_MSG, moi, "No masks assigned to port %d\n", port);
         return 0;
     }
     if (port_found > 1)
-        log_msg(WARN_MSG, moi, "Multiple masks assigned to port %d\n", cpu_no);
+        log_msg(WARN_MSG, moi, "Multiple masks assigned to port %d\n", port);
 
+    log_msg(INFO_MSG, moi, "Found MASK %d assigned to port %d. Ports enabled on mask are:", port_pima, port);
     // See AN87
     reg_A = setbits36(0, 0, 16, scu.interrupts[port_pima].exec_intr_mask >> 16);
     unsigned mask = 0;
     for (int i = 0; i < 4; ++ i) {
-        int enabled = scu.ports[port] < 0;
-        mask |= enabled;
+        int enabled = scu.ports[i].is_enabled;
         mask <<= 1;
+        mask |= enabled;
+        if (enabled)
+            log_msg(INFO_MSG, NULL, " %d", i);
     }
     reg_A |= mask;
 
     reg_Q = setbits36(0, 0, 16, scu.interrupts[port_pima].exec_intr_mask & MASKBITS(16));
     mask = 0;
     for (int i = 0; i < 4; ++ i) {
-        int enabled = scu.ports[port+4] < 0;
-        mask |= enabled;
+        int enabled = scu.ports[i+4].is_enabled;
+        if (enabled)
+            log_msg(INFO_MSG, NULL, " %d", i+4);
         mask <<= 1;
+        mask |= enabled;
     }
     reg_Q |= mask;
+    if ((reg_A & 017) == 0 && mask == 0)
+        log_msg(INFO_MSG, NULL, "none");
+    log_msg(INFO_MSG, NULL, "\n");
 
     return 0;
 }
@@ -589,8 +619,9 @@ int scu_get_calendar(t_uint64 addr)
 
     if (scu_hw_arg_check("get-calendar", addr, 0) != 0)
         return 1;
-    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
-    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+    int rcv_port = cpu_ports.scu_port;  // port-no that instr came in on
+    // int cpu_no = scu.ports[rcv_port].idnum;  // CPU 0->'A', 1->'B', etc
+    // int cpu_port = scu.ports[rcv_port].devnum    // which port on the CPU?
 
     // 52 bit clock
     // microseconds since 0000 GMT, Jan 1, 1901 // not 1900 which was a per century exception to leap years
@@ -625,8 +656,9 @@ int scu_cioc(t_uint64 addr)
 
     if (scu_hw_arg_check("cioc", addr, 0) != 0)
         return 1;
-    int cpu_no = cpu_ports.scu_port;    // port-no that instr came in on
-    int cpu_port = scu.ports[cpu_no];   // which port on the CPU connects to SCU
+    int rcv_port = cpu_ports.scu_port;  // port-no that instr came in on
+    // int cpu_no = scu.ports[rcv_port].idnum;  // CPU 0->'A', 1->'B', etc
+    // int cpu_port = scu.ports[rcv_port].devnum    // which port on the CPU?
 
     t_uint64 word;
     int ret;

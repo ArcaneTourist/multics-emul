@@ -1,9 +1,16 @@
 /*
     iom.c -- emulation of an I/O Multiplexer
 
-    See: Document 43A239854 -- 6000B I/O Multiplexer --  43A239854_600B_IOM_Spec_Jul75.pdf
-        See also: http://www.multicians.org/fjcc5.html -- Communications and Input/Output Switching in a Multiplex Computing System
-        See also: Patents: 4092715, 4173783, 1593312
+    See: Document 43A239854 -- 6000B I/O Multiplexer
+    (43A239854_600B_IOM_Spec_Jul75.pdf)
+
+    See also: http://www.multicians.org/fjcc5.html -- Communications
+    and Input/Output Switching in a Multiplex Computing System
+
+    See also: Patents: 4092715, 4173783, 1593312
+*/
+
+/*
 
     3.10 some more physical switches
 
@@ -15,16 +22,16 @@
 #include "hw6180.h"
 #include <sys/time.h>
 
-#define IOM_A_MBX 01400     /* location of mailboxes for IOM A */
-#define IOM_CONNECT_CHAN 2
-
 extern t_uint64 M[];    /* memory */
 extern cpu_ports_t cpu_ports;
 extern scu_t scu;   // BUG: we'll need more than one for max memory.  Unless we can abstract past the physical HW's capabilities
 extern iom_t iom;
 
+// ============================================================================
+// === Typedefs
+
 enum iom_sys_faults {
-    // from 4.5.1; descr from AN87, 3-9
+    // List from 4.5.1; descr from AN87, 3-9
     iom_no_fault = 0,
     iom_ill_chan = 01,      // PCW to chan with chan number >= 40
     // iom_ill_ser_req=02,  // chan requested svc with a service code of zero or bad chan #
@@ -122,9 +129,20 @@ typedef struct {
     flag_t power_off;
 } chan_status_t;
 
+
+// ============================================================================
+// === Static globals
+
 // #define MAXCHAN 64
+
+#define IOM_A_MBX 01400     /* location of mailboxes for IOM A */
+#define IOM_CONNECT_CHAN 2
+
 static chan_status_t chan_status;
 
+
+// ============================================================================
+// === Internal functions
 
 //static void dump_iom(void);
 //static void dump_iom_mbx(int base, int i);
@@ -145,6 +163,12 @@ static int dev_send_pcw(int chan, pcw_t *p);
 static int status_service(int chan);
 static int send_chan_flags();
 // static int list_service_whatif(int chan, int first_list, int *ptro, int *addrp);
+
+// ============================================================================
+
+/*
+ * Unused
+*/
 
 #if 0
 static void dump_cioc()
@@ -190,6 +214,8 @@ static void dump_cioc()
 }
 #endif
 
+// ============================================================================
+
 void iom_interrupt()
 {
     // Simulate receipt of a $CON signal (caused by CPU using a CIOC
@@ -225,6 +251,8 @@ void iom_interrupt()
     log_forget_ic();    // we log a lot of msgs, so a blank line between CIOCs in an I/O loop is good...
 }
 
+// ============================================================================
+
 static int do_conn_chan()
 {
     const char *moi = "IOM::conn-chan";
@@ -251,6 +279,7 @@ static int do_conn_chan()
     return ret;
 }
 
+// ============================================================================
 
 static int handle_pcw(int chan, int addr)
 {
@@ -281,6 +310,7 @@ static int handle_pcw(int chan, int addr)
     return do_channel(pcw.chan, &pcw);
 }
 
+// ============================================================================
 
 static int do_channel(int chan, pcw_t *p)
 {
@@ -298,8 +328,10 @@ static int do_channel(int chan, pcw_t *p)
         log_msg(WARN_MSG, moi, "Device on channel 0%o(%d) did not like our PCW -- non zero return.\n", chan, chan);
     }
 
-    // Second, check if PCW tells use to request a list service, send an interrupt, etc
-    // BUG: A loop for calling list service and doing returned DCWs should probably be here
+    // Second, check to see the PCW requires us to request a list service,
+    // or requires us to send an interrupt, etc
+    // BUG: A loop for calling list service and doing returned DCWs should
+    // probably be here
 
     int first = 1;
     int control = p->control;
@@ -403,6 +435,7 @@ while (ret == 0 && control != 0) {
     return ret;
 }
 
+// ============================================================================
 
 #if 0
 static int list_service_orig(int chan, int first_list, int *ptro)
@@ -435,6 +468,8 @@ static int list_service_whatif(int chan, int first_list, int *ptro, int *addrp)
     return 0;
 }
 #endif
+
+// ============================================================================
 
 static int list_service(int chan, int first_list, int *ptro, int *addrp)
 {
@@ -624,6 +659,7 @@ int did_tdcw = 0;   // BUG
     return 0;   // BUG: unfinished
 }
 
+// ============================================================================
 
 static void parse_pcw(pcw_t *p, int addr, int ext)
 {
@@ -648,6 +684,7 @@ static void parse_pcw(pcw_t *p, int addr, int ext)
     }
 }
 
+// ============================================================================
 
 static char* pcw2text(const pcw_t *p)
 {
@@ -658,6 +695,7 @@ static char* pcw2text(const pcw_t *p)
     return buf;
 }
 
+// ============================================================================
 
 //static int do_pcw(int chan, pcw_t *p)
 //{
@@ -665,6 +703,7 @@ static char* pcw2text(const pcw_t *p)
 //  return dev_send_pcw(chan, p);
 //}
 
+// ============================================================================
 
 static int dev_send_pcw(int chan, pcw_t *p)
 {
@@ -710,6 +749,7 @@ static int dev_send_pcw(int chan, pcw_t *p)
     return -1;  // not reached
 }
 
+// ============================================================================
 
 static int dev_io(int chan, t_uint64 *wordp)
 {
@@ -754,6 +794,7 @@ static int dev_io(int chan, t_uint64 *wordp)
     return -1;  // not reached
 }
 
+// ============================================================================
 
 static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
 {
@@ -809,6 +850,7 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
     return ret;
 }
 
+// ============================================================================
 
 static void parse_dcw(dcw_t *p, int addr)
 {
@@ -849,6 +891,8 @@ static void parse_dcw(dcw_t *p, int addr)
     // return 0;
 }
 
+// ============================================================================
+
 static char* dcw2text(const dcw_t *p)
 {
     // WARNING: returns single static buffer
@@ -865,15 +909,22 @@ static char* dcw2text(const dcw_t *p)
     return buf;
 }
 
+// ============================================================================
 
 static int do_dcw(int chan, int addr, int *controlp, int *need_indir_svc)
 {
+    extern DEVICE cpu_dev;
+    if (iom.channels[chan] == DEV_CON) {
+        ++ opt_debug; ++ cpu_dev.dctrl;
+    }
+
     dcw_t dcw;
     log_msg(DEBUG_MSG, "IOM::dcw", "chan %d, addr 0%o\n", chan, addr);
     if (M[addr] == 0) {
         log_msg(ERR_MSG, "IOM::dcw", "DCW of all zeros is legal but useless (unless you want to dump first 4K of memory).\n");
         log_msg(ERR_MSG, "IOM::dcw", "Disallowing legal but useless all zeros DCW at address %012llo.\n", addr);
         cancel_run(STOP_BUG);
+        if (iom.channels[chan] == DEV_CON) { -- opt_debug; -- cpu_dev.dctrl; }
         return 1;
     }
         
@@ -897,19 +948,26 @@ static int do_dcw(int chan, int addr, int *controlp, int *need_indir_svc)
             }
 #endif
         }
+        if (iom.channels[chan] == DEV_CON) { -- opt_debug; -- cpu_dev.dctrl; }
         return ret;
     } else if (dcw.type == tdcw) {
+        if (iom.channels[chan] == DEV_CON) { -- opt_debug; -- cpu_dev.dctrl; }
         uint next_addr = M[addr] >> 18;
         log_msg(ERR_MSG, "IOW::DCW", "Transfer-DCW not implemented; addr would be %06o; E,I,R = 0%o\n", next_addr, M[addr] & 07);
         return 1;
     } else  if (dcw.type == ddcw) {
         // IOTD, IOTP, or IONTP -- i/o (non) transfer
-        return do_ddcw(chan, addr, &dcw, controlp);
+        int ret = do_ddcw(chan, addr, &dcw, controlp);
+        if (iom.channels[chan] == DEV_CON) { -- opt_debug; -- cpu_dev.dctrl; }
+        return ret;
     } else {
         log_msg(ERR_MSG, "IOW::DCW", "Unknown DCW type\n");
+        if (iom.channels[chan] == DEV_CON) { -- opt_debug; -- cpu_dev.dctrl; }
         return 1;
     }
 }
+
+// ============================================================================
 
 char* print_lpw(t_addr addr)
 {
@@ -920,6 +978,8 @@ char* print_lpw(t_addr addr)
     sprintf(buf, "Chan 0%o -- %s", chan, lpw2text(&temp, chan == IOM_CONNECT_CHAN));
     return buf;
 }
+
+// ============================================================================
 
 static char* lpw2text(const lpw_t *p, int conn)
 {
@@ -932,6 +992,8 @@ static char* lpw2text(const lpw_t *p, int conn)
             p->lbnd, p->size, p->size, p->idcw);
     return buf;
 }
+
+// ============================================================================
 
 static void parse_lpw(lpw_t *p, int addr, int is_conn)
 {
@@ -957,6 +1019,8 @@ static void parse_lpw(lpw_t *p, int addr, int is_conn)
         p->idcw = -1;
     }
 }
+
+// ============================================================================
 
 int lpw_write(int chan, int chanloc, const lpw_t* p)
 {
@@ -989,6 +1053,7 @@ int lpw_write(int chan, int chanloc, const lpw_t* p)
     return 0;
 }
 
+// ============================================================================
 
 static int send_chan_flags()
 {
@@ -996,6 +1061,7 @@ static int send_chan_flags()
     return 0;
 }
 
+// ============================================================================
 
 static int status_service(int chan)
 {
@@ -1084,6 +1150,8 @@ static int status_service(int chan)
     // BUG: update SCW in core
     return 0;
 }
+
+// ============================================================================
 
 static void iom_fault(int chan, int src_line, int is_sys, int signal)
 {

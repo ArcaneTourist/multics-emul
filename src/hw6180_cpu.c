@@ -1427,11 +1427,13 @@ void fault_gen(enum faults f)
 {
     int group;
 
+#if 0
     if (f == oob_fault) {
         log_msg(ERR_MSG, "CU::fault", "Faulting for internal bug\n");
         f = trouble_fault;
         (void) cancel_run(STOP_BUG);
     }
+#endif
 
     if (f < 1 || f > 32) {
         log_msg(ERR_MSG, "CU::fault", "Bad fault # %d\n", f);

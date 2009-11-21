@@ -1,25 +1,45 @@
 /*
     console.c -- operator's console
-        See manual AN87
+
+    See manual AN87.  See also mtb628.
+
 */
 
-#include "hw6180.h"
 #include <ctype.h>
+#include <time.h>
+#include "hw6180.h"
 
 extern iom_t iom;
 
 typedef struct s_console_state {
     // Hangs off the device structure
     enum { no_mode, read_mode, write_mode } io_mode;
+    // SIMH console library has only putc and getc; the SIMH terminal
+    // library has more features including line buffering.
+    char buf[81];
+    char *tailp;
+    char *readp;
+    flag_t have_eol;
 } con_state_t;
 
+static void check_keyboard(int chan);
+
+// ============================================================================
 
 void console_init()
 {
 }
 
 
-static int  con_check_args(const char* moi, int chan, int dev_code, int* majorp, int* subp, DEVICE **devpp, con_state_t **statepp)
+// ============================================================================
+
+/*
+ * con_check_args()
+ *
+ * Internal function to do sanity checks
+ */
+
+static int con_check_args(const char* moi, int chan, int dev_code, int* majorp, int* subp, DEVICE **devpp, con_state_t **statepp)
 {
 
     if (chan < 0 || chan >= ARRAY_SIZE(iom.devices)) {
@@ -53,11 +73,24 @@ static int  con_check_args(const char* moi, int chan, int dev_code, int* majorp,
         }
         con_statep = devp->ctxt;
         con_statep->io_mode = no_mode;
+        con_statep->tailp = con_statep->buf;
+        con_statep->readp = con_statep->buf;
+        con_statep->have_eol = 0;
     }
     *statepp = con_statep;
     return 0;
 }
 
+
+// ============================================================================
+
+
+/*
+ * con_iom_cmd()
+ *
+ * Handle a device command.  Invoked by the IOM while processing a PCW
+ * or IDCW.
+ */
 
 int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
 {
@@ -70,6 +103,8 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
     if (con_check_args("CON::iom_cmd", chan, dev_code, majorp, subp, &devp, &con_statep) != 0)
         return 1;
 
+    check_keyboard(chan);
+
     switch(dev_cmd) {
         case 0: {               // CMD 00 Request status
             log_msg(NOTIFY_MSG, "CON::iom_cmd", "Status request cmd received");
@@ -79,14 +114,14 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
         }
         case 023:               // Read ASCII
             con_statep->io_mode = read_mode;
-            log_msg(ERR_MSG, "CON::iom_cmd", "Read ASCII unimplemented\n");
-            cancel_run(STOP_BUG);
+            log_msg(WARN_MSG, "CON::iom_cmd", "Read ASCII unimplemented\n");
+            cancel_run(STOP_WARN);
             *majorp = 00;
             *subp = 0;
             return 0;
         case 033:               // Write ASCII
             con_statep->io_mode = write_mode;
-            log_msg(ERR_MSG, "CON::iom_cmd", "Write ASCII semi-implemented\n");
+            log_msg(NOTIFY_MSG, "CON::iom_cmd", "Write ASCII may not be fully functional.\n");
             cancel_run(STOP_WARN);
             *majorp = 00;
             *subp = 0;
@@ -105,6 +140,7 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             *subp = 0;
             return 0;
         case 057:               // Read ID (according to AN70-1)
+            // BUG: No support for Read ID
             log_msg(ERR_MSG, "CON::iom_cmd", "Read ID unimplemented\n");
             *majorp = 05;
             *subp = 1;
@@ -120,6 +156,13 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
     return 1;   // not reached
 }
 
+// ============================================================================
+
+/*
+ * con_iom_io()
+ *
+ * Handle an I/O request.  Invoked by the IOM while processing a DDCW.
+ */
 
 int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
 {
@@ -131,26 +174,57 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
     if (con_check_args("CON::iom_cmd", chan, dev_code, majorp, subp, &devp, &con_statep) != 0)
         return 1;
 
+    check_keyboard(chan);
+
     switch (con_statep->io_mode) {
         case no_mode:
             log_msg(ERR_MSG, "CON::iom_io", "Console is uninitialized\n");
-            *majorp = 05;
-            *subp = 1;
+            *majorp = 05;       // 05 -- Command Reject
+            *subp = 1;          // 01 Invalid Instruction Code
             return 1;
 
-        case read_mode:
-            // int c = sim_poll_char();
-            log_msg(ERR_MSG, "CON::iom_io", "Read mode unimplemented\n");
-            cancel_run(STOP_BUG);
-            *majorp = 05;
-            *subp = 1;
+        case read_mode: {
+            time_t now = time(NULL);
+            while (time(NULL) < now + 30) {
+                check_keyboard(chan);
+                if (con_statep->have_eol) {
+                    *wordp = 0;
+                    for (int i = 0; i < 4; ++i) {
+                        if (con_statep->readp < con_statep->tailp) {
+                            *wordp <<= 9;
+                            *wordp = *con_statep->readp++;
+                        }
+                    }
+                    if (con_statep->readp == con_statep->tailp) {
+                        con_statep->readp = con_statep->buf;
+                        con_statep->tailp = con_statep->buf;
+                        con_statep->have_eol = 0;
+                    }
+                    *majorp = 0;
+                    *subp = 0;
+                    // BUG: we need to return # of chars read...
+                    cancel_run(STOP_WARN);
+                    return 0;
+                } else if (con_statep->tailp >= con_statep->buf + sizeof(con_statep->buf)) {
+                    *majorp = 03;       // 03 -- Data Alert
+                    *subp = 040;        // 10 -- Message length alert
+                    log_msg(NOTIFY_MSG, "CON::iom_io", "buffer overflow\n");
+                    cancel_run(STOP_IBKPT);
+                    return 1;
+                } else {
+                    sleep(1);       // BUG: blocking
+                }
+            }
+            *majorp = 03;       // 03 -- Data Alert
+            *subp = 010;        // 10 -- Operator distracted (30 sec timeout)
+            log_msg(NOTIFY_MSG, "CON::iom_io", "Operator distracted (30 second timeout\n");
+            cancel_run(STOP_IBKPT);
             return 1;
+        }
 
         case write_mode: {
 
-            // log_msg(DEBUG_MSG, "CON::iom_io", "Write: word = %012llo\n", *wordp);
-
-            char buf[80];
+            char buf[40];   // max four "\###" sequences
             *buf = 0;
             t_uint64 word = *wordp;
             if ((word >> 36) != 0) {
@@ -167,11 +241,11 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
                     err |= sim_putchar(c);
                 } else {
                     sprintf(buf+strlen(buf), "\\%03o", c);
-#if 1
-    // BUG: not sending control junk
-                    if (c != 0)
+                    // WARNING: may send junk to the console.
+                    // Char 0177 is used by Multics as non-printing padding
+                    // (typically after a CRNL as a delay; see syserr_real.pl1).
+                    if (c != 0 && c != 0177)
                         err |= sim_putchar(c);
-#endif
                 }
             }
             if (err)
@@ -189,5 +263,64 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
             *majorp = 05;
             *subp = 1;
             return 1;
+    }
+}
+
+// ============================================================================
+
+/*
+ * check_keyboard()
+ *
+ * Check simulated keyboard and transfer input to buffer.
+ *
+ */
+
+static void check_keyboard(int chan)
+{
+    const char* moi = "CON::input";
+
+    if (chan < 0 || chan >= ARRAY_SIZE(iom.devices))
+        return;
+    DEVICE* devp = iom.devices[chan];
+    if (devp == NULL)
+        return;
+    struct s_console_state *con_statep = devp->ctxt;
+    if (con_statep == NULL)
+        return;
+
+    for (;;) {
+        if (con_statep->tailp >= con_statep->buf + sizeof(con_statep->buf)) {
+            log_msg(WARN_MSG, moi, "Buffer full; ignoring keyboard.\n");
+            return;
+        }
+        if (con_statep->have_eol)
+            return;
+        int c = sim_poll_kbd();
+        if (c == SCPE_OK)
+            return; // no input
+        if (c == SCPE_STOP)
+            return; // User typed ^E to stop simulation
+        if (c < SCPE_KFLAG)
+            return; // Should be impossible
+
+        c -= SCPE_KFLAG;    // translate to ascii
+        if (isprint(c))
+            log_msg(NOTIFY_MSG, moi, "Got char '%c'\n", c);
+        else
+            log_msg(NOTIFY_MSG, moi, "Got char '\\%03o'\n", c);
+
+        // BUG: We don't allow user to set editing characters
+        if (c == '\177' || c == '\010') {
+            if (con_statep->tailp > con_statep->buf)
+                -- con_statep->tailp;
+        } else if (c == '\014') {
+            sim_putchar('\r');
+            sim_putchar('\n');
+            for (const char *p = con_statep->buf; p < con_statep->tailp; ++p)
+                sim_putchar(*p);
+        } else if (c == '\015') {
+            con_statep->have_eol = 1;
+            return;
+        }
     }
 }

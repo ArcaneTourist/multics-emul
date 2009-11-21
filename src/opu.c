@@ -29,8 +29,6 @@ extern uint32 sim_brk_summ;
 
 static inline t_uint64 lrotate36(t_uint64 x, unsigned n);
 static inline void lrotate72(t_uint64* ap, t_uint64* bp, unsigned n);
-static inline int32 negate18(t_uint64 x);
-static inline void negate72(t_uint64* a, t_uint64* b);
 static inline uint min(uint a, uint b);
 static inline uint max(uint a, uint b);
 static inline uint max3(uint a, uint b, uint c);
@@ -58,7 +56,7 @@ static int op_cmpb(const instr_t* ip);
 static int do_spbp(int n);
 static int op_csl(const instr_t* ip);
 static int op_btd(const instr_t* ip);
-static int op_scm(const instr_t* ip);
+static int op_scm(const instr_t* ip, int fwd);
 static int op_mvne(const instr_t* ip);
 
 static int op_dvf(const instr_t* ip);
@@ -3073,12 +3071,17 @@ static int do_an_op(instr_t *ip)
             // opcode1_scdr unimplemented -- scan characters double in reverse
             case opcode1_scm: { // scan with mask
                 extern DEVICE cpu_dev; ++opt_debug; ++ cpu_dev.dctrl;
-                int ret = op_scm(ip);
+                int ret = op_scm(ip, 1);
                 --opt_debug; --cpu_dev.dctrl;
                 return ret;
             }
             
-            // opcode1_scmr unimplemented -- scan with mask in reverse
+            case opcode1_scmr: {    // scan with mask in reverse
+                extern DEVICE cpu_dev; ++opt_debug; ++ cpu_dev.dctrl;
+                int ret = op_scm(ip, 0);
+                --opt_debug; --cpu_dev.dctrl;
+                return ret;
+            }
 
             case opcode1_tct: {
                 int ret = op_tct(ip, 1);
@@ -4165,9 +4168,9 @@ static int op_cmpb(const instr_t* ip)
 
 // ============================================================================
 
-static int op_scm(const instr_t* ip)
+static int op_scm(const instr_t* ip, int fwd)
 {
-    const char* moi = "OPU::scm";
+    const char* moi = fwd ? "OPU::scm" : "OPU::scmr";
 
     cpu.irodd_invalid = 1;
 
@@ -4175,7 +4178,6 @@ static int op_scm(const instr_t* ip)
     uint mf2bits = ip->addr & MASKBITS(7);
     eis_mf_t mf2;
     (void) parse_mf(mf2bits, &mf2);
-    //log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
 
     t_uint64 word1, word2, word3;
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, &word3) != 0)
@@ -4187,6 +4189,7 @@ static int op_scm(const instr_t* ip)
     word2 = setbits36(word2, 21, 2, desc1.ta);  // force (ignored) type of desc2 to match desc1
     parse_eis_alpha_desc(word2, &mf2, &desc2);
     desc2.n = 1;                                // force (ignored) count of desc2 to one
+
     // eis_mf_t mf3 = { 0, 0, 1, 0};
     uint y3;
     if (get_eis_indir_addr(word3, &y3) != 0)
@@ -4200,8 +4203,6 @@ static int op_scm(const instr_t* ip)
     log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
     log_msg(DEBUG_MSG, moi, "y3: %06o\n", y3);
 
-    int ret = 0;
-
     uint test_nib;
     if (mf2.id == 0 && mf2.reg == 3) {  // 3 is ",du"
         test_nib = getbits36(word2, 0, 9);
@@ -4212,18 +4213,24 @@ static int op_scm(const instr_t* ip)
             return 1;
         }
     }
-    if (isprint(test_nib))
-        log_msg(DEBUG_MSG, moi, "test char: %03o '%c'\n", test_nib, test_nib);
-    else
-        log_msg(DEBUG_MSG, moi, "test char: %03o\n", test_nib);
+    if (opt_debug) {
+        if (isprint(test_nib))
+            log_msg(DEBUG_MSG, moi, "test char: %03o '%c'\n", test_nib, test_nib);
+        else
+            log_msg(DEBUG_MSG, moi, "test char: %03o\n", test_nib);
+    }
+
+    int ret = 0;
     uint n = desc1.n;
     uint i;
     for (i = 0; i < n; ++i) {
         uint nib;
-        if (get_eis_an(&ip->mods.mf1, &desc1, &nib) != 0) { // must fetch when needed
-            ret = 1;
+        if (fwd)
+            ret = get_eis_an(&ip->mods.mf1, &desc1, &nib);
+        else
+            ret = get_eis_an_rev(&ip->mods.mf1, &desc1, &nib);
+        if (ret != 0)
             break;
-        }
         uint z = ~mask & (nib ^ test_nib);
         log_msg(DEBUG_MSG, moi, "compare nibble %#o(%+d): value %03o yields %#o\n", i, i, nib, z);
         if (z == 0)
@@ -4233,7 +4240,7 @@ static int op_scm(const instr_t* ip)
         IR.tally_runout = i == n;
         // t_uint64 word = setbits36(0, 12, 24, i);
         t_uint64 word = i;
-        log_msg(DEBUG_MSG, moi, "TRO=%d; writing %#o(%+d) to abs addr %#o\n", IR.tally_runout, i, i, y3);
+        log_msg(DEBUG_MSG, moi, "TRO=%d (%s); writing %#o(%+d) to abs addr %#o\n", IR.tally_runout, IR.tally_runout ? "not found" : "found", i, i, y3);
         ret = store_abs_word(y3, word);
     }
 
@@ -4243,19 +4250,7 @@ static int op_scm(const instr_t* ip)
 
 // ============================================================================
 
-static int op_csl_x(const instr_t* ip);
 static int op_csl(const instr_t* ip)
-{
-    extern DEVICE cpu_dev;
-    int saved_debug = opt_debug;
-    int saved_dctrl = cpu_dev.dctrl;
-    ++ opt_debug; ++ cpu_dev.dctrl;
-    int ret = op_csl_x(ip);
-    opt_debug = saved_debug;
-    cpu_dev.dctrl = saved_dctrl;
-    return ret;
-}
-static int op_csl_x(const instr_t* ip)
 {
     // Combine bit strings left
 

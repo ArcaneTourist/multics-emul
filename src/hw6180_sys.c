@@ -52,7 +52,6 @@ const char *sim_stop_messages[] = {
     "Memory is empty",
     "BUG-STOP -- Internal error, further execution probably pointless",
     "WARN-STOP -- Internal error, further processing might be ok",
-    "Fetch on Odd address",
     "Breakpoint",
     // "Invalid Opcode"
     0
@@ -137,26 +136,27 @@ static void hw6180_init(void)
     // Hardware config -- todo - should be based on config cards!
     // BUG/TODO: need to write config deck at 012000 ? Probably not
 
+    // Only one CPU
+    memset(&cpu_ports, 0, sizeof(cpu_ports));
+    for (int i = 0; i < ARRAY_SIZE(cpu_ports.ports); ++i)
+        cpu_ports.ports[i] = -1;
+
     // CPU Switches
     memset(&switches, 0, sizeof(switches));
-    switches.cpu_num = 0;   // only one cpu -- CPU 'A"; init_early_config.pl1 implies that 'A' is always the bootload CPU
-    // multics uses same vector for interrupts & faults?
-    // OTOH, AN87, 1-41 claims faults are at 100o ((flt_base=1)<<5) // BUG 1<<5 is 040...
-    // switches.FLT_BASE = 0;   // multics uses same vector for interrupts & faults?
-#if 0
-    switches.FLT_BASE = 0100;
-#else
+    switches.cpu_num = 0;   // CPU 'A' is bootload cpu (init_early_config.pl1)
+    // AN87, 1-41 claims faults are at 100o
     // FLT_BASE switches are 7 MSB of 12bit addr
-    switches.FLT_BASE = 2;  // multics requires setting 02 resulting in vector at 0100
-    // switches.FLT_BASE = 0163; // diag tape allows any location *except* 02 --> 0100
-    // switches.FLT_BASE = 0; // diag tape allows any location *except* 02 --> 0100
-#endif
+    switches.FLT_BASE = 2;  // multics requires setting 02; 2<<5 == 0100
+    // switches.FLT_BASE = 0163; // diag tape allows any loc *except* 2->0100
+    // switches.FLT_BASE = 0; // diag tape allows any location *except* 2->0100
 
     // Only one SCU
     memset(&scu, 0, sizeof(scu));
     scu.mode = 1;   // PROGRAM mode
-    for (int i = 0; i < ARRAY_SIZE(scu.ports); ++i)
-        scu.ports[i] = -1;
+    for (int i = 0; i < ARRAY_SIZE(scu.ports); ++i) {
+        scu.ports[i].is_enabled = 0;
+        scu.ports[i].idnum = -1;
+    }
     for (int i = 0; i < ARRAY_SIZE(scu.interrupts); ++i)
         scu.interrupts[i].mask_assign.unassigned = 1;
 
@@ -166,12 +166,7 @@ static void hw6180_init(void)
         iom.ports[i] = -1;
         iom.channels[i] = DEV_NONE;
     }
-
-    // Only one CPU
-    memset(&cpu_ports, 0, sizeof(cpu_ports));
-    for (int i = 0; i < ARRAY_SIZE(cpu_ports.ports); ++i)
-        cpu_ports.ports[i] = -1;
-
+    iom.iom_num = 0;    // IOM "A"
 
     //init_memory_iox();
     init_memory_iom();      // Using IOX causes use of unknown instr "ldo" and IOX has an undocumented mailbox architecture
@@ -180,32 +175,39 @@ static void hw6180_init(void)
     scu.interrupts[0].avail = 1;
     scu.interrupts[1].avail = 1;
 
-    // CPU port 'd' (1) connected to SCU port '0'
+    // CPU port 'd' (1) connected to port '0' of SCU
     // scas_init's call to make_card seems to require that the CPU be connected
     // to SCU port zero.
     // Also, rsw_util$port_info claims base addr is: port-assignment * size/1024
     int cpu_port = 4;       // CPU port 'd' or 4
     // int cpu_port = 1;        // CPU port 'b' or 1
     cpu_ports.scu_port = 0;
-    cpu_ports.ports[cpu_port] = cpu_ports.scu_port; // CPU connected to SCU
-    scu.ports[cpu_ports.scu_port] = cpu_port;   // SCU connected to CPU
+    cpu_ports.ports[cpu_port] = 0;  // CPU connected to SCU "A"
+    scu.ports[cpu_ports.scu_port].is_enabled = 1;
+    scu.ports[cpu_ports.scu_port].type = ADEV_CPU;
+    scu.ports[cpu_ports.scu_port].idnum = switches.cpu_num;
+    scu.ports[cpu_ports.scu_port].dev_port = cpu_port;
     // GB61, pages 9-1 and A-2: Set Mask A to port that the bootload CPU is
     // connected to; Set Mask B to off
     scu.interrupts[0].mask_assign.unassigned = 0;
     scu.interrupts[0].mask_assign.port = cpu_ports.scu_port;
     scu.interrupts[0].mask_assign.raw = 1 << (8 - cpu_ports.scu_port);
 
-    // IOM connected to SCU port 2
+    // IOM port 3 connected to port 1 of bootload SCU
     // Some sources say that we must use the same port (a-h) on the IOM as
     // we used on the CPU.  However, scas_init.pl1 will complain about being
     // unable to setup cyclic port priority if IOMS and CPUS use the same
     // SCU ports.
-    int iom_port = 3;
+    int iom_port = 3;   // BUG
     // int iom_port = cpu_port; // required by AM81 and AN70
     iom.scu_port = 1;
-    iom.ports[iom_port] = iom.scu_port; // port A connected to SCU
-    scu.ports[iom.scu_port] = iom_port;
+    iom.ports[iom_port] = 0;    // port C connected to SCU "A"
+    scu.ports[iom.scu_port].is_enabled = 1;
+    scu.ports[iom.scu_port].type = ADEV_IOM;
+    scu.ports[iom.scu_port].idnum = iom.iom_num;
+    scu.ports[iom.scu_port].dev_port = iom_port;
 
+    /* Console */
     int con_chan = 012; // channels 010 and higher are probed for an operators console
     iom.channels[con_chan] = DEV_CON;
     iom.devices[con_chan] = &opcon_dev;
