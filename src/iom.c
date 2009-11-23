@@ -4,6 +4,9 @@
     See: Document 43A239854 -- 6000B I/O Multiplexer
     (43A239854_600B_IOM_Spec_Jul75.pdf)
 
+    See AN87 which specifies some details of portions of PCWs that are
+    interpreted by the channel boards and not the IOM itself.
+
     See also: http://www.multicians.org/fjcc5.html -- Communications
     and Input/Output Switching in a Multiplex Computing System
 
@@ -64,7 +67,7 @@ typedef struct {
     uint32 idcw;    // ptr to most recent dcw, idcw, ...
 } lpw_t;
 
-// Much of this is from AN87 as 43A23985 lacked details of 0..18 and 22..36
+// Much of this is from AN87 as 43A23985 lacked details of 0..11 and 22..36
 typedef struct pcw_s {
     int dev_cmd;    // 6 bits; 0..5
     int dev_code;   // 6 bits; 6..11
@@ -164,6 +167,8 @@ static void parse_dcw(dcw_t *p, int addr);
 static int dev_send_pcw(int chan, pcw_t *p);
 static int status_service(int chan);
 static int send_chan_flags();
+// static int send_general_interrupt(int chan, int pic);
+// static int send_marker_interrupt(int chan);
 // static int list_service_whatif(int chan, int first_list, int *ptro, int *addrp);
 
 // ============================================================================
@@ -252,12 +257,12 @@ void iom_interrupt()
     // dump_iom();
 
     extern DEVICE cpu_dev;
-    //++ opt_debug; ++ cpu_dev.dctrl;
+    ++ opt_debug; ++ cpu_dev.dctrl;
     //dump_cioc();
     log_msg(DEBUG_MSG, "IOM::CIOC::intr", "Starting\n");
     do_connect_chan();
     log_msg(DEBUG_MSG, "IOM::CIOC::intr", "Finished\n");
-    //-- opt_debug; -- cpu_dev.dctrl;
+    -- opt_debug; -- cpu_dev.dctrl;
     log_forget_ic();    // we log a lot of msgs, so a blank line between CIOCs in an I/O loop is good...
 }
 
@@ -271,8 +276,8 @@ void iom_interrupt()
  *
  * Only called by iom_interrupt() just above.
  *
- * The connect channel requests a "list service" and processes the
- * resulting PCW control word.
+ * The connect channel requests one or more "list services" and processes the
+ * resulting PCW control words.
  */
 
 static int do_connect_chan()
@@ -349,15 +354,19 @@ static int handle_pcw(int chan, int addr)
 /*
  * do_channel()
  *
- * Send a PCW to a channel and perform any other operations specified
- * by the PCW.  This can include requesing one or more list services,
- * sending interrupts, dispatching DCWs, and lastly performing a status
- * service.
+ * Simulates the operation of a channel.  Channels run asynchrounsly from
+ * the IOM central.  Calling this function represents the channel receiving
+ * a PCW.
  *
  * Only called by handle_pcw() just above, which in turn, is only
  * called by the connect channel.   However, note that the channel
  * being processed is the one specified in the PCW, not the connect
  * channel.
+ *
+ * Send a PCW to the device and perform any other operations specified
+ * by the PCW.  This can include requesting one or more list services,
+ * sending interrupts, dispatching DCWs, and lastly performing a status
+ * service.
  *
  * This code is probably not quite correct; the nuances around the looping
  * controls may be wrong...
@@ -411,6 +420,7 @@ static int do_channel(int chan, pcw_t *p)
     if (ret != 0 || control == 0)
         log_msg(WARN_MSG, moi, "Not doing a single DCW loop.\n");
 
+    // BUG: outermost loop may be pointless
     while (ret == 0 && control != 0) {
         log_msg(DEBUG_MSG, moi, "In DCW loop.\n");
         if (chan_status.major != 0) {
@@ -418,55 +428,63 @@ static int do_channel(int chan, pcw_t *p)
             break;
         }
 
-        int nlist = 0;
-        while (ret == 0 && control != 0) {
-            switch (control) {
-                case 0:
-                    // do nothing, terminate
-                    log_msg(DEBUG_MSG, moi, "DCW has control of zero; terminating DCW loop.\n");
-                    break;
-                case 2: {
-                    int addr;
-                    ++ nlist;
-                    log_msg(DEBUG_MSG, moi, "Asking for %s list service (svc # %d).\n", first_list ? "first" : "another", nlist);
-                    if (list_service(chan, first_list, NULL, &addr) != 0) {
-                        ret = 1;
-                        log_msg(WARN_MSG, moi, "List service indicates failure\n");
+        int nlist = 0;  // counter for debugging
+        int need_indir_svc = 0; // control info from most recent DCW
+        while (ret == 0 && (control != 0 || need_indir_svc)) {
+            if (control == 2 || need_indir_svc) {
+                need_indir_svc = 0;
+                int addr;
+                ++ nlist;
+                log_msg(DEBUG_MSG, moi, "Asking for %s list service (svc # %d).\n", first_list ? "first" : "another", nlist);
+                if (list_service(chan, first_list, NULL, &addr) != 0) {
+                    ret = 1;
+                    log_msg(WARN_MSG, moi, "List service indicates failure\n");
+                } else {
+                    log_msg(DEBUG_MSG, moi, "List service yields DCW at addr 0%o\n", addr);
+                    control = -1;
+                    // int need_indir_svc = 0;
+                    ret = do_dcw(chan, addr, &control, &need_indir_svc);
+                    log_msg(DEBUG_MSG, moi, "Back from latest do_dcw (at %0o); control = %d\n", addr, control);
+                    if (chan_status.major == 0) {
+                        if (need_indir_svc)
+                            log_msg(WARN_MSG, moi, "DCW requests indirect data service; will use a list-service to find the next DCW.\n");
                     } else {
-                        log_msg(DEBUG_MSG, moi, "List service yields DCW at addr 0%o\n", addr);
-                        control = -1;
-                        int need_indir_svc = 0;
-                        ret = do_dcw(chan, addr, &control, &need_indir_svc);
-                        log_msg(DEBUG_MSG, moi, "Back from latest do_dcw (at %0o); control = %d\n", addr, control);
-                        if (chan_status.major == 0) {
-                            if (need_indir_svc) {
-                                if (control == 2)
-                                    log_msg(WARN_MSG, moi, "Need indirect data service after I-DCW with i/o transfer.  Leaving control at 2 since list service seems to have the same effect.\n");
-                                else {
-                                    log_msg(WARN_MSG, moi, "Need indirect data service after I-DCW with i/o transfer.   Changing control from %d to 2 to force list service (which seems to have the same effect).\n",  control);
-                                    control = 2;
-                                }
-                            }
-                        } else {
-                            log_msg(DEBUG_MSG, moi, "do_dcw returns with non-zero channel status; terminating DCW loop\n");
-                            control = 0;
+                        log_msg(DEBUG_MSG, moi, "do_dcw returns with non-zero channel status; terminating DCW loop\n");
+                        if (need_indir_svc) {
+                            log_msg(DEBUG_MSG, moi, "ignoring request for indirect data service due to non-zero channel status.\n");
+                            need_indir_svc = 0;
                         }
+                        control = 0;
                     }
-                    first_list = 0;
-                    break;
                 }
-                case 3:
-                    // BUG: set marker interrupt and proceed (list service)
-                    log_msg(ERR_MSG, moi, "Set marker not implemented\n");
-                    //cancel_run(STOP_BUG);
-                    ret = 1;
-                    //log_msg(DEBUG_MSG, moi, "Asking for a list service due to set-marker-interrupt-and-proceed.\n");
-                    //control = 2;
-                    break;
-                default:
-                    log_msg(ERR_MSG, moi, "Bad PCW/DCW control, %d\n", control);
-                    cancel_run(STOP_BUG);
-                    ret = 1;
+                first_list = 0;
+            } else if (control == 0) {
+                // impossible
+                // do nothing, terminate
+                log_msg(DEBUG_MSG, moi, "DCW has control of zero; terminating DCW loop.\n");
+                ret = 1;
+            } else if (control == 3) {
+                // BUG: set marker interrupt and proceed (list service)
+                // Marker interrupts indicate normal completion of
+                // a PCW or IDCW
+                // PCW control == 3
+                // See also: 3.2.7, 3.5.2, 4.3.6
+                // See also 3.1.3
+#if 1
+                log_msg(ERR_MSG, moi, "Set marker not implemented\n");
+                ret = 1;
+#else
+                // Boot tape never requests marker interrupts...
+                ret = send_marker_interrupt(chan);
+                if (ret == 0) {
+                    log_msg(NOTIFY_MSG, moi, "Asking for a list service due to set-marker-interrupt-and-proceed.\n");
+                    control = 2;
+                }
+#endif
+            } else {
+                log_msg(ERR_MSG, moi, "Bad PCW/DCW control, %d\n", control);
+                cancel_run(STOP_BUG);
+                ret = 1;
             }
         }
     }
@@ -484,13 +502,12 @@ static int do_channel(int chan, pcw_t *p)
     log_msg(DEBUG_MSG, moi, "Requesting Status service\n");
     status_service(chan);
 
-    /* -- from orangesquid iom.c -- seems somewhat bogus
-    read mbx at iom plus 4*pcw.chan
-    take lpw from that loc; extract tally
-    read scw
-    extract addr
-    for i = 0 .. tally; do-dcw(dcw+i)
-    */
+    /*
+     * Fourth step?
+     *
+     * 3.0 -- Following the status service, the channel will request the
+     * IOM to do a multiplex interrupt service.
+     */
 
     log_msg(DEBUG_MSG, moi, "Finished\n");
     return ret;
@@ -758,6 +775,10 @@ int did_tdcw = 0;   // BUG
  *
  * DCWs may specify a command to be sent to a device or may specify
  * I/O transfer(s).
+ *
+ * *controlp will be set to 0, 2, or 3 -- indicates terminate, 
+ * proceed (request another list services), or send marker interrupt
+ * and proceed
  */
 
 static int do_dcw(int chan, int addr, int *controlp, int *need_indir_svc)
@@ -777,7 +798,6 @@ static int do_dcw(int chan, int addr, int *controlp, int *need_indir_svc)
         return 1;
     }
         
-    // if zero ...
     parse_dcw(&dcw, addr);
     if (dcw.type == idcw) {
         // instr dcw
@@ -826,6 +846,9 @@ static int do_dcw(int chan, int addr, int *controlp, int *need_indir_svc)
  * commands to devices but not for requesting I/O transfers.  PCWs are only
  * used by the connect channel; the other channels use IDCWs.  IDCWs are
  * essentially PCWs.
+ *
+ * Note that we don't generate marker interrupts here; instead we
+ * expect the caller to handle.
  *
  * See dev_io() below for handling of Data DCWS and I/O transfers.
  *
@@ -990,10 +1013,20 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
     }
     log_msg(DEBUG_MSG, "IOM::DDCW", "Last I/O Request was to/from addr 0%o; tally now %d\n", daddr, tally);
     // set control ala PCW as method to indicate terminate or proceed
-    if (type == 0)
+    if (type == 0) {
+        // This DCW is an IOTD -- do I/O and disconnect.  So, we'll 
+        // return a code zero --  don't ask for another list service
         *control = 0;
-    else
-        *control = 3;   // 2 or 3?
+    } else {
+        // Tell caller to ask for another list service.
+        // Guessing '2' for proceed -- only PCWs and IDCWS should generate
+        // marker interrupts?
+#if 0
+        *control = 3;
+#else
+        *control = 2;
+#endif
+    }
     // update dcw
 #if 0
     // Assume that DCW is only in scratchpad (bootload_tape_label.alm rd_tape reuses same DCW on each call)
@@ -1092,7 +1125,7 @@ static void parse_dcw(dcw_t *p, int addr)
             p->fields.ddcw.daddr = getbits36(M[addr], 0, 18);
             p->fields.ddcw.cp = cp;
             p->fields.ddcw.tctl = getbits36(M[addr], 21, 1);
-            p->type = type;
+            p->fields.ddcw.type = type;
             p->fields.ddcw.tally = getbits36(M[addr], 24, 12);
         }
     }
@@ -1112,9 +1145,18 @@ static char* dcw2text(const dcw_t *p)
 {
     // WARNING: returns single static buffer
     static char buf[80];
-    if (p->type == ddcw)
-        sprintf(buf, "D-DCW: addr=0%o, cp=0%o, tally=0%o(%d)",
-            p->fields.ddcw.daddr, p->fields.ddcw.cp, p->fields.ddcw.tally, p->fields.ddcw.tally);
+    if (p->type == ddcw) {
+        int dtype = p->fields.ddcw.type;
+        const char* type =
+            (dtype == 0) ? "IOTD" :
+            (dtype == 1) ? "IOTP" :
+            (dtype == 2) ? "transfer" :
+            (dtype == 3) ? "IONTP" :
+            "<illegal>";
+        sprintf(buf, "D-DCW: type=%d(%s), addr=0%o, cp=0%o, tally=0%o(%d) tally-ctl=%d",
+            dtype, type, p->fields.ddcw.daddr, p->fields.ddcw.cp, p->fields.ddcw.tally,
+            p->fields.ddcw.tally, p->fields.ddcw.tctl);
+    }
     else if (p->type == tdcw)
         sprintf(buf, "T-DCW: ...");
     else if (p->type == idcw)
@@ -1287,8 +1329,8 @@ static int status_service(int chan)
     word2 = setbits36(word2, 0, 18, chan_status.addr);
     word2 = setbits36(word2, 18, 3, chan_status.char_pos);
     word2 = setbits36(word2, 21, 1, chan_status.is_read);
-    word2 = setbits36(word2, 23, 2, chan_status.type);
-    word2 = setbits36(word2, 25, 12, chan_status.dcw_residue);
+    word2 = setbits36(word2, 22, 2, chan_status.type);
+    word2 = setbits36(word2, 24, 12, chan_status.dcw_residue);
 #endif
 
     // BUG: need to write to mailbox queue
@@ -1374,3 +1416,81 @@ static void iom_fault(int chan, int src_line, int is_sys, int signal)
     log_msg(ERR_MSG, "IOM", "Not setting status word.\n");
     // cancel_run(STOP_WARN);
 }
+
+// ============================================================================
+
+enum iom_imw_pics {
+    // These are for bits 19..21 of an IMW address.  This is normally
+    // the Interrupt Level from a Channel's Program Interrupt Service
+    // Request.  We can deduce from the map in 3.2.7 that certain
+    // special case PICs must exist:
+    imw_overhead_pic = 1,   // IMW address ...001xx
+    imw_terminate_pic = 3,  // IMW address ...011xx
+    imw_marker_pic = 5,     // IMW address ...101xx
+    imw_special_pic = 7     // IMW address ...111xx
+};
+
+/*
+ * send_marker_interrupt()
+ *
+ * Send a "marker" interrupt to the CPU.
+ *
+ * Channels send marker interrupts to indicate normal completion of
+ * a PCW or IDCW if the control field of the PCW/IDCW has a value
+ * of three.
+ */
+
+#if 0
+static int send_marker_interrupt(int chan)
+{
+    return send_general_interrupt(chan, imw_marker_pic);
+}
+#endif
+
+// ============================================================================
+
+/*
+ * send_general_interrupt()
+ *
+ * Send an interrupt from the IOM to the CPU.
+ *
+ */
+
+#if 0
+static int send_general_interrupt(int chan, int pic)
+{
+    const char* moi = "IOM::send-interrupt";
+
+    int imw_addr;
+    imw_addr = iom.iom_num; // 2 bits
+    imw_addr |=  pic << 2;  // 3 bits
+    int interrupt_num = imw_addr;
+    // Section 3.2.7 defines the upper bits of the IMW address as
+    // being defined by the mailbox base address switches and the
+    // multiplex base address switches.
+    // However, AN-70 reports that the IMW starts at 01200.  If AN-70 is
+    // correct, the bits defined by the mailbox base address switches would
+    // have to always be zero.  We'll go with AN-70.  This is equivalent to
+    // using bit value 0010100 for the bits defined by the  multiplex base
+    // address switches and zeros for the bits defined by the mailbox base
+    // address switches.
+    imw_addr += 01200;  // all remaining bits
+
+    log_msg(NOTIFY_MSG, moi, "Channel %d (%#o), level %d; Interrupt %d (%#o).\n", chan, chan, pic, interrupt_num, interrupt_num);
+    t_uint64 imw = M[imw_addr]; 
+    // The 5 least significant bits of the channel determine a bit to be
+    // turned on.
+    log_msg(INFO_MSG, moi, "IMW at %#o was %012llo\n", imw_addr, imw);
+    imw = setbits36(imw, 1 << (chan & 037), 1, 1);
+    log_msg(INFO_MSG, moi, "IMW at %#o now %012llo\n", imw_addr, imw);
+    M[imw_addr] = imw;
+
+    return scu_set_interrupt(interrupt_num);
+
+#if 1
+    log_msg(ERR_MSG, moi, "Not implemented\n");
+    // cancel_run(STOP_WARN);
+    return 1;
+#endif
+}
+#endif

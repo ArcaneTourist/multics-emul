@@ -234,6 +234,7 @@ static int scu_hw_arg_check(const char *tag, t_uint64 addr, int port)
 #endif
 }
 
+// =============================================================================
 
 int scu_set_mask(t_uint64 addr, int port)
 {
@@ -302,6 +303,7 @@ int scu_set_mask(t_uint64 addr, int port)
     return 0;
 }
 
+// =============================================================================
 
 int scu_set_cpu_mask(t_uint64 addr)
 {
@@ -316,6 +318,8 @@ int scu_set_cpu_mask(t_uint64 addr)
     return scu_set_mask(addr, rcv_port);
 }
 
+
+// =============================================================================
 
 int scu_get_cpu_mask(t_uint64 addr)
 {
@@ -333,6 +337,8 @@ int scu_get_cpu_mask(t_uint64 addr)
     reg_Q = 0;
     return scu_get_mask(addr, rcv_port);
 }
+
+// =============================================================================
 
 int scu_get_mode_register(t_uint64 addr)
 {
@@ -369,6 +375,7 @@ int scu_get_mode_register(t_uint64 addr)
     return 0;
 }
 
+// =============================================================================
 
 int scu_get_config_switches(t_uint64 addr)
 {
@@ -428,6 +435,7 @@ int scu_get_config_switches(t_uint64 addr)
     return 0;
 }
 
+// =============================================================================
 
 int scu_set_config_switches(t_uint64 addr)
 {
@@ -542,6 +550,7 @@ int scu_set_config_switches(t_uint64 addr)
     return ret;
 }
 
+// =============================================================================
 
 int scu_get_mask(t_uint64 addr, int port)
 {
@@ -612,6 +621,7 @@ int scu_get_mask(t_uint64 addr, int port)
     return 0;
 }
 
+// =============================================================================
 
 int scu_get_calendar(t_uint64 addr)
 {
@@ -649,6 +659,7 @@ int scu_get_calendar(t_uint64 addr)
     return 0;
 }
 
+// =============================================================================
 
 int scu_cioc(t_uint64 addr)
 {
@@ -698,6 +709,7 @@ int scu_cioc(t_uint64 addr)
     return 0;
 }
 
+// =============================================================================
 
 static int pima_parse_raw(int pima, const char *moi)
 {
@@ -728,4 +740,14 @@ static int pima_parse_raw(int pima, const char *moi)
         }
         return found != 1;
     }
+}
+
+// =============================================================================
+
+int scu_set_interrupt(int inum)
+{
+    const char* moi = "SCU::interrupt";
+
+    log_msg(WARN_MSG, moi, "Unimplemented\n");
+    return 1;
 }
