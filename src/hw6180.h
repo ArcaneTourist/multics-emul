@@ -614,119 +614,134 @@ extern t_uint64 total_msec;
 // ============================================================================
 // === Functions
 
-extern void log_msg(enum log_level, const char* who, const char* format, ...);
+/* misc.c */
+extern int log_any_io(int val);
 extern int log_ignore_ic_change(void);
 extern int log_notice_ic_change(void);
 extern void log_forget_ic(void);
-extern int log_any_io(int val);
-extern int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp);
-
-extern int scan_seg(uint segno, int msgs);  // scan definitions section for procedure entry points
-t_stat cmd_seginfo(int32 arg, char *buf);   // display segment info
-extern int cmd_symtab_parse(int32 arg, char *buf);
-
-
 extern void log_msg(enum log_level, const char* who, const char* format, ...);
-//extern void debug_msg(const char* who, const char* format, ...);
-//extern void warn_msg(const char* who, const char* format, ...);
-//extern void complain_msg(const char* who, const char* format, ...);
 extern void out_msg(const char* format, ...);
-
-/* The emulator gives SIMH a "packed" address form that encodes mode, segment,
- * and offset */
-extern t_uint64 addr_emul_to_simh(addr_modes_t mode, unsigned segno, unsigned offset);
-extern int addr_simh_to_emul(t_uint64 addr, addr_modes_t *modep, unsigned *segnop, unsigned *offsetp);
-
-extern void restore_from_simh(void);    // SIMH has a different form of some internal variables
-extern int cmd_dump_history(int32 arg, char *buf);
-extern int cmd_xdebug(int32 arg, char *buf);
+extern t_stat cmd_seginfo(int32 arg, char *buf);    // display segment info
+extern int scan_seg(uint segno, int msgs);  // scan definitions section for procedure entry points
+extern int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp);
 extern int cmd_find(int32 arg, char *buf);
-extern int cmd_load_listing(int32 arg, char *buf);
-extern int cmd_stack_trace(int32 arg, char *buf);
-extern void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic);
-extern char *ir2text(const IR_t *irp);
+extern int cmd_symtab_parse(int32 arg, char *buf);
+extern void flush_logs(void);
 
+/* debug_run.cpp */
+extern void check_seg_debug(void);
 extern void state_save(void);
 extern void state_dump_changes(void);
-extern void check_seg_debug(void);
+extern void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic);
 extern void ic_history_init(void);
 extern void ic_history_add(void);
+extern int cmd_dump_history(int32 arg, char *buf);
 extern int show_location(int show_source_lines);
+extern int cmd_xdebug(int32 arg, char *buf);
+extern char *ir2text(const IR_t *irp);
+extern int cmd_stack_trace(int32 arg, char *buf);
+extern void show_variables(unsigned segno, int ic);
 
-extern void setup_streams(void);
-
+/* hw6180_cpu.c */
 extern void cancel_run(enum sim_stops reason);
+extern void restore_from_simh(void);    // SIMH has a different form of some internal variables
+extern int cmd_load_listing(int32 arg, char *buf);
+extern void load_IR(IR_t *irp, t_uint64 word);
+extern void save_IR(t_uint64* wordp);
 extern void fault_gen(enum faults);
-extern char *bin2text(t_uint64 word, int n);
-
-extern void decode_instr(instr_t *ip, t_uint64 word);
-extern void encode_instr(const instr_t *ip, t_uint64 *wordp);
-extern int fetch_instr(uint IC, instr_t *ip);
-extern void execute_instr(void);
-extern char* instr2text(const instr_t* ip);
-extern char* print_instr(t_uint64 word);
-extern void cu_safe_store(void);
 extern int fault_check_group(int group);    // Do faults exist a given or higher priority?
-
-extern int decode_addr(instr_t* ip, t_uint64* addrp);
-extern int decode_ypair_addr(instr_t* ip, t_uint64* addrp);
-extern void iom_interrupt(void);
-extern char* print_ptw(t_uint64 word);
-extern char* print_sdw(t_uint64 word0, t_uint64 word1);
-extern char* sdw2text(const SDW_t *sdwp);
-extern int fetch_appended(uint addr, t_uint64 *wordp);
-extern int store_appended(uint offset, t_uint64 word);
-
+extern int fetch_instr(uint IC, instr_t *ip);
 extern int fetch_word(uint addr, t_uint64 *wordp);
 extern int fetch_abs_word(uint addr, t_uint64 *wordp);
-extern int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p);
-extern int fetch_abs_pair(uint addr, t_uint64* word0p, t_uint64* word1p);
 extern int store_word(uint addr, t_uint64 word);
 extern int store_abs_word(uint addr, t_uint64 word);
 extern int store_abs_pair(uint addr, t_uint64 word0, t_uint64 word1);
 extern int store_pair(uint addr, t_uint64 word0, t_uint64 word1);
-extern void save_IR(t_uint64* wordp);
-extern int store_yblock8(uint addr, const t_uint64 *wordsp);
+extern int fetch_abs_pair(uint addr, t_uint64* word0p, t_uint64* word1p);
+extern int fetch_pair(uint addr, t_uint64* word0p, t_uint64* word1p);
 extern int fetch_yblock(uint addr, int aligned, uint n, t_uint64 *wordsp);
 extern int fetch_yblock8(uint addr, t_uint64 *wordsp);
+extern int store_yblock8(uint addr, const t_uint64 *wordsp);
 extern int store_yblock16(uint addr, const t_uint64 *wordsp);
+extern void decode_instr(instr_t *ip, t_uint64 word);
+extern void encode_instr(const instr_t *ip, t_uint64 *wordp);
+extern char *bin2text(t_uint64 word, int n);
 
+/* opu.c */
+extern void execute_instr(void);
+extern void cu_safe_store(void);
 extern int add72(t_uint64 ahi, t_uint64 alow, t_uint64* dest1, t_uint64* dest2, int is_unsigned);
 
+/* scu.c */
+extern int scu_cioc(t_uint64 addr);
+extern int scu_get_mask(t_uint64 addr, int port);
+extern int scu_set_mask(t_uint64 addr, int port);
+extern int scu_get_cpu_mask(t_uint64 addr);
+extern int scu_set_cpu_mask(t_uint64 addr);
+extern int scu_get_mode_register(t_uint64 addr);
+extern int scu_get_config_switches(t_uint64 addr);
+extern int scu_set_config_switches(t_uint64 addr);
+extern int scu_get_calendar(t_uint64 addr);
+
+/* apu.c */
+extern void set_addr_mode(addr_modes_t mode);
+extern addr_modes_t get_addr_mode(void);
+extern int is_priv_mode(void);
+extern void mod2text(char *buf, uint tm, uint td);
+extern char* instr2text(const instr_t* ip);
+extern char* print_instr(t_uint64 word);
+extern int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp);
+extern int addr_mod(const instr_t *ip);
+extern void reg_mod(uint td, int off);          // BUG: might be performance boost if inlined
+extern int fetch_appended(uint addr, t_uint64 *wordp);
+extern int store_appended(uint offset, t_uint64 word);
+extern int cmd_dump_vm(int32 arg, char *buf);
+extern SDW_t* get_sdw();
+extern int addr_any_to_abs(uint *addrp, addr_modes_t mode, int segno, int offset);
+extern int convert_address(uint* addrp, int seg, int offset, int fault);
+extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
+extern char* print_ptw(t_uint64 word);
+extern char* print_sdw(t_uint64 word0, t_uint64 word1);
+extern char* sdw2text(const SDW_t *sdwp);
+
+/* hw6180_sys.c */
+/* The emulator gives SIMH a "packed" address form that encodes mode, segment,
+ * and offset */
+extern t_uint64 addr_emul_to_simh(addr_modes_t mode, unsigned segno, unsigned offset);
+extern int addr_simh_to_emul(t_uint64 addr, addr_modes_t *modep, unsigned *segnop, unsigned *offsetp);
+extern int activate_timer();
+
+// extern int decode_addr(instr_t* ip, t_uint64* addrp);
+// extern int decode_ypair_addr(instr_t* ip, t_uint64* addrp);
+
+/* iom.c */
+extern void iom_interrupt(void);
+
+/* math.c */
 extern void mpy(t_uint64 a, t_uint64 b, t_uint64* hip, t_uint64 *lowp);
 extern void div72(t_uint64 hi, t_uint64 low, t_uint64 divisor, t_uint64* quotp, t_uint64* remp);
 extern void mpy72fract(t_uint64 ahi, t_uint64 alow, t_uint64 b, t_uint64* hip, t_uint64 *lowp);
 
+/* math_real.c */
 extern int instr_dvf(t_uint64 word);
 extern int instr_ufa(t_uint64 word);
 extern int instr_ufm(t_uint64 word);
 extern int instr_fno(void);
 
-extern int cmd_dump_vm(int32 arg, char *buf);
-extern int get_seg_addr(uint offset, uint perm_mode, uint *addrp);
-extern int addr_any_to_abs(uint *addrp, addr_modes_t mode, int segno, int offset);
-extern int convert_address(uint* addrp, int seg, int offset, int fault);
-extern int addr_mod(const instr_t *ip);
-extern SDW_t* get_sdw();
-extern int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp);
-extern void reg_mod(uint td, int off);          // BUG: might be performance boost if inlined
-extern void mod2text(char *buf, uint tm, uint td);
-
+/* eis_mw_desc.c */
+// EIS misc
 extern eis_mf_t* parse_mf(uint mf, eis_mf_t* mfp);
 extern int fetch_mf_ops(const eis_mf_t* mf1p, t_uint64* word1p, const eis_mf_t* mf2p, t_uint64* word2p, const eis_mf_t* mf3p, t_uint64* word3p);
-//void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits);
-
-// EIS multi-word instructions
-extern int addr_mod_eis_addr_reg(instr_t *ip);
-extern const char* mf2text(const eis_mf_t* mfp);
 extern int get_eis_indir_addr(t_uint64 word, uint* addrp);
+extern const char* mf2text(const eis_mf_t* mfp);
+extern int addr_mod_eis_addr_reg(instr_t *ip);
 // EIS Alphanumeric operands
 extern const char* eis_alpha_desc_to_text(const eis_mf_t* mfp, const eis_alpha_desc_t* descp);
 extern void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* descp);
 extern int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib);
+extern int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib);
 extern int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib);
 extern int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp);
-extern int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib);
 // EIS Bit String Operands
 extern const char* eis_bit_desc_to_text(const eis_mf_t* mfp, const eis_bit_desc_t* descp);
 extern void parse_eis_bit_desc(t_uint64 word, const eis_mf_t* mfp, eis_bit_desc_t* descp);
@@ -734,23 +749,22 @@ extern int get_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t *bitp)
 extern int retr_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t *bitp);
 extern int put_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t bitval);
 extern int save_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp);
+// EIS Numeric Operands
 extern void parse_eis_num_desc(t_uint64 word, const eis_mf_t* mfp, eis_num_desc_t* descp);
 extern const char* eis_num_desc_to_text(const eis_mf_t* mfp, const eis_num_desc_t* descp);
 
-extern void load_IR(IR_t *irp, t_uint64 word);
-
-extern void set_addr_mode(addr_modes_t mode);
-extern addr_modes_t get_addr_mode(void);
-extern int is_priv_mode(void);
-
+/* mt.c */
 extern int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp);
 extern int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 extern void mt_init(void);
 
+/* console.c */
 extern void console_init(void);
 extern int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp);
 extern int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 
+/* debug_io.c */
+// extern void setup_streams(void);
 
 // ============================================================================
 

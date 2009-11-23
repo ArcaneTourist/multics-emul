@@ -71,7 +71,7 @@ enum atag_tm { atag_r = 0, atag_ri = 1, atag_it = 2, atag_ir = 3 }; // BUG: move
 static int get_eis_an_fwd(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib, flag_t advance);
 static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits);
 static int get_mf_an_addr(const eis_mf_t* mfp, uint y, int nbits, uint *addrp, int* bitnop, uint *minaddrp, uint *maxaddrp);
-static int put_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib, flag_t advance);
+static int put_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib, flag_t fwd, flag_t advance);
 static int save_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, flag_t complain_full);
 static int fetch_mf_op(uint opnum, const eis_mf_t* mfp, t_uint64* wordp);
 
@@ -934,20 +934,26 @@ int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib)
 
 int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
 {
-    return put_eis_an_x(mfp, descp, nib, 1);
+    return put_eis_an_x(mfp, descp, nib, 1, 1);
+}
+
+int put_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib)
+{
+    return put_eis_an_x(mfp, descp, nib, 0, 1);
 }
 
 /*
  * put_eis_an_x()
  *
  * Internal function to save a single char via an EIS descriptor.  Results
- * are internall buffered and stored when the buffer fills. Call save_eis_an()
+ * are internal buffered and stored when the buffer fills. Call save_eis_an()
  * flush the buffer and force a store.
  */
 
-static int put_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib, flag_t advance)
+static int put_eis_an_x(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib, flag_t fwd, flag_t advance)
 {
 
+    if (!fwd) abort();
     const char* moi = "APU::eis-an-put";
 
     int saved_debug = opt_debug;
@@ -1133,7 +1139,7 @@ int retr_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t *bitp)
 
 int put_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t bitval)
 {
-    return put_eis_an_x(mfp, descp, bitval, 1);
+    return put_eis_an_x(mfp, descp, bitval, 1, 1);
 }
 
 //-----------------------------------------------------------------------------
@@ -1204,6 +1210,7 @@ int addr_mod_eis_addr_reg(instr_t *ip)
             AR_PR[ar].AR.bitno = 0;
             return 0;
         case opcode1_s9bd:
+            log_msg(NOTIFY_MSG, "APU::EIS", "Auto breakpoint for s9bd\n");
             cancel_run(STOP_IBKPT);
             // fall through
         case opcode1_a9bd:

@@ -47,7 +47,7 @@ static int do_easp(int n);
 static int do_an_op(instr_t *ip);   // todo: hack, fold into do_op
 static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p);
 static int do_spri(int n);
-static int op_mlr(const instr_t* ip);
+static int op_move_alphanum(const instr_t* ip, int fwd);
 static int op_tct(const instr_t* ip, int fwd);
 static int op_mvt(const instr_t* ip);
 static int op_cmpc(const instr_t* ip);
@@ -69,14 +69,6 @@ static uint saved_tro;
 
 // BUG: move externs to hdr file
 extern switches_t switches;
-extern int scu_cioc(t_uint64 addr);
-extern int scu_get_mode_register(t_uint64 addr);
-extern int scu_get_config_switches(t_uint64 addr);
-extern int scu_set_mask(t_uint64 addr, int port);
-extern int scu_get_mask(t_uint64 addr, int port);
-extern int scu_set_cpu_mask(t_uint64 addr);
-extern int scu_get_calendar(t_uint64 addr);
-extern int activate_timer();
 
 static t_uint64 scu_data[8];    // For SCU instruction
 
@@ -3093,10 +3085,18 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
             case opcode1_mlr: {
-                int ret = op_mlr(ip);
+                int ret = op_move_alphanum(ip, 1);
                 return ret;
             }
-            // mrl unimplemented
+            case opcode1_mrl: {
+                extern DEVICE cpu_dev; ++ opt_debug; ++ cpu_dev.dctrl;
+                int ret = op_move_alphanum(ip, 0);
+                -- opt_debug; -- cpu_dev.dctrl;
+                log_msg(NOTIFY_MSG, "OPU::mrl", "Auto breakpoint.\n");
+                cancel_run(STOP_IBKPT);
+                return ret;
+            }
+
             // mve unimplemented -- move alphanumeric edited
             case opcode1_mvt: {
                 int ret = op_mvt(ip);
@@ -3588,9 +3588,9 @@ static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, in
 
 // ============================================================================
 
-static int op_mlr(const instr_t* ip)
+static int op_move_alphanum(const instr_t* ip, int fwd)
 {
-    const char* moi = "OPU::mlr";
+    const char* moi = (fwd) ? "OPU::mlr" : "OPU::mrl";
 
     // BUG: Detection of GBCD overpunch is not done
 
@@ -3622,12 +3622,21 @@ static int op_mlr(const instr_t* ip)
         uint nib;
         if (desc1.n == 0)
             nib = fill & MASKBITS(desc2.nbits);
-        else
-            if (get_eis_an(&ip->mods.mf1, &desc1, &nib) != 0) { // must fetch when needed
+        else {
+            if (fwd)
+                ret = get_eis_an(&ip->mods.mf1, &desc1, &nib);
+            else
+                ret = get_eis_an_rev(&ip->mods.mf1, &desc1, &nib);
+            if (ret != 0) {
                 ret = 1;
                 break;
             }
-        if (put_eis_an(&mf2, &desc2, nib) != 0) {   // must fetch/store when needed
+        }
+        if (fwd)
+            ret = put_eis_an(&mf2, &desc2, nib);
+        else
+            ret = put_eis_an_rev(&mf2, &desc2, nib);
+        if (ret != 0) {
             ret = 2;
             break;
         }

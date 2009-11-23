@@ -114,8 +114,11 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
         }
         case 023:               // Read ASCII
             con_statep->io_mode = read_mode;
-            log_msg(WARN_MSG, "CON::iom_cmd", "Read ASCII unimplemented\n");
-            cancel_run(STOP_WARN);
+            log_msg(NOTIFY_MSG, "CON::iom_cmd", "Read ASCII command received\n");
+            // TODO: discard any buffered chars from SIMH
+            con_statep->tailp = con_statep->buf;
+            con_statep->readp = con_statep->buf;
+            con_statep->have_eol = 0;
             *majorp = 00;
             *subp = 0;
             return 0;
@@ -166,6 +169,7 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
 
 int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
 {
+    const char *moi = "CON::iom_io";
     log_msg(DEBUG_MSG, "CON::iom_io", "Chan 0%o\n", chan);
 
     DEVICE* devp;
@@ -184,42 +188,60 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
             return 1;
 
         case read_mode: {
-            time_t now = time(NULL);
-            while (time(NULL) < now + 30) {
-                check_keyboard(chan);
-                if (con_statep->have_eol) {
-                    *wordp = 0;
-                    for (int i = 0; i < 4; ++i) {
-                        if (con_statep->readp < con_statep->tailp) {
-                            *wordp <<= 9;
-                            *wordp = *con_statep->readp++;
-                        }
-                    }
-                    if (con_statep->readp == con_statep->tailp) {
-                        con_statep->readp = con_statep->buf;
-                        con_statep->tailp = con_statep->buf;
-                        con_statep->have_eol = 0;
-                    }
-                    *majorp = 0;
-                    *subp = 0;
-                    // BUG: we need to return # of chars read...
-                    cancel_run(STOP_WARN);
-                    return 0;
-                } else if (con_statep->tailp >= con_statep->buf + sizeof(con_statep->buf)) {
+            // Read keyboard if we don't have an EOL from the operator
+            // yet
+            if (! con_statep->have_eol) {
+                // We won't return anything to the IOM until the operator
+                // has finished entering a full line and pressed ENTER.
+                log_msg(NOTIFY_MSG, moi, "Starting input loop for channel %d (%#o)\n", chan, chan);
+                time_t now = time(NULL);
+                while (time(NULL) < now + 30 && ! con_statep->have_eol) {
+                    check_keyboard(chan);
+                    sleep(1);       // BUG: blocking
+                }
+                // Impossible to both have EOL and have buffer overflow
+                if (con_statep->tailp >= con_statep->buf + sizeof(con_statep->buf)) {
                     *majorp = 03;       // 03 -- Data Alert
                     *subp = 040;        // 10 -- Message length alert
                     log_msg(NOTIFY_MSG, "CON::iom_io", "buffer overflow\n");
                     cancel_run(STOP_IBKPT);
                     return 1;
-                } else {
-                    sleep(1);       // BUG: blocking
+                }
+                if (! con_statep->have_eol) {
+                    *majorp = 03;       // 03 -- Data Alert
+                    *subp = 010;        // 10 -- Operator distracted (30 sec timeout)
+                    log_msg(NOTIFY_MSG, "CON::iom_io", "Operator distracted (30 second timeout\n");
+                    cancel_run(STOP_IBKPT);
                 }
             }
-            *majorp = 03;       // 03 -- Data Alert
-            *subp = 010;        // 10 -- Operator distracted (30 sec timeout)
-            log_msg(NOTIFY_MSG, "CON::iom_io", "Operator distracted (30 second timeout\n");
+            // We have an EOL from the operator
+            log_msg(NOTIFY_MSG, moi, "Transfer for channel %d (%#o)\n", chan, chan);
+            unsigned char c;
+            if (con_statep->readp < con_statep->tailp) {
+                c = *con_statep->readp++;
+            } else
+                c = 0;
+            *wordp = (t_uint64) c << 27;
+            if (c <= 0177 && isprint(c))
+                log_msg(NOTIFY_MSG, moi, "Returning word %012llo: %c\n", *wordp, c);
+            else
+                log_msg(NOTIFY_MSG, moi, "Returning word %012llo: \\%03o\n", *wordp, c);
+            int ret;
+            if (con_statep->readp == con_statep->tailp) {
+                con_statep->readp = con_statep->buf;
+                con_statep->tailp = con_statep->buf;
+                // con_statep->have_eol = 0;
+                log_msg(WARN_MSG, moi, "Entire line now transferred.\n");
+                ret = 1;    // BUG: out of band request to return
+            } else {
+                log_msg(WARN_MSG, moi, "%d chars remain to be transfered.\n", con_statep->tailp - con_statep->readp);
+                ret = 0;
+            }
+            *majorp = 0;
+            *subp = 0;
+            log_msg(WARN_MSG, moi, "Auto breakpoint.\n");
             cancel_run(STOP_IBKPT);
-            return 1;
+            return ret;
         }
 
         case write_mode: {
@@ -279,14 +301,20 @@ static void check_keyboard(int chan)
 {
     const char* moi = "CON::input";
 
-    if (chan < 0 || chan >= ARRAY_SIZE(iom.devices))
+    if (chan < 0 || chan >= ARRAY_SIZE(iom.devices)) {
+        log_msg(WARN_MSG, moi, "Bad channel\n");
         return;
+    }
     DEVICE* devp = iom.devices[chan];
-    if (devp == NULL)
+    if (devp == NULL) {
+        log_msg(WARN_MSG, moi, "No device\n");
         return;
+    }
     struct s_console_state *con_statep = devp->ctxt;
-    if (con_statep == NULL)
+    if (con_statep == NULL) {
+        log_msg(WARN_MSG, moi, "No state\n");
         return;
+    }
 
     for (;;) {
         if (con_statep->tailp >= con_statep->buf + sizeof(con_statep->buf)) {
@@ -298,10 +326,14 @@ static void check_keyboard(int chan)
         int c = sim_poll_kbd();
         if (c == SCPE_OK)
             return; // no input
-        if (c == SCPE_STOP)
+        if (c == SCPE_STOP) {
+            log_msg(NOTIFY_MSG, moi, "Got <sim stop>\n");
             return; // User typed ^E to stop simulation
-        if (c < SCPE_KFLAG)
+        }
+        if (c < SCPE_KFLAG) {
+            log_msg(NOTIFY_MSG, moi, "Bad char\n");
             return; // Should be impossible
+        }
 
         c -= SCPE_KFLAG;    // translate to ascii
         if (isprint(c))
@@ -320,7 +352,9 @@ static void check_keyboard(int chan)
                 sim_putchar(*p);
         } else if (c == '\015') {
             con_statep->have_eol = 1;
+            log_msg(NOTIFY_MSG, moi, "Got EOL for channel %d (%#o); con_statep is %p\n", chan, chan, con_statep);
             return;
-        }
+        } else
+            *con_statep->tailp++ = c;
     }
 }

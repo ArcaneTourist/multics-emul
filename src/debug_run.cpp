@@ -51,7 +51,7 @@ static int seg_debug_init_done = 0;
 
 static int stack_trace(void);
 static void print_src_loc(const char *prefix, addr_modes_t addr_mode, int segno, int ic, const instr_t* instrp);
-void check_autos(int segno, int ic);
+static void check_autos(int segno, int ic);
 
 //=============================================================================
 
@@ -529,7 +529,7 @@ static int stack_to_entry(int segno, unsigned offset, AR_PR_t* prp)
 }
 
 
-void print_frame(int seg, int offset, int addr)
+static void print_frame(int seg, int offset, int addr)
 {
     // Print a single stack frame for stack_trace()
 
@@ -869,7 +869,7 @@ void show_variables(unsigned segno, int ic)
 
 //=============================================================================
 
-void check_autos(int segno, int ic)
+static void check_autos(int segno, int ic)
 {
     // segno and ic should be last executed instruction
     // TODO: improve efficiency -- Maybe only check when about to display source change.  Maybe use memory-write range breakpoints.
