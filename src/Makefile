@@ -1,12 +1,12 @@
 include Makefile.defs
 
 
-multics.a: seginfo.o debug_run.o debug_io.o listing.o hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o bitstream.o apu.o eis_mw_desc.o scu.o iom.o mt.o math.o math_real.o console.o
+multics.a: seginfo.o debug_run.o debug_io.o listing.o hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o eis_opu.o bitstream.o apu.o eis_desc.o scu.o iom.o mt.o math.o math_real.o console.o
 # symtab.o
 	ar cr $@ $?
 
 wc:
-	wc hw6180.h seginfo.h bit36.h bitstream.h hw6180_cpu.c hw6180_sys.c misc.c opu.c bitstream.c apu.c eis_mw_desc.cpp scu.c iom.c mt.c math.c math_real.c console.c listing.cpp seginfo.cpp debug_run.cpp debug_io.cpp
+	wc hw6180.h seginfo.h bit36.h bitstream.h eis.hpp hw6180_cpu.c hw6180_sys.c misc.c opu.c eis_opu.cpp bitstream.c apu.c eis_desc.cpp scu.c iom.c mt.c math.c math_real.c console.c listing.cpp seginfo.cpp debug_run.cpp debug_io.cpp
 
 opcode-count:
 	@echo `grep -n 'case opcode._[a-z0-9]*:' opu.c | grep -cv ' + 0:'` of `grep -c 'opcode._.*=' opcodes.h`
@@ -18,10 +18,11 @@ hw6180_cpu.o: *.h opcodes.h
 hw6180_sys.o: *.h
 opcode_text.o: *.h
 misc.o: *.h
-opu.o: *.h eis.hpp
+opu.o: *.h
+eis_opu.o: *.h eis.hpp
+eis_desc.o: *.h eis.hpp
 bitstream.o: *.h
 apu.o: *.h
-eis_mw_desc.o: *.h eis.hpp
 scu.o: *.h
 iom.o: *.h
 mt.o: *.h

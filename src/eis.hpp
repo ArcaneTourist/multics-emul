@@ -55,11 +55,13 @@ extern int eis_desc_flush(eis_desc_t*);
 class ptr_t {
 private:
     // For compability with prior debug messages we defer real initialization
-    struct {
+    struct mf_y_addr_t {
         bool ar;
         int reg;
         int width;
         unsigned y;
+        // mf_y_addr_t() { ar = 0; reg = 0; width = 0; y = 0; }
+        // mf_y_addr_t() {}
     } initial;
     // BUG/TODO: Get rid of scheme with two seperate offsets but a
     // single merged bitno.  Let caller copy out the base and/or
@@ -86,7 +88,11 @@ private:
     } page;
     void _bit_advance(int nbits, bool quiet);
 public:
-    ptr_t(bool ar, unsigned reg, int nbits, unsigned y);
+    ptr_t() {}
+    ptr_t(bool ar, unsigned reg, int nbits, unsigned y) {
+        set(ar, reg, nbits, y);
+    }
+    void set(bool ar, unsigned reg, int nbits, unsigned y);
     int init();
     int valid() const { return page.valid(); }
     void bit_advance(int nbits) { return _bit_advance(nbits,0); }
@@ -107,25 +113,39 @@ public:
     // int get(unsigned* addrp, unsigned* bitnop, unsigned* minp, unsigned* maxp);
 };
 
+/*
+ * class desc_t
+ *
+ * Abstract base class
+ *
+ */
+
 class desc_t {
-private:
-    void *dummyp;
-    int ptr_init;
-    int _addr;          // original raw address
-    // t_uint64 buf[8]; // EIS instructions use a buffer
+protected:
     eis_mf_t _mf;
-    // ptr_t _base;
-    ptr_t _curr;
+    int _addr;          // original raw address
     int _width;         // "character" size in bits
     unsigned _count;    // initial number of characters (pre MF fixup)
     unsigned _n;                // current character count
-    bool _is_read;
-    bool _is_fwd;
-    //bool _mod64;
     struct {
         int cn; 
         int bitno;
     } first_char;
+    int ta() const {
+        // not valid for width 1
+        return (_width == 9) ? 0 : (_width == 6) ? 1 : (_width == 4) ? 2 : 7;
+    }
+    void len_to_text(char *bufp) const;
+    void yaddr_to_text(char *bufp) const;
+private:
+    void *dummyp;
+    int ptr_init;
+    // t_uint64 buf[8]; // EIS instructions use a buffer
+    // ptr_t _base;
+    ptr_t _curr;
+    bool _is_read;
+    bool _is_fwd;
+    //bool _mod64;
     struct {
         // we read/write a word at a time
         t_uint64 word;
@@ -133,14 +153,18 @@ private:
         int lo_write;
         int hi_write;
     } buf;
-    int ta() const {
-        // not valid for width 1
-        return (_width == 9) ? 0 : (_width == 6) ? 1 : (_width == 4) ? 2 : 7;
-    }
     int _get(unsigned* valp, bool want_advance);
     int _put(unsigned val, bool want_advance);
 public:
-    desc_t(const eis_mf_t& mf, int addr, int width, int cn, int bit_offset, int nchar, int is_read, int is_fwd);
+#if 0
+    desc_t();
+    desc_t(const eis_mf_t& mf, int y_addr, int width, int cn, int bit_offset, int nchar, int is_read, int is_fwd) :
+        _curr(mf.ar, mf.reg, width, y_addr)
+    {
+        init(mf, y_addr, width, cn, bit_offset, nchar, is_fwd);
+    }
+#endif
+    void init(const eis_mf_t& mf, int y_addr, int width, int cn, int bit_offset, int nchar, int is_fwd);
     void mod64() {      // adjust length to be modulo 64
         _n %= 64; /* _mod64 = 1 */; }
     int n() { return _n; }
@@ -154,18 +178,31 @@ public:
     int val(unsigned* valp)     // read, no advance
         { return _get(valp, 0); }
     int flush(int verbose = 1);         // write buffer to main memory
-    char* to_text(char *buf) const;
+    virtual char* to_text(char *buf) const = 0;
     int init_ptr();
     int valid() const { return _curr.valid(); }
+};
+
+class alpha_desc_t : public desc_t {
+public:
+    alpha_desc_t(const eis_mf_t& mf, t_uint64 word, int is_fwd);
+    char* to_text(char *buf) const;
+};
+
+class bit_desc_t : public desc_t {
+public:
+    bit_desc_t(const eis_mf_t& mf, t_uint64 word, int is_fwd);
+    char* to_text(char *buf) const;
 };
 
 class num_desc_t : public desc_t {
 private:
 public:
+    num_desc_t(const eis_mf_t& mf, t_uint64 word, int is_fwd);
+    // num_desc_t(const eis_mf_t& mf, int addr, int width, int cn, int bit_offset, int nchar, int is_read, int is_fwd, int stype, int sf);
+    char* to_text(char *buf) const;
     int s;      // sign and type: 00b floating with leading sign; 01b-11b scaled fixed point, 01 leading sign, 10 trailing, 11 unsigned
     int scaling_factor;
-    num_desc_t(const eis_mf_t& mf, int addr, int width, int cn, int bit_offset, int nchar, int is_read, int is_fwd, int stype, int sf);
-    char* to_text(char *buf) const;
 };
 
 #endif // __cplusplus

@@ -538,6 +538,7 @@ typedef struct {
     uint iom_num;
 } iom_t;
 
+#if 0
 
 // EIS instructions use argument descriptors that provide addressing,
 // type information, counters, etc.
@@ -589,6 +590,8 @@ typedef struct {
 typedef eis_gen_desc_t eis_alpha_desc_t;
 typedef eis_alpha_desc_t eis_bit_desc_t;
 typedef eis_alpha_desc_t eis_num_desc_t;
+
+#endif  // OLD EIS stuff
 
 // obsolete typedef -- hold named register sub-fields in their inefficient
 // native format.
@@ -682,6 +685,17 @@ extern void execute_instr(void);
 extern void cu_safe_store(void);
 extern int add72(t_uint64 ahi, t_uint64 alow, t_uint64* dest1, t_uint64* dest2, int is_unsigned);
 
+/* eis_opu.cpp */
+extern int op_move_alphanum(const instr_t* ip, int fwd);
+extern int op_tct(const instr_t* ip, int fwd);
+extern int op_mvt(const instr_t* ip);
+extern int op_cmpc(const instr_t* ip);
+extern int op_cmpb(const instr_t* ip);
+extern int op_csl(const instr_t* ip);
+extern int op_btd(const instr_t* ip);
+extern int op_scm(const instr_t* ip, int fwd);
+extern int op_mvne(const instr_t* ip);
+
 /* scu.c */
 extern int scu_cioc(t_uint64 addr);
 extern int scu_get_mask(t_uint64 addr, int port);
@@ -735,18 +749,20 @@ extern void div72(t_uint64 hi, t_uint64 low, t_uint64 divisor, t_uint64* quotp, 
 extern void mpy72fract(t_uint64 ahi, t_uint64 alow, t_uint64 b, t_uint64* hip, t_uint64 *lowp);
 
 /* math_real.c */
+double multics_to_double(t_uint64 xhi, t_uint64 xlo, int show, int is_signed);
 extern int instr_dvf(t_uint64 word);
 extern int instr_ufa(t_uint64 word);
 extern int instr_ufm(t_uint64 word);
 extern int instr_fno(void);
 
-/* eis_mw_desc.c */
+/* eis_desc.cpp */
 // EIS misc
 extern eis_mf_t* parse_mf(uint mf, eis_mf_t* mfp);
+extern const char* mf2text(const eis_mf_t* mfp);
 extern int fetch_mf_ops(const eis_mf_t* mf1p, t_uint64* word1p, const eis_mf_t* mf2p, t_uint64* word2p, const eis_mf_t* mf3p, t_uint64* word3p);
 extern int get_eis_indir_addr(t_uint64 word, uint* addrp);
-extern const char* mf2text(const eis_mf_t* mfp);
 extern int addr_mod_eis_addr_reg(instr_t *ip);
+#if 0
 // EIS Alphanumeric operands
 extern const char* eis_alpha_desc_to_text(const eis_mf_t* mfp, const eis_gen_desc_t* descp);
 extern void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* descp);
@@ -765,6 +781,7 @@ extern int save_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp);
 // EIS Numeric Operands
 extern void parse_eis_num_desc(t_uint64 word, const eis_mf_t* mfp, eis_num_desc_t* descp);
 extern const char* eis_num_desc_to_text(const eis_mf_t* mfp, const eis_num_desc_t* descp);
+#endif
 
 /* mt.c */
 extern int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp);

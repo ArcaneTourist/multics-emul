@@ -1,44 +1,26 @@
 /*
-    eis_mw_desc.c
+    eis_desc.cpp
 
     Routines related to descriptors for EIS multi-word instructions.
     Descriptors describe operand locations and looping controls used
     by many EIS multi-word instructions.
 
-    This code was originally in apu.c because the descriptors are used
-    for addressing.
-
-*/
-
-// Supposedly, appending unit HW controls fault recognition?
-
-/*
-    Regarding all of the eis_an routines
-
-    OLD -- TODO, flag_t advance:
-
     Paging:
-    We call the APU to translate segmented addresses into absolute
-    memory addresses.  We get the page boundries from the APU and
-    most or all functions avoid violating the page boundries.  This
-    is more efficient than using the VM for every single word.  However,
-    note that instruction restart could not assume anything previously
-    retrieved is still valid -- pages may have been paged out or moved.
-    Instead of mixing the functionality into the EIS descriptors, we
-    should probably create an addressing object similar to an AR_PR that
-    automatically only calls the APU when needed.
 
-    BUG: We get a base addr and assume everything we want is paged in
-    instead of checking for faults?  Fixed?
+        We call the APU to translate segmented addresses into absolute
+        memory addresses.  We get the page boundries from the APU and
+        most or all functions avoid violating the page boundries.  This
+        is more efficient than using the VM for every single word.  However,
+        note that instruction restart could not assume anything previously
+        retrieved is still valid -- pages may have been paged out or moved.
+        We may need to move update the valid() test of ptr_t.
+
+    Mixing put() with get() or val()
+
+        Calls to put() and val() may be intermingled.   However, calling
+        both put() a get() for the same descriptor might be undefined
+        behavior.
 */
-
-/*
- * OLD:
- *
- * All three descriptor types are jumbled together in a single struct.
- * At the least, it needs some cleanup.
- * We provide forward and reverse "get", but only forward "put"
- */
 
 /*
     OLD:
@@ -59,13 +41,6 @@
         Flushes a full or partial buffer. If the buffer isn't full the
         destination word is read and merged.
 */
-
-/*
- * BUG: OPU::csl calls a mix of retr and put. It used to also call get
- * sometimes instead of put to advance the index when a put wasn't needed.
- * However, that was unsafe.   Need to re-check that mixing get and put
- * works as expected.
- */
 
 /*
  * Real HW would touch all pages of EIS args before starting operation
@@ -274,44 +249,97 @@ const char* mf2text(const eis_mf_t* mfp)
 }
 
 
+//=============================================================================
+
+void desc_t::len_to_text(char* bufp) const
+{
+    if (_mf.rl) {
+        char mod[30];
+        mod2text(mod, 0, _count);
+        sprintf(bufp, "\"%s\"->%#o(%d)", mod, _n, _n);
+    } else
+        sprintf(bufp, "%#o(%d)", _n, _n);
+}
+
 //-----------------------------------------------------------------------------
 
+void desc_t::yaddr_to_text(char* bufp) const
+{
+    if (_mf.ar) {
+        uint pr = _addr >> 15;
+        uint offset = _addr & MASKBITS(15);
+        sprintf(bufp, "%#o => PR%d|%#o", _addr, pr, offset);
+    } else
+        sprintf(bufp, "%#o", _addr);
+}
+
+//=============================================================================
+
 /*
- * desc_t::to_text()
+ * alpha_desc_t::to_text()
  *
  * BUG/TODO/CAVEAT: Prints initial value; should probably print current value
  *
  */
 
-char* desc_t::to_text(char *bufp) const
+char* alpha_desc_t::to_text(char *bufp) const
 {
     char addr_buf[60];
     char reg_buf[40];
 
-    if (_mf.rl) {
-        char mod[30];
-        mod2text(mod, 0, _count);
-        sprintf(reg_buf, "%s=>%#o(%d)", mod, _n, _n);
-    } else
-        sprintf(reg_buf, "%#o(%d)", _n, _n);
+    len_to_text(reg_buf);
+    yaddr_to_text(addr_buf);
 
-    if (_mf.ar) {
-        uint pr = _addr >> 15;
-        uint offset = _addr & MASKBITS(15);
-        sprintf(addr_buf, "%#o => PR%d|%#o", _addr, pr, offset);
-    } else
-        sprintf(addr_buf, "%#o", _addr);
-
-    if (_width == 1)
-        sprintf(bufp, "{y=%s, char-no=%#o, bit-no=%d, len=%s}",
-            addr_buf, first_char.cn / 9, first_char.bitno, reg_buf);
-    else
-        sprintf(bufp, "{y=%s, char-no=%#o, ta=%o, len=%s}",
-            addr_buf, first_char.cn, ta(), reg_buf);
+    sprintf(bufp, "{y=%s, char-no=%#o, ta=%o, len=%s}",
+        addr_buf, first_char.cn, ta(), reg_buf);
     return bufp;
 }
 
 //-----------------------------------------------------------------------------
+
+/*
+ * bit_desc_t::to_text()
+ *
+ * BUG/TODO/CAVEAT: Prints initial value; should probably print current value
+ *
+ */
+
+char* bit_desc_t::to_text(char *bufp) const
+{
+    char addr_buf[60];
+    char reg_buf[40];
+
+    len_to_text(reg_buf);
+    yaddr_to_text(addr_buf);
+
+    sprintf(bufp, "{y=%s, char-no=%#o, bit-no=%d, len=%s}",
+        addr_buf, first_char.cn / 9, first_char.bitno, reg_buf);
+    return bufp;
+}
+
+//-----------------------------------------------------------------------------
+
+/*
+ * num_desc_t::to_text()
+ *
+ * BUG/TODO/CAVEAT: Prints initial value; should probably print current value
+ *
+ */
+
+char* num_desc_t::to_text(char *bufp) const
+{
+    char addr_buf[60];
+    char reg_buf[40];
+
+    len_to_text(reg_buf);
+    yaddr_to_text(addr_buf);
+
+    sprintf(bufp, "{y=%s, char-no=%#o, %d-bits, sign-ctl=%o, sf=%02o, len=%s}",
+        addr_buf, first_char.cn, _width, s, scaling_factor, reg_buf);
+    return bufp;
+}
+
+//=============================================================================
 
 const char* eis_desc_to_text(const eis_desc_t* descp)
 {
@@ -328,15 +356,32 @@ const char* eis_desc_to_text(const eis_desc_t* descp)
 //=============================================================================
 
 /*
- * desc_t::desc_t()
+ * desc_t::desc_t() -- constructor
  *
- * constructor
  */
 
-desc_t::desc_t(const eis_mf_t& mf, int y_addr, int width, int cn, int bit_offset, int nchar, int is_read, int is_fwd) :
-    _curr(mf.ar, mf.reg, width, y_addr)
+#if 0
+desc_t::desc_t()
 {
     dummyp = this + 1;
+    ptr_init = 0;
+    _addr = 0;
+    _width = 0;
+    _count = 0;
+}
+#endif
+
+//=============================================================================
+
+/*
+ * desc_t::init()
+ *
+ */
+
+void desc_t::init(const eis_mf_t& mf, int y_addr, int width, int cn, int bit_offset, int nchar, int is_fwd)
+{
+    dummyp = this + 1;
+
     first_char.cn = cn;
     first_char.bitno = bit_offset;
 
@@ -349,8 +394,10 @@ desc_t::desc_t(const eis_mf_t& mf, int y_addr, int width, int cn, int bit_offset
     _n = _count;
     fix_mf_len(&_n, &_mf, width);
 
-    _is_read = is_read;
+    // _is_read = is_read;
     _is_fwd = is_fwd;
+
+    _curr.set(_mf.ar, _mf.reg, _width, _addr);
 
     if (_width == 9) {
         if ((first_char.cn & 1) != 0) {
@@ -378,18 +425,35 @@ desc_t::desc_t(const eis_mf_t& mf, int y_addr, int width, int cn, int bit_offset
 
 //=============================================================================
 
-num_desc_t::num_desc_t(const eis_mf_t& mf, int y_addr, int width, int cn, int bit_offset, int nchar, int is_read, int is_fwd, int stype, int sf) :
-    desc_t(mf, y_addr, width, cn, bit_offset, nchar, is_read, is_fwd)
+alpha_desc_t decode_eis_alphanum_desc(t_uint64 word, const eis_mf_t* mfp, int is_read, int is_fwd)
 {
-    s = stype;
-    scaling_factor = sf;
+    alpha_desc_t d(*mfp, word, is_fwd);
+    return d;
+}
+
+//-----------------------------------------------------------------------------
+
+#if 0
+num_desc_t decode_eis_num_desc(t_uint64 word, const eis_mf_t* mfp, int is_read, int is_fwd)
+{
+    num_desc_t d(*mfp, word, is_fwd);
+    return d;
+}
+#endif
+
+//-----------------------------------------------------------------------------
+
+bit_desc_t decode_eis_bit_desc(t_uint64 word, const eis_mf_t* mfp, int is_read, int is_fwd)
+{
+    bit_desc_t d(*mfp, word, is_fwd);
+    return d;
 }
 
 //=============================================================================
 
-desc_t decode_eis_alphanum_desc(t_uint64 word, const eis_mf_t* mfp, int is_read, int is_fwd)
+alpha_desc_t::alpha_desc_t(const eis_mf_t& mf, t_uint64 word, int is_fwd)
 {
-    int addr = getbits36(word, 0, 18);  // we'll check for PR usage later
+    int y_addr = getbits36(word, 0, 18);    // we'll check for PR usage later
     int cn = getbits36(word, 18, 3);
     int bitno = 0;
     int ta = getbits36(word, 21, 2);    // data type
@@ -402,17 +466,33 @@ desc_t decode_eis_alphanum_desc(t_uint64 word, const eis_mf_t* mfp, int is_read,
         cancel_run(STOP_BUG);
     }
 
-    desc_t d(*mfp, addr, width, cn, bitno, n_orig, is_read, is_fwd);
-    return d;
+    init(mf, y_addr, width, cn, bitno, n_orig, is_fwd);
 }
-
 
 //=============================================================================
 
-
-desc_t decode_eis_bit_desc(t_uint64 word, const eis_mf_t* mfp, int is_read, int is_fwd)
+num_desc_t::num_desc_t(const eis_mf_t& mf, t_uint64 word, int is_fwd)
 {
-    int addr = getbits36(word, 0, 18);  // we'll check for PR usage later
+    int y_addr = getbits36(word, 0, 18);    // we'll check for PR usage later
+
+    int cn = getbits36(word, 18, 3);
+    int bitno = 0;
+    int tn = getbits36(word, 21, 1);    // data type
+    int stype = getbits36(word, 22, 2); 
+    int sf = getbits36(word, 24, 6); 
+    int n_orig = getbits36(word, 30, 6);
+    int width = (tn == 0) ? 9 : 4;
+
+    init(mf, y_addr, width, cn, bitno, n_orig, is_fwd);
+    s = stype;
+    scaling_factor = sf;
+}
+
+//=============================================================================
+
+bit_desc_t::bit_desc_t(const eis_mf_t& mf, t_uint64 word, int is_fwd)
+{
+    int y_addr = getbits36(word, 0, 18);    // we'll check for PR usage later
     int cn = getbits36(word, 18, 2);
     // We scale cn because various functions expect cn to be in units of nbits,
     // but bit descriptors use a cn measured in units 9-bit chars.
@@ -425,26 +505,7 @@ desc_t decode_eis_bit_desc(t_uint64 word, const eis_mf_t* mfp, int is_read, int 
     }
     int width = 1;
 
-    desc_t d(*mfp, addr, width, cn, bitno, n_orig, is_read, is_fwd);
-    return d;
-}
-
-//-----------------------------------------------------------------------------
-
-num_desc_t decode_eis_num_desc(t_uint64 word, const eis_mf_t* mfp, int is_read, int is_fwd)
-{
-    int addr = getbits36(word, 0, 18);  // we'll check for PR usage later
-
-    int cn = getbits36(word, 18, 3);
-    int bitno = 0;
-    int tn = getbits36(word, 21, 1);    // data type
-    int s = getbits36(word, 22, 2); 
-    int scaling_factor = getbits36(word, 24, 6); 
-    int n_orig = getbits36(word, 30, 6);
-    int width = (tn == 0) ? 9 : 4;
-
-    num_desc_t d(*mfp, addr, width, cn, bitno, n_orig, is_read, is_fwd, s, scaling_factor);
-    return d;
+    init(mf, y_addr, width, cn, bitno, n_orig, is_fwd);
 }
 
 //=============================================================================
@@ -481,7 +542,8 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
                     cancel_run(STOP_BUG);
                 }
                 if (nbits != 9) {
-                    log_msg(DEBUG_MSG, "APU", "MF len: nbits=%d, reg modifier 05: A=%#llo => %#o\n", nbits, reg_A, *np);
+                    if (opt_debug)
+                        log_msg(DEBUG_MSG, "APU", "MF len: nbits=%d, reg modifier 05: A=%#llo => %#o\n", nbits, reg_A, *np);
                 }
                 return;
             case 06: // q
@@ -500,7 +562,8 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
                     cancel_run(STOP_BUG);
                 }
                 if (nbits != 9) {
-                    log_msg(DEBUG_MSG, "APU", "MF len: nbits=%d, reg modifier 06: A=%#llo => %#o\n", nbits, reg_A, *np);
+                    if (opt_debug)
+                        log_msg(DEBUG_MSG, "APU", "MF len: nbits=%d, reg modifier 06: A=%#llo => %#o\n", nbits, reg_A, *np);
                 }
                 return;
             case 010:
@@ -523,18 +586,63 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
 //=============================================================================
 
 /*
- * ptr_t::ptr_t()
+ * ptr_t::set()
  *
  * Constructor.
  */
 
-ptr_t::ptr_t(bool ar, unsigned reg, int width, unsigned y)
+void ptr_t::set(bool ar, unsigned reg, int width, unsigned y)
 {
     initial.ar = ar;
     initial.reg = reg;
     initial.width = width;
     initial.y = y;
 }
+
+//=============================================================================
+
+/*
+ * ptr_t::init()
+ *
+ * Decode the constructor args.
+ * Uses struct "initial" to write struct "base".
+ */
+
+int ptr_t::init()
+{
+    int ret = base.init(initial.ar, initial.reg, initial.width, initial.y);
+    _bitnum = base.bitno;
+    return ret;
+}
+
+//=============================================================================
+
+/*
+ * ptr_t::pr_info_t::init()
+ *
+ *
+ */
+
+int ptr_t::pr_info_t::init(bool ar, unsigned reg, int width, unsigned y)
+{
+    const char* moi = "APU::EIS::addr::init";
+
+    if (opt_debug)
+        log_msg(DEBUG_MSG, moi, "Calling get-address.\n");
+    unsigned bitpos;
+    if (decode_eis_address(y, ar, reg, width, &ringno, &segno, &offset, &bitno) != 0) {
+        log_msg(ERR_MSG, moi, "Failed to decode eis address.\n");
+        return 1;
+    }
+    if (opt_debug) {
+        if (bitno != 0)
+            log_msg(DEBUG_MSG, moi, "Initial bit offset is %d\n", bitno);
+    }
+
+    _init = 1;
+    return 0;
+}
+
 
 //=============================================================================
 
@@ -700,13 +808,14 @@ int desc_t::_get(unsigned* valp, bool want_advance)
     }
 
     if (! ptr_init) {
-        log_msg(DEBUG_MSG, moi, "Initializing\n");
+        if (opt_debug)
+            log_msg(DEBUG_MSG, moi, "Initializing\n");
         if (init_ptr() != 0) {
             log_msg(WARN_MSG, moi, "Cannot initialize\n");
             cancel_run(STOP_WARN);
             return 1;
         }
-        if (opt_debug>0)
+        if (opt_debug)
             log_msg(INFO_MSG, moi, "%s char is at addr %#o, bit offset %d\n",
                 _is_fwd ? "First" : "Last", _curr.addr(), _curr.bitno());
         ptr_init = 1;
@@ -723,10 +832,11 @@ int desc_t::_get(unsigned* valp, bool want_advance)
                 buf.is_loaded = 0;
                 cancel_run(STOP_BUG);
             }
-            log_msg(DEBUG_MSG, moi, "Address %o is %s segment or page range of %#o .. %#o\n",
-                _curr._addr(),
-                (_curr.addr() < _curr.min()) ? "below" : "past",
-                _curr._min(), _curr._max());
+            if (opt_debug)
+                log_msg(DEBUG_MSG, moi, "Address %o is %s segment or page range of %#o .. %#o\n",
+                    _curr._addr(),
+                    (_curr.addr() < _curr.min()) ? "below" : "past",
+                    _curr._min(), _curr._max());
             if (_curr.get() != 0) {
                 log_msg(WARN_MSG, moi, "Cannot advance to next page.\n");
                 cancel_run(STOP_WARN);
@@ -764,8 +874,8 @@ int desc_t::_get(unsigned* valp, bool want_advance)
 
 int decode_eis_alphanum_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 word, int is_read, int is_fwd)
 {
-    desc_t d = decode_eis_alphanum_desc(word, mfp, is_read, is_fwd);
-    descp->objp = new desc_t(d);
+    alpha_desc_t d = decode_eis_alphanum_desc(word, mfp, is_read, is_fwd);
+    descp->objp = new alpha_desc_t(d);
     descp->n = d.n();
     descp->nbits = d.width();
     descp->num.s = -1;
@@ -778,8 +888,8 @@ int decode_eis_alphanum_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 wo
 
 int decode_eis_bit_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 word, int is_read, int is_fwd)
 {
-    desc_t d = decode_eis_bit_desc(word, mfp, is_read, is_fwd);
-    descp->objp = new desc_t(d);
+    bit_desc_t d = decode_eis_bit_desc(word, mfp, is_read, is_fwd);
+    descp->objp = new bit_desc_t(d);
     descp->n = d.n();
     descp->nbits = d.width();
     descp->num.s = -1;
@@ -790,6 +900,7 @@ int decode_eis_bit_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 word, i
 
 //=============================================================================
 
+#if 0
 int decode_eis_num_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 word, int is_read, int is_fwd)
 {
     num_desc_t nd = decode_eis_num_desc(word, mfp, is_read, is_fwd);
@@ -802,6 +913,7 @@ int decode_eis_num_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 word, i
     descp->dummyp = descp;
     return descp->objp == NULL;
 }
+#endif
 
 //=============================================================================
 
@@ -847,49 +959,6 @@ int eis_desc_flush(eis_desc_t* descp)
 {
     desc_t* d = (desc_t*) descp->objp;
     return d->flush();
-}
-
-//=============================================================================
-
-/*
- * ptr_t::pr_info_t::init()
- *
- *
- */
-
-int ptr_t::pr_info_t::init(bool ar, unsigned reg, int width, unsigned y)
-{
-    const char* moi = "APU::EIS::addr::init";
-
-    log_msg(DEBUG_MSG, moi, "Calling get-address.\n");
-    unsigned bitpos;
-    if (decode_eis_address(y, ar, reg, width, &ringno, &segno, &offset, &bitno) != 0) {
-        log_msg(ERR_MSG, moi, "Failed to decode eis address.\n");
-        return 1;
-    }
-    if (opt_debug) {
-        if (bitno != 0)
-            log_msg(DEBUG_MSG, moi, "Initial bit offset is %d\n", bitno);
-    }
-
-    _init = 1;
-    return 0;
-}
-
-//=============================================================================
-
-/*
- * ptr_t::init()
- *
- * Decode the constructor args.
- * Uses struct "initial" to write struct "base".
- */
-
-int ptr_t::init()
-{
-    int ret = base.init(initial.ar, initial.reg, initial.width, initial.y);
-    _bitnum = base.bitno;
-    return ret;
 }
 
 //=============================================================================
@@ -975,14 +1044,16 @@ int desc_t::_put(unsigned val, bool want_advance)
     }
 
     if (! ptr_init) {
-        log_msg(DEBUG_MSG, moi, "Initializing\n");
+        if (opt_debug)
+            log_msg(DEBUG_MSG, moi, "Initializing\n");
         if (init_ptr() != 0) {
             log_msg(WARN_MSG, moi, "Cannot initialize\n");
             cancel_run(STOP_WARN);
             return 1;
         }
-        log_msg(INFO_MSG, moi, "%s char is at addr %#o, bit offset %d\n",
-            _is_fwd ? "First" : "Last", _curr.addr(), _curr.bitno());
+        if (opt_debug)
+            log_msg(INFO_MSG, moi, "%s char is at addr %#o, bit offset %d\n",
+                _is_fwd ? "First" : "Last", _curr.addr(), _curr.bitno());
 
         bool need_merge = _curr._bitno() != ((_is_fwd) ? 0 : 35);
         if (need_merge && buf.is_loaded) {
@@ -993,7 +1064,8 @@ int desc_t::_put(unsigned val, bool want_advance)
         if (! need_merge) {
             buf.word = 0;       // makes debug output easier to read
             // BUG/TODO: set to -1 to validate flush
-            if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Initial output at addr %#o is at offset %s, so not loading initial word\n", _curr.addr(), (_curr.bitno() == 0) ? "zero" : "thirty-five"); // BUG
+            if (opt_debug>0)
+                log_msg(DEBUG_MSG, moi, "Initial output at addr %#o is at offset %s, so not loading initial word\n", _curr.addr(), (_curr.bitno() == 0) ? "zero" : "thirty-five");  // BUG
         } else {
             if (!_curr.valid()) {
                 if (!_curr.get()) {
@@ -1011,7 +1083,8 @@ int desc_t::_put(unsigned val, bool want_advance)
                 return 1;
             }
             buf.is_loaded = 1;  // BUG: hack
-            if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Fetched target word %012llo from addr %#o because output starts at bit %d.\n", buf.word, _curr.addr(), _curr.bitno());
+            if (opt_debug>0)
+                log_msg(DEBUG_MSG, moi, "Fetched target word %012llo from addr %#o because output starts at bit %d.\n", buf.word, _curr.addr(), _curr.bitno());
         }
 #endif
         ptr_init = 1;
@@ -1025,12 +1098,6 @@ int desc_t::_put(unsigned val, bool want_advance)
         // BUG: this might be possible if page faulted on earlier write attempt?
         log_msg(WARN_MSG, moi, "Internal odditity, prior call did not flush buffer...\n");
         cancel_run(STOP_WARN);
-        // BUG: useless msgs for compability
-        log_msg(DEBUG_MSG, "APU::eis-an-put", "Address %o is %s segment or page range of %#o .. %#o\n", 
-            _curr._addr(),
-            (_curr.addr() < _curr.min()) ? "below" : "past",
-            _curr._min(), _curr._max());
-        if (opt_debug>0) log_msg(DEBUG_MSG, "APU::eis-an-addr(next-page)", "Advancing to next page.\n");    // BUG moi
         if (flush() != 0)
             return 1;
     }
@@ -1065,43 +1132,27 @@ int desc_t::_put(unsigned val, bool want_advance)
 
     // We won't flush() unless we're moving the ptr
     if (want_advance) {
-        // TODO: make ptr_t::char_advance() do the flush (buf ptr_t doesn't
-        // know about desc_t...)  So...  Remember current addr before doing
-        // the advance (or have advance report change back to su).  Next, if
-        // addr has changed call flush for the prior abs addr
         -- _n;
-        // will we be advancing a word?
-        bool addr_changing = (_is_fwd) ? (_curr._bitno() + _width == 36) :
+        bool is_buf_full = (_is_fwd) ? (_curr._bitno() + _width == 36) :
             (_curr._bitno() == 0);
-        if (addr_changing) {
-            // Need to flush first
-            // Note: A partially filled buffer is not an issue; if necessary,
-            // we folded in the first word
-            if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Storing %012llo to addr=%#o\n", buf.word, _curr._addr());  // BUG: allow flush to output; BUG: wrong addr
-            if (!_curr.valid()) {
-                log_msg(DEBUG_MSG, moi, "Address %o is %s segment or page range of %#o .. %#o\n",
-                    _curr._addr(),
-                    (_curr.addr() < _curr.min()) ? "below" : "past",
-                    _curr._min(), _curr._max());
-#if 1
-                _curr.get();    // we want addr() for following debug msg
-#endif
-            }
+        if (is_buf_full) {
+            // Need to flush buffer
             if (flush(0) != 0) {
                 log_msg(WARN_MSG, moi, "Failed.\n");
                 cancel_run(STOP_WARN);
                 return 1;
             }
         }
-        if (addr_changing) {
-            buf.lo_write = -1;
-            buf.hi_write = -1;
-            buf.is_loaded = 0;  // BUG: hack
+        if (is_buf_full) {
+            // Advance a full word
+            // BUG: advancing a single char would have the same effect and would auto-handle bitno...
             _curr.word_advance(_is_fwd ? 1 : -1);
             if (!_is_fwd)
                 _curr._bitnum = 36 - _width;
-        }
-        else
+            buf.lo_write = -1;
+            buf.hi_write = -1;
+            buf.is_loaded = 0;  // BUG: hack?
+        } else
             _curr.char_advance(_is_fwd ? 1 : -1);
     }
 
@@ -1129,7 +1180,11 @@ int desc_t::flush(int verbose)
     }
 
     if (!valid()) {
-        log_msg(DEBUG_MSG, moi, "Address %o is past segment or page range of %#o .. %#o\n", _curr._addr(), _curr._min(), _curr._max());
+        if (opt_debug)
+            log_msg(DEBUG_MSG, moi, "Address %o is %s segment or page range of %#o .. %#o\n",
+                _curr._addr(),
+                (_curr.addr() < _curr.min()) ? "below" : "past",
+                _curr._min(), _curr._max());
         if (_curr.get() != 0) {
             log_msg(ERR_MSG, moi, "Cannot access page\n");
             cancel_run(STOP_WARN);
@@ -1171,11 +1226,13 @@ int desc_t::flush(int verbose)
         int tail = buf.hi_write + _width;
         if (tail < 36)
             buf.word = setbits36(buf.word, tail, 36 - tail, word);
-        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "Combined buffered dest %012llo with fetched %012llo: %012llo\n", tmp, word, buf.word);
+        if (opt_debug>0)
+            log_msg(DEBUG_MSG, moi, "Combined buffered dest %012llo with fetched %012llo: %012llo\n", tmp, word, buf.word);
     }
 
     //opt_debug = 1;
-    if (opt_debug>0 && verbose) log_msg(DEBUG_MSG, moi, "Storing %012llo to addr=%#o.\n", buf.word, _curr.addr());
+    if (opt_debug>0 && verbose)
+        log_msg(DEBUG_MSG, moi, "Storing %012llo to addr=%#o.\n", buf.word, _curr.addr());
     if (store_abs_word(_curr.addr(), buf.word) != 0) {
         log_msg(WARN_MSG, moi, "Failed.\n");
         // opt_debug = saved_debug;
@@ -1201,6 +1258,7 @@ int desc_t::flush(int verbose)
 
 int addr_mod_eis_addr_reg(instr_t *ip)
 {
+    const char* moi = "APU::EIS::addr-reg";
     uint op = ip->opcode;
     int bit27 = op % 2;
     op >>= 1;
@@ -1214,7 +1272,7 @@ int addr_mod_eis_addr_reg(instr_t *ip)
         case opcode1_abd: nbits = 1; break;
         case opcode1_s9bd: nbits = 9; break;
         default:
-            log_msg(ERR_MSG, "APU", "internal error: opcode %03o(%d) not implemented for EIS address register arithmetic\n", op, bit27);
+            log_msg(ERR_MSG, moi, "Internal error: opcode %03o(%d) not implemented for EIS address register arithmetic\n", op, bit27);
             cancel_run(STOP_BUG);
     }
 
@@ -1227,12 +1285,13 @@ int addr_mod_eis_addr_reg(instr_t *ip)
     uint td = ip->mods.single.tag & MASKBITS(4);
     TPR.CA = 0;         // BUG: what does reg mod mean for these instr?
     reg_mod(td, 0);     // BUG: Do we need to use the same width special cases as for MF fields? (prob not)
-    if (td != 0) {
-        if (TPR.is_value)
-            log_msg(DEBUG_MSG, "APU", "Reg mod for EIS yields value %#llo\n", TPR.value);
-        else
-            log_msg(DEBUG_MSG, "APU", "Reg mod for EIS yields %#o.\n", TPR.CA);
-    }
+    if (opt_debug)
+        if (td != 0) {
+            if (TPR.is_value)
+                log_msg(DEBUG_MSG, moi, "Reg mod for EIS yields value %#llo\n", TPR.value);
+            else
+                log_msg(DEBUG_MSG, moi, "Reg mod for EIS yields %#o.\n", TPR.CA);
+        }
 
 
     switch (op) {
@@ -1246,21 +1305,22 @@ int addr_mod_eis_addr_reg(instr_t *ip)
             AR_PR[ar].AR.bitno = 0;
             return 0;
         case opcode1_s9bd:
-            log_msg(NOTIFY_MSG, "APU::EIS", "Auto breakpoint for s9bd\n");
-            cancel_run(STOP_IBKPT);
-            // fall through
+            // log_msg(NOTIFY_MSG, moi, "Auto breakpoint for s9bd\n");
+            // cancel_run(STOP_IBKPT);
+            /* fall through */
         case opcode1_a9bd:
         {
             int sign = (op == opcode1_a9bd) ? 1 : -1;
-            log_msg(INFO_MSG, "APU::eis-addr-reg", "%s\n", (sign == 1) ? "a9bd" : "s9bd");
+            log_msg(INFO_MSG, moi, "%s\n", (sign == 1) ? "a9bd" : "s9bd");
             int oops = sign18(TPR.CA) < 0 || sign < 0;
     oops = 1;
-            // if (oops)
-            {
-                if (oops) ++ opt_debug;
-                if (oops) log_msg(DEBUG_MSG, "APU::eis-addr-reg", "Enabling debug for negative CA.\n");
-                if (opt_debug>0) log_msg(DEBUG_MSG, "APU::eis-addr-reg", "CA = %#o => %#o =>%d\n", TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
-                if (opt_debug>0) log_msg(DEBUG_MSG, "APU::eis-addr-reg", "Initial AR[%d]:   wordno = %#o, charno=%#o, bitno=%#o; PR bitno=%d\n",
+            if (oops) {
+                ++ opt_debug;
+                log_msg(DEBUG_MSG, moi, "Enabling debug for negative CA.\n");
+            }
+            if (opt_debug>0) {
+                log_msg(DEBUG_MSG, moi, "CA = %#o => %#o =>%d\n", TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
+                log_msg(DEBUG_MSG, moi, "Initial AR[%d]:   wordno = %#o, charno=%#o, bitno=%#o; PR bitno=%d\n",
                     ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
             }
             if (a == 0) {
@@ -1281,24 +1341,22 @@ int addr_mod_eis_addr_reg(instr_t *ip)
             AR_PR[ar].AR.bitno = 0;
             // handle anomaly (AL39 AR description)
             AR_PR[ar].PR.bitno = AR_PR[ar].AR.charno * 9;   // 0, 9, 18, 27
-            if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Addr mod: AR[%d]: wordno = %#o, charno=%#o, bitno=%#o; PR bitno=%d\n",
-                ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
-if (AR_PR[ar].wordno == 010000005642) {
-                log_msg(WARN_MSG, "APU", "a=%d; CA is %#o\n", a, TPR.CA);
-                log_msg(WARN_MSG, "APU", "soffset is %d\n", soffset);
-                cancel_run(STOP_BUG);
-}
+            if (opt_debug>0)
+                log_msg(DEBUG_MSG, moi, "Addr mod: AR[%d]: wordno = %#o, charno=%#o, bitno=%#o; PR bitno=%d\n",
+                    ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
             if (oops) -- opt_debug;
             return 0;
         }
 #if 1
         case opcode1_abd: {
             int oops = sign18(TPR.CA) < 0;
-            {
-                if (oops) ++ opt_debug;
-                if (oops) log_msg(DEBUG_MSG, "APU::eis-addr-reg", "Enabling debug for negative CA.\n");
-                if (opt_debug>0) log_msg(DEBUG_MSG, "APU::eis-addr-reg", "CA = %#o => %#o =>%d\n", TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
-                if (opt_debug>0) log_msg(DEBUG_MSG, "APU::eis-addr-reg", "Initial AR[%d]:   wordno = %#o, charno=%#o, bitno=%#o; PR bitno=%d\n",
+            if (oops) {
+                ++ opt_debug;
+                log_msg(DEBUG_MSG, moi, "Enabling debug for negative CA.\n");
+            }
+            if (opt_debug>0) {
+                log_msg(DEBUG_MSG, moi, "CA = %#o => %#o =>%d\n", TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
+                log_msg(DEBUG_MSG, moi, "Initial AR[%d]:   wordno = %#o, charno=%#o, bitno=%#o; PR bitno=%d\n",
                     ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
             }
             if (a == 0) {
@@ -1317,8 +1375,9 @@ if (AR_PR[ar].wordno == 010000005642) {
             }
             // handle anomaly (AL39 AR description)
             AR_PR[ar].PR.bitno = AR_PR[ar].AR.charno * 9;   // 0, 9, 18, 27
-            if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Addr mod: AR[%d]: wordno = %#o, charno=%#o, bitno=%#o; PR bitno=%d\n",
-                ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
+            if (opt_debug>0)
+                log_msg(DEBUG_MSG, "APU", "Addr mod: AR[%d]: wordno = %#o, charno=%#o, bitno=%#o; PR bitno=%d\n",
+                    ar, AR_PR[ar].wordno, AR_PR[ar].AR.charno, AR_PR[ar].AR.bitno, AR_PR[ar].PR.bitno);
             if (oops) -- opt_debug;
             return 0;
         }

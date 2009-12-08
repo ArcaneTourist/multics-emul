@@ -11,7 +11,6 @@
 */
 
 #include "hw6180.h"
-double multics_to_double(t_uint64 xhi, t_uint64 xlo, int show, int is_signed);
 
 // ============================================================================
 
