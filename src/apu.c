@@ -251,8 +251,7 @@ char* print_instr(t_uint64 word)
 
 //=============================================================================
 
-
-int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp)
+int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp)
 {
     // Called only by the EIS multi-word instruction routines:
     //      get_eis_indir_ptr(t_uint64 word, uint *addrp)
@@ -261,9 +260,19 @@ int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, 
     // nbits.  Nbits is the data size and is used only for reg modifications.
     // Arg ar should be negative to use current TPR or non-negative to use a
     // pointer/address register.
+    // Xbits allow the caller to provide an additional offset
     // BUG: some callers may keep results.  This isn't valid for multi-page segments.  They
     // should take care to stay within minaddrp and maxaddrp.
     
+    // Note:
+        // EIS indirect pointers to operand descriptors use PR registers.
+        // However, operand descriptors use AR registers according to the
+        // description of the AR registers and the description of EIS operand
+        // descriptors.   However, the description of the MF field
+        // claims that operands use PR registers.   The AR doesn't have a
+        // segment field.  Emulation confirms that operand descriptors 
+        // need to be fetched via segments given in PR registers.
+
     char *moi = "APU::get-addr";
 
     addr_modes_t addr_mode = get_addr_mode();
@@ -275,40 +284,39 @@ int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, 
 
     uint offset;
     uint saved_PSR = 0, saved_PRR = 0, saved_CA = 0, saved_bitno = 0;
-    if (ar || pr) {
+    if (ar) {
         saved_PSR = TPR.TSR;
         saved_PRR = TPR.TRR ;
         saved_CA = TPR.CA;
         saved_bitno = TPR.TBR;
         //
         uint n = y >> 15;
+#if 1
         int32 soffset = sign15(y & MASKBITS(15));
-#if 0
-        // EIS indirect pointers to operand descriptors use PR registers.
-        // However, Operand Descriptors use AR registers according to the description of the AR registers
-        // and the description of EIS operand descriptors.   However, the description of the MF field
-        // claims that operands use PR registers.   The AR doesn't have a segment field.
-        if (pr)
-            TPR.TSR = AR_PR[n].PR.snr;
-        else {
-            if (TPR.TSR != AR_PR[n].PR.snr) {
-                log_msg(WARN_MSG, moi, "Not changing TPR.TSR from %#o to %#o via AR for EIS instr.\n", TPR.TSR, AR_PR[n].PR.snr);
-                // cancel_run(STOP_WARN);
-            }
-        }
 #else
-        TPR.TSR = AR_PR[n].PR.snr;
+        // BUG: sometimes we want signed and sometimes not -- bad caller
+        int32 soffset = y & MASKBITS(15);
+        if ((soffset >> 14) != 0) {
+            log_msg(WARN_MSG, moi, "High bit set on offset %05o (+%d aka %d).\n", soffset, soffset, sign15(soffset));
+            cancel_run(STOP_WARN);
+        }
 #endif
+        TPR.TSR = AR_PR[n].PR.snr;
         TPR.TRR = max3(AR_PR[n].PR.rnr, TPR.TRR, PPR.PRR);
         offset = AR_PR[n].wordno + soffset;
         TPR.TBR = AR_PR[n].PR.bitno;
+        TPR.TBR += xbits;
+        if (TPR.TBR >= 36) {
+            offset += TPR.TBR / 36;
+            TPR.TBR %= 36;
+        }
         if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o(0%o+0%o), bitno=0%o\n",
             n, TPR.TSR, TPR.TRR, offset, AR_PR[n].wordno, soffset, TPR.TBR);
         *(uint*)bitnop = TPR.TBR;
     } else {
         offset = y;
         // int32 sofset = sign18(y);
-        *bitnop = 0;
+        *bitnop = xbits;
     }
 
     if (reg != 0) {
@@ -339,7 +347,7 @@ int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, 
         if (opt_debug>0) log_msg(DEBUG_MSG, moi, "page-in faulted\n");
     }
 
-    if (ar || pr) {
+    if (ar) {
 #if 1
         TPR.TSR = saved_PSR;
         TPR.TRR = saved_PRR;
@@ -347,6 +355,132 @@ int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, 
         TPR.TBR = saved_bitno;
 #endif
     }
+
+    return ret;
+}
+
+//=============================================================================
+
+/*
+ * See prior function (get_address) for comments
+ */
+
+int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint *segnop, uint *offsetp, uint *bitnop)
+{
+    // char *moi = "APU::decode-eis-addr";  // BUG
+    char *moi = "APU::get-addr";
+
+    addr_modes_t addr_mode = get_addr_mode();
+    if (addr_mode != APPEND_mode) {
+        // BUG: handle BAR mode and abs mode as described in EIS indir doc
+        log_msg(WARN_MSG, moi, "Unexpected usage of non append mode.\n");
+        cancel_run(STOP_WARN);
+    }
+
+    int offset;     // might be negative during intermediate calcuations
+    if (ar) {
+        uint n = y >> 15;
+        int32 soffset = sign15(y & MASKBITS(15));
+        *segnop = AR_PR[n].PR.snr;
+        *ringp = max3(AR_PR[n].PR.rnr, TPR.TRR, PPR.PRR);
+        *bitnop = AR_PR[n].PR.bitno;
+        offset = AR_PR[n].wordno + soffset;
+        if (*bitnop >= 36) {
+            offset += *bitnop / 36;
+            *bitnop %= 36;
+        }
+        if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o(0%o+0%o), bitno=0%o\n",
+            n, *segnop, *ringp, offset, AR_PR[n].wordno, soffset, *bitnop);
+    } else {
+        *segnop = TPR.TSR;
+        *ringp = max3(0, TPR.TRR, PPR.PRR);
+        offset = y;     // unsigned
+        *bitnop = 0;
+    }
+
+    if (reg != 0) {
+        // Caller is specifying a register mod (from an EIS MF)
+        uint saved_CA = TPR.CA;
+        uint saved_is_value = TPR.is_value; // probably unnecessary
+        t_uint64 saved_value = TPR.value;   // probably unnecessary
+        TPR.CA = 0;
+        uint o = offset;
+        uint bits = *bitnop;
+        register_mod(reg, offset, bitnop, nbits);
+#if 0
+        if (TPR.is_value) {
+            log_msg(WARN_MSG, moi, "Ignoring value type register mod; using CA %#o instead of value %#llo.\n", TPR.CA, TPR.value);
+            cancel_run(STOP_WARN);
+        }
+#endif
+        offset = TPR.CA;
+        TPR.CA = saved_CA;
+        TPR.is_value = saved_is_value;
+        TPR.value = saved_value;
+        if (bits != *bitnop || bits != 0 || *bitnop != 0) {
+            int err = *bitnop < 0 || *bitnop > 35 || bits < 0 || bits > 35;
+            log_msg(err ? ERR_MSG : DEBUG_MSG, moi, "Register mod 0%o: offset was 0%o, now 0%o; bit offset was %d, now %d.\n", reg, o, offset, bits, *bitnop);
+            if (err) {
+                log_msg(ERR_MSG, moi, "Bit offset %d and/or %d outside range of 0..35\n", bits, *bitnop);
+                cancel_run(STOP_BUG);
+            }
+        } else
+            log_msg(DEBUG_MSG, moi, "Register mod 0%o: offset was 0%o, now 0%o\n", reg, o, offset);
+        //log_msg(WARN_MSG, moi, "Auto-breakpoint\n");
+        //cancel_run(STOP_IBKPT);
+    }
+    *offsetp = offset;
+
+    return 0;
+}
+
+
+//=============================================================================
+
+/*
+ * See prior function (get_address) for comments
+ */
+
+int get_ptr_address(uint ringno, uint segno, uint offset, uint *addrp, uint *minaddrp, uint* maxaddrp)
+{
+    char *moi = "APU::get-addr";    // BUG
+
+    addr_modes_t addr_mode = get_addr_mode();
+    if (addr_mode != APPEND_mode) {
+        // BUG: handle BAR mode and abs mode as described in EIS indir doc
+        log_msg(WARN_MSG, moi, "Unexpected usage of non append mode.\n");
+        cancel_run(STOP_WARN);
+    }
+
+    uint saved_PSR = TPR.TSR;
+    uint saved_PRR = TPR.TRR ;
+    uint saved_bitno = TPR.TBR;
+
+    uint saved_CA = TPR.CA;
+    uint saved_is_value = TPR.is_value; // probably unnecessary
+    t_uint64 saved_value = TPR.value;   // probably unnecessary
+
+    TPR.TSR = segno;
+    // TPR.TRR = max3(AR_PR[n].PR.rnr, TPR.TRR, PPR.PRR);
+    TPR.TRR = ringno;
+    TPR.TBR = 0;
+
+    // if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Using TSR=0%o, TRR=0%o, offset=%#o.\n", TPR.TSR, TPR.TRR, offset);
+
+    // TPR.CA = offset;
+
+    uint perm = 0;  // BUG: need to have caller specify
+    int ret = page_in(offset, perm, addrp, minaddrp, maxaddrp);
+    if (ret != 0) {
+        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "page-in faulted\n");
+    }
+
+    TPR.TSR = saved_PSR;
+    TPR.TRR = saved_PRR;
+    TPR.CA = saved_CA;
+    TPR.is_value = saved_is_value;
+    TPR.value = saved_value;
+    TPR.TBR = saved_bitno;
 
     return ret;
 }
@@ -786,6 +920,13 @@ void reg_mod(uint td, int off)
     reg_mod_x(td, off, 36);
 }
 
+/*
+ * chars_to_words()
+ *
+ * Called only by register_mod().  Called after intermediate calculations
+ * that might yield a bit offset of more than 35 bits.
+ */
+
 
 static void chars_to_words(int n, uint nbits, uint *offp, uint *bitnop)
 {
@@ -817,8 +958,17 @@ static void chars_to_words(int n, uint nbits, uint *offp, uint *bitnop)
 }
 
 
+/*
+ * register_mod()
+ *
+ * Performs "td" register modification.
+ * Results saved to TPR.{is_value, CA, value}.
+ */
+
 static void register_mod(uint td, uint off, uint *bitnop, int nbits)
 {
+    // BUG/TODO: addr_mod() isn't our only caller...; TPR.is_value = 0; // BUG: Use "direct operand flag" instead
+
     char *moi = "APU::reg-mod";
     switch(td) {
         case 0:

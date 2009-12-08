@@ -18,10 +18,10 @@ hw6180_cpu.o: *.h opcodes.h
 hw6180_sys.o: *.h
 opcode_text.o: *.h
 misc.o: *.h
-opu.o: *.h
+opu.o: *.h eis.hpp
 bitstream.o: *.h
 apu.o: *.h
-eis_mw_desc.o: *.h
+eis_mw_desc.o: *.h eis.hpp
 scu.o: *.h
 iom.o: *.h
 mt.o: *.h

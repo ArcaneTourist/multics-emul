@@ -208,13 +208,12 @@ static void msg(enum log_level level, const char *who, const char* format, va_li
         FILE *stream = streams[s];
         if (stream == NULL)
             continue;
-        if (who != NULL) {
+        if (who != NULL)
             fprintf(stream, "%s: %*s %s: %*s", tag, 7-strlen(tag), "", who, 18-strlen(who), "");
-            fflush(stream);
-        }
     
         crnl_out(stream, format, ap);
-        fflush(stream);
+        if (level != DEBUG_MSG) // BUG: ?
+            fflush(stream);
     }
 }
 

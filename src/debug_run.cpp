@@ -416,10 +416,12 @@ int show_location(int show_source_lines)
                 log_msg(DEBUG_MSG, "MAIN", "IC: %s\n", icbuf);  // source unchanged
     }
 
+#if 0
     cout << flush;
     clog << flush;
     // cdebug << flush;
     cerr << flush;
+#endif
     log_any_io(0);      // Output of source/location info doesn't count towards requiring re-display of source
 
     return ret;

@@ -542,7 +542,10 @@ typedef struct {
 // EIS instructions use argument descriptors that provide addressing,
 // type information, counters, etc.
 typedef struct {
-    uint address;   // 18 bits at  0..17
+    void* dummy;
+    struct {
+        uint address;   // 18 bits at  0..17
+    } initial;
     uint cn;    //  3 bits at 18..20; character position
     uint bitno; // only for bitstring operand descriptors, not alpha-numeric op descriptors
     uint ta;    //  2 bits at 21..22; data type
@@ -551,6 +554,8 @@ typedef struct {
     // convenience members, not part of stored word
     int nbits;      // derived from "ta" data type field
     // tracking info for get_eis_an() and put_eis_an()
+    int len;
+    uint pr_bitno;
     struct {
         // Absolute memory locations -- first address pointed
         // to by the descriptor and bounds of the relevent segment
@@ -558,10 +563,14 @@ typedef struct {
         // The addr member is initially the address of the first word
         // pointed to by the descriptor.  On subsequent pages, the addr
         // member matches min_addr.
-        uint addr;
+        uint ringno;
+        uint segno;
+        uint offset;
         int bitpos;
+        // uint first_bitno;
         uint min_addr;  // segment or page base
         uint max_addr;  // segment or page last word
+        uint addr;
     } area;
     struct {
         // absolute memory locations
@@ -575,8 +584,9 @@ typedef struct {
         int s;      // sign and type: 00b floating with leading sign; 01b-11b scaled fixed point, 01 leading sign, 10 trailing, 11 unsigned
         int scaling_factor;
     } num;
-} eis_alpha_desc_t;
+} eis_gen_desc_t;
 
+typedef eis_gen_desc_t eis_alpha_desc_t;
 typedef eis_alpha_desc_t eis_bit_desc_t;
 typedef eis_alpha_desc_t eis_num_desc_t;
 
@@ -690,7 +700,9 @@ extern int is_priv_mode(void);
 extern void mod2text(char *buf, uint tm, uint td);
 extern char* instr2text(const instr_t* ip);
 extern char* print_instr(t_uint64 word);
-extern int get_address(uint y, flag_t pr, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp);
+extern int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp);
+int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint*segp, uint *offsetp, uint *bitnop);
+int get_ptr_address(uint ringno, uint segno, uint offset, uint *addrp, uint *minaddrp, uint* maxaddrp);
 extern int addr_mod(const instr_t *ip);
 extern void reg_mod(uint td, int off);          // BUG: might be performance boost if inlined
 extern int fetch_appended(uint addr, t_uint64 *wordp);
@@ -736,11 +748,12 @@ extern int get_eis_indir_addr(t_uint64 word, uint* addrp);
 extern const char* mf2text(const eis_mf_t* mfp);
 extern int addr_mod_eis_addr_reg(instr_t *ip);
 // EIS Alphanumeric operands
-extern const char* eis_alpha_desc_to_text(const eis_mf_t* mfp, const eis_alpha_desc_t* descp);
+extern const char* eis_alpha_desc_to_text(const eis_mf_t* mfp, const eis_gen_desc_t* descp);
 extern void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* descp);
 extern int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib);
 extern int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib);
 extern int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib);
+extern int put_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib);
 extern int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp);
 // EIS Bit String Operands
 extern const char* eis_bit_desc_to_text(const eis_mf_t* mfp, const eis_bit_desc_t* descp);

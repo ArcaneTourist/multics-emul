@@ -793,6 +793,7 @@ static int do_dcw(int chan, int addr, int *controlp, int *need_indir_svc)
  * The various devices are implemented in other source files.  The IOM
  * expects two routines for each device: one to handle commands and
  * one to handle I/O transfers.
+ *
  */
 
 static int dev_send_pcw(int chan, pcw_t *p)
@@ -856,6 +857,10 @@ static int dev_send_pcw(int chan, pcw_t *p)
  * The various devices are implemented in other source files.  The IOM
  * expects two routines for each device: one to handle commands and
  * one to handle I/O transfers.
+ * 
+ * BUG: BUG: We return zero to do_ddcw() even after a failed transfer.   This
+ * causes addresses and tallys to become incorrect.   For example, we
+ * return zero when the console operator is "distracted".
  */
 
 static int dev_io(int chan, t_uint64 *wordp)
@@ -890,6 +895,8 @@ static int dev_io(int chan, t_uint64 *wordp)
             int ret = con_iom_io(chan, wordp, &chan_status.major, &chan_status.substatus);
             if (ret != 0 || chan_status.major != 0)
                 log_msg(DEBUG_MSG, "IOM::dev-io", "CON returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
+            if (ret != 0)
+                log_msg(INFO_MSG, "IOM::dev-io", "BUG: Returning zero even though console has indicated an error.  Major code is %#o, substatus is %#o.\n", chan_status.major, chan_status.substatus);
             return 0;   // ignore ret in favor of chan_status.{major,substatus}
         }
         default:
@@ -943,6 +950,9 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
             log_msg(DEBUG_MSG, "IOM::DDCW", "Device for chan 0%o(%d) returns non zero (out of band return)\n", chan, chan);
         if (ret != 0 || chan_status.major != 0)
             break;
+        // BUG: BUG: We increment daddr & tally even if device didn't do the
+        // transfer, e.g. when the console operator is "distracted".  This
+        // is because dev_io() returns zero on failed transfers
         ++daddr;    // todo: remove from loop
         if (type != 3)
             ++wordp;

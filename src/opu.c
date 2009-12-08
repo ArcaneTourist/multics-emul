@@ -14,12 +14,10 @@
 
 */
 
-#include "hw6180.h"
 #include <ctype.h>  // for isprint
+#include "hw6180.h"
 
 static int do_18bit_math;   // diag tape seems to want this, probably inappropriately
-
-#define XED_NEW 1
 
 // ============================================================================
 
@@ -104,8 +102,19 @@ static int do_op(instr_t *ip)
     // do_18bit_math = (switches.FLT_BASE != 2);    // diag tape seems to want this, probably inappropriately
 
     addr_modes_t orig_mode = get_addr_mode();
-    uint orig_ic = PPR.IC;
+    int orig_ic = PPR.IC;
+
+// BUG/TODO: remove forced debugging for EIS
+    if (1 && ip->is_eis_multiword) {
+        extern DEVICE cpu_dev;
+        ++opt_debug; ++ cpu_dev.dctrl;  // BUG
+    }
     int ret = do_an_op(ip);
+    if (1 && ip->is_eis_multiword) {
+        extern DEVICE cpu_dev;
+        --opt_debug; --cpu_dev.dctrl;   // BUG
+    }
+
     addr_modes_t mode = get_addr_mode();
     if (orig_mode != mode) {
         if (orig_ic == PPR.IC) {
@@ -579,7 +588,7 @@ static int do_an_op(instr_t *ip)
                 int n = TPR.CA & 0177;  // bits 11..17 of 18bit CA
                 //log_msg(DEBUG_MSG, "OPU::als", "CA = %#o; bits 11..17 = %0o\n", TPR.CA, n);
                 //log_msg(DEBUG_MSG, "OPU::als", "A = (%#llo << %d) ==> %#llo\n", reg_A, n, (reg_A << n) & MASK36);
-                int init_neg = bit36_is_neg(reg_A);
+                flag_t init_neg = bit36_is_neg(reg_A);
                 reg_A = (reg_A << n) & MASK36;
                 IR.zero = reg_A == 0;
                 IR.neg = bit36_is_neg(reg_A);
@@ -606,7 +615,7 @@ static int do_an_op(instr_t *ip)
                 return 0;
             }
             case opcode0_llr: {     // Long left rotate
-                int init_neg = bit36_is_neg(reg_A);
+                flag_t init_neg = bit36_is_neg(reg_A);
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
                 lrotate72(&reg_A, &reg_Q, n);
                 IR.zero = reg_A == 0 && reg_Q == 0;
@@ -615,7 +624,7 @@ static int do_an_op(instr_t *ip)
                 return 0;
             }
             case opcode0_lls: {     // Long left shift
-                int init_neg = bit36_is_neg(reg_A);
+                flag_t init_neg = bit36_is_neg(reg_A);
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
 #if 1
                 t_uint64 asv, qsv;  // BUG: temp
@@ -660,7 +669,7 @@ static int do_an_op(instr_t *ip)
 
             case opcode0_lrl: {     // long right logical
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
-                int init_neg = bit36_is_neg(reg_A);
+                flag_t init_neg = bit36_is_neg(reg_A);
                 long_right_shift(&reg_A, &reg_Q, n, 1);
                 IR.zero= reg_A == 0 && reg_Q == 0;
                 IR.neg = init_neg;
@@ -669,7 +678,7 @@ static int do_an_op(instr_t *ip)
 
             case opcode0_lrs: {     // Long right shift
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
-                int init_neg = bit36_is_neg(reg_A);
+                flag_t init_neg = bit36_is_neg(reg_A);
                 long_right_shift(&reg_A, &reg_Q, n, 0);
                 IR.zero= reg_A == 0 && reg_Q == 0;
                 IR.neg = init_neg;
@@ -685,7 +694,7 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_qls: { // Q reg left shift
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
-                int init_neg = bit36_is_neg(reg_Q);
+                flag_t init_neg = bit36_is_neg(reg_Q);
                 reg_Q = (reg_Q << n) & MASK36;
                 IR.zero = reg_Q == 0;
                 IR.neg = bit36_is_neg(reg_Q);
@@ -702,7 +711,7 @@ static int do_an_op(instr_t *ip)
             }
             case opcode0_qrs: { // Q Right Shift (with sign fill)
                 unsigned n = TPR.CA & 0177; // bits 11..17 of 18bit CA
-                int init_neg = bit36_is_neg(reg_Q);
+                flag_t init_neg = bit36_is_neg(reg_Q);
                 reg_Q >>= n;
                 if (init_neg) {
                     reg_Q |= ~ (MASK36 >> n);
@@ -3056,8 +3065,12 @@ static int do_an_op(instr_t *ip)
             // sbd unimplemented
             // swd unimplemented
 
-            case opcode1_cmpc:
-                return op_cmpc(ip);
+            case opcode1_cmpc: {
+                // extern DEVICE cpu_dev; ++opt_debug; ++ cpu_dev.dctrl;
+                int ret = op_cmpc(ip);
+                // --opt_debug; --cpu_dev.dctrl;
+                return ret;
+            }
 
             // opcode1_scd unimplemented -- scan characters double
             // opcode1_scdr unimplemented -- scan characters double in reverse
@@ -3076,16 +3089,21 @@ static int do_an_op(instr_t *ip)
             }
 
             case opcode1_tct: {
+                extern DEVICE cpu_dev; ++opt_debug; ++ cpu_dev.dctrl;
                 int ret = op_tct(ip, 1);
+                --opt_debug; --cpu_dev.dctrl;
                 return ret;
             }
             case opcode1_tctr: {
-                //int ret = op_unimplemented_mw(ip, op, opname, 3);
+                extern DEVICE cpu_dev; ++opt_debug; ++ cpu_dev.dctrl;
                 int ret = op_tct(ip, 0);
+                --opt_debug; --cpu_dev.dctrl;
                 return ret;
             }
             case opcode1_mlr: {
+                // extern DEVICE cpu_dev; ++ opt_debug; ++ cpu_dev.dctrl;
                 int ret = op_move_alphanum(ip, 1);
+                // -- opt_debug; -- cpu_dev.dctrl;
                 return ret;
             }
             case opcode1_mrl: {
@@ -3105,11 +3123,13 @@ static int do_an_op(instr_t *ip)
             // cmp0 .. cmp7 unimplemented -- compare numeric
             // mvn unimplemented -- move numeric
 
-            case opcode1_mvne:      // move numeric edited
+            case opcode1_mvne:      // EIS: move numeric edited
                 return op_mvne(ip);
 
-            case opcode1_csl: {     // combine bit strings left
+            case opcode1_csl: {     // EIS: combine bit strings left
+                extern DEVICE cpu_dev; ++ opt_debug; ++ cpu_dev.dctrl;
                 int ret = op_csl(ip);
+                -- opt_debug; -- cpu_dev.dctrl;
                 return ret;
             }
             
@@ -3325,7 +3345,7 @@ int add72(t_uint64 ahi, t_uint64 alow, t_uint64* dest1, t_uint64* dest2, int is_
         hi &= MASK36;
 
     IR.zero = lo == 0 && hi == 0;
-    int signr = hi >> 35;
+    uint signr = hi >> 35;
     IR.neg = signr;
     if (! is_unsigned)
         if (sign1 == sign2 && signr != sign1) {
@@ -3543,51 +3563,6 @@ static int do_spri(int n)
 
 // ============================================================================
 
-
-# if 0
-static int op_unimplemented_mw(const instr_t* ip, int op, const char* opname, int nargs)
-{
-    // This function was only useful for turning unimplemented EIS muli-word instructions
-    // into no-ops while debugging other issues.
-    char moi[20];
-    sprintf(moi, "OPU::%s", opname);
-
-    uint fill = ip->addr >> 9;
-    uint t = (ip->addr >> 8) & 1;
-    uint mf2bits = ip->addr & MASKBITS(7);
-
-    eis_mf_t mf2;
-    (void) parse_mf(mf2bits, &mf2);
-    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
-
-    t_uint64 word1, word2;
-    if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
-        return 1;
-
-    eis_alpha_desc_t desc1;
-    parse_eis_alpha_desc(word1, &ip->mods.mf1, &desc1);
-    eis_alpha_desc_t desc2;
-    parse_eis_alpha_desc(word2, &mf2, &desc2);
-
-    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
-    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
-    if (nargs == 3) {
-        t_uint64 word3;
-        if (fetch_word(PPR.IC + 3, &word3) != 0)
-            return 1;
-        log_msg(DEBUG_MSG, moi, "word3 = %012llo\n", word3);
-    }
-
-    PPR.IC += nargs + 1;
-    cpu.irodd_invalid = 1;
-    log_msg(WARN_MSG, moi, "EIS multi-word opcode %s unimplemented.\n", opname);
-    cancel_run(STOP_BUG);
-    return 1;
-}
-#endif
-
-// ============================================================================
-
 static int op_move_alphanum(const instr_t* ip, int fwd)
 {
     const char* moi = (fwd) ? "OPU::mlr" : "OPU::mrl";
@@ -3610,10 +3585,9 @@ static int op_move_alphanum(const instr_t* ip, int fwd)
 
     eis_alpha_desc_t desc1;
     parse_eis_alpha_desc(word1, &ip->mods.mf1, &desc1);
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
     eis_alpha_desc_t desc2;
     parse_eis_alpha_desc(word2, &mf2, &desc2);
-
-    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
     log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
 
     int ret = 0;
@@ -3649,9 +3623,10 @@ static int op_move_alphanum(const instr_t* ip, int fwd)
         }
     }
     // write unsaved data (if any)
-    if (ret < 2)
+    if (ret < 2) {
         if (save_eis_an(&mf2, &desc2) != 0)
             ret = 2;
+    }
 
     //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
     //cancel_run(STOP_WARN);
@@ -3854,7 +3829,6 @@ static int op_cmpc(const instr_t* ip)
 
     log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
     log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
-
     int ret = 0;
 
     uint nib1, nib2;
@@ -3919,9 +3893,9 @@ static int op_btd(const instr_t* ip)
     eis_num_desc_t desc1;
     parse_eis_num_desc(word1, &ip->mods.mf1, &desc1);
     eis_num_desc_t desc2;
+    // BUG: should only be setting 1 bit... -- might only be an issue for 4-bit data or scaled operands
     word2 = setbits36(word2, 21, 2, desc1.ta);  // force (ignored) type of mf2 to match mf1
     parse_eis_num_desc(word2, &mf2, &desc2);
-
     log_msg(INFO_MSG, moi, "desc1: %s\n", eis_num_desc_to_text(&ip->mods.mf1, &desc1));
     log_msg(INFO_MSG, moi, "desc2: %s\n", eis_num_desc_to_text(&mf2, &desc2));
 
@@ -4032,7 +4006,7 @@ static int op_btd(const instr_t* ip)
 
     // put_eis_an_rev doesn't exist...
     uint results[64];
-    int n = 0;
+    uint n = 0;
 
     if (desc2.num.s == 2)
         // Push trailing sign
@@ -4199,13 +4173,9 @@ static int op_scm(const instr_t* ip, int fwd)
     parse_eis_alpha_desc(word2, &mf2, &desc2);
     desc2.n = 1;                                // force (ignored) count of desc2 to one
 
-    // eis_mf_t mf3 = { 0, 0, 1, 0};
     uint y3;
     if (get_eis_indir_addr(word3, &y3) != 0)
             return 1;
-    //uint y3 = word3 >> 18;
-    //uint y3_indir = (word3 & 0100) != 0;
-    //uint y3_reg = word3 & 017;
     
     log_msg(DEBUG_MSG, moi, "mask = %03o\n", mask);
     log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_alpha_desc_to_text(&ip->mods.mf1, &desc1));
@@ -4218,9 +4188,8 @@ static int op_scm(const instr_t* ip, int fwd)
         log_msg(DEBUG_MSG, moi, "test char specified via special-case ',du'\n");
     } else {
         log_msg(DEBUG_MSG, moi, "Getting test char\n");
-        if (get_eis_an(&mf2, &desc2, &test_nib) != 0) {
+        if (get_eis_an(&mf2, &desc2, &test_nib) != 0)
             return 1;
-        }
     }
     if (opt_debug) {
         if (isprint(test_nib))
@@ -4272,7 +4241,7 @@ static int op_csl(const instr_t* ip)
     eis_mf_t mf2;
     (void) parse_mf(mf2bits, &mf2);
     log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
-    char *ops[16] = { "clear", "and", "x&!y", "x", "!x&y", "y", "xor", "or", "!or", "!xor", "!y", "!x&y", "!x", "x|!y", "nand", "set" };
+    const char *ops[16] = { "clear", "and", "x&!y", "x", "!x&y", "y", "xor", "or", "!or", "!xor", "!y", "!x&y", "!x", "x|!y", "nand", "set" };
     log_msg(INFO_MSG, moi, "bool oper: %#o =b%d%d%d%d (%s), fill: %d\n", bolr, (bolr>>3)&1, (bolr>>2)&1, (bolr>>1)&1, bolr&1, ops[bolr], fill);
 
     t_uint64 word1, word2;
@@ -4283,10 +4252,10 @@ static int op_csl(const instr_t* ip)
 
     eis_bit_desc_t desc1;
     parse_eis_bit_desc(word1, &ip->mods.mf1, &desc1);
-    eis_bit_desc_t desc2;
-    parse_eis_bit_desc(word2, &mf2, &desc2);
 
     log_msg(INFO_MSG, moi, "desc1: %s\n", eis_bit_desc_to_text(&ip->mods.mf1, &desc1));
+    eis_bit_desc_t desc2;
+    parse_eis_bit_desc(word2, &mf2, &desc2);
     log_msg(INFO_MSG, moi, "desc2: %s\n", eis_bit_desc_to_text(&mf2, &desc2));
 
     int ret = 0;
@@ -4301,28 +4270,17 @@ static int op_csl(const instr_t* ip)
                 ret = 1;
                 break;
             }
+        // retrieve won't ever advance the pointer
         if (retr_eis_bit(&mf2, &desc2, &bit2) != 0) {   // must fetch when needed
             ret = 1;
             break;
         }
         flag_t r = (bolr >> (3 - ((bit1 << 1) | bit2))) & 1;    // like indexing into a truth table
         log_msg(DEBUG_MSG, moi, "nbits1=%d, nbits2=%d; %d op(%#o) %d => %d\n", desc1.n, desc2.n, bit1, bolr, bit2, r);
-#if 0
-        // BAD idea.  Get is safe after retr in the sense that it won't fetch.  However, it could cause the next
-        // retr to fetch -- without writing the buffer.
-        // It also confuses save_eis_an() into wondering why a full buffer wasn't flushed.
-        if (r == bit2) {
-            // Do an ordinary "get" to advance the ptr
-            if (get_eis_bit(&mf2, &desc2, &bit2) != 0) {
-                ret = 1;
-                break;
-            }
-        } else
-#endif
-            if (put_eis_bit(&mf2, &desc2, r) != 0) {
-                ret = 1;
-                break;
-            }
+        if (put_eis_bit(&mf2, &desc2, r) != 0) {
+            ret = 1;
+            break;
+        }
         if (r)
             all_zero = 0;
     }
@@ -4542,7 +4500,7 @@ static int mop_exec_single(const eis_mf_t *mop_mfp, eis_alpha_desc_t *mop_descp,
             if (mop_if == 0)
                 mop_if = 16;
             log_msg(INFO_MSG, moi, "INSM %#o(%dd) for EIT[1]==%#o\n", mop_if, mop_if, mopinfo.eit[1]);
-            for (int i = 0; i < mop_if; ++i) {
+            for (uint i = 0; i < mop_if; ++i) {
                 if (mop_put(dest_mfp, dest_descp, is_decimal, mopinfo.eit[1]) != 0)
                     return 1;
                 if (dest_descp->n == 0)
@@ -4568,7 +4526,7 @@ static int mop_exec_single(const eis_mf_t *mop_mfp, eis_alpha_desc_t *mop_descp,
             if (mop_if == 0)
                 mop_if = 16;
             log_msg(INFO_MSG, moi, "MFLS %#o(%dd)\n", mop_if, mop_if);
-            for (int i = 0; i < mop_if; ++i) {
+            for (uint i = 0; i < mop_if; ++i) {
                 if (mopinfo.n_src == 0) {
                     log_msg(ERR_MSG, moi, "Source exhausted\n");
                     fault_gen(illproc_fault);
@@ -4600,7 +4558,7 @@ static int mop_exec_single(const eis_mf_t *mop_mfp, eis_alpha_desc_t *mop_descp,
             if (mop_if == 0)
                 mop_if = 16;
             log_msg(INFO_MSG, moi, "MVC %#o(%dd)\n", mop_if, mop_if);
-            for (int i = 0; i < mop_if; ++i) {
+            for (uint i = 0; i < mop_if; ++i) {
                 if (mopinfo.n_src == 0) {
                     log_msg(ERR_MSG, moi, "Source exhausted\n");
                     fault_gen(illproc_fault);
@@ -4667,8 +4625,13 @@ static int mop_exec_single(const eis_mf_t *mop_mfp, eis_alpha_desc_t *mop_descp,
 
 // ============================================================================
 
+/*
+ *
+ * Main work of MVNE and MVE instructions -- execute a list of MOPs
+ *
+ */
+
 static int mop_execute(const eis_mf_t *mop_mfp, eis_alpha_desc_t *mop_descp, const eis_mf_t *dest_mfp, eis_alpha_desc_t *dest_descp, int is_decimal)
-    // Main work of MVNE and MVE instructions -- execute a list of MOPs
 {
     const char *moi = "opu::MOP::execute";
 
@@ -4729,21 +4692,21 @@ static int op_mvne(const instr_t* ip)
 
     eis_alpha_desc_t desc1;
     parse_eis_num_desc(word1, &ip->mods.mf1, &desc1);
+    log_msg(INFO_MSG, moi, "desc1: %s\n", eis_num_desc_to_text(&ip->mods.mf1, &desc1));
     eis_alpha_desc_t desc2;
     parse_eis_alpha_desc(word2, &mf2, &desc2);
     eis_alpha_desc_t desc3;
     parse_eis_alpha_desc(word3, &mf3, &desc3);
 
     // TODO: Do we need to force modulo 64 for register derived lengths (which might otherwise be over 6 bits) ?
-    // Might be better to do via parse_eis_*_desc()
+    // Might be better to do via parse_eis_*_desc() -- no, other instructions
+    // may use much longer string lengths...
     if (desc1.n >= 64)
         desc1.n %= 64;
     if (desc2.n >= 64)
         desc2.n %= 64;
     if (desc3.n >= 64)
         desc3.n %= 64;
-
-    log_msg(INFO_MSG, moi, "desc1: %s\n", eis_num_desc_to_text(&ip->mods.mf1, &desc1));
     log_msg(INFO_MSG, moi, "desc2: %s\n", eis_alpha_desc_to_text(&mf2, &desc2));
     log_msg(INFO_MSG, moi, "desc3: %s\n", eis_alpha_desc_to_text(&mf3, &desc3));
 
@@ -4758,7 +4721,7 @@ static int op_mvne(const instr_t* ip)
 
     //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
     //cancel_run(STOP_IBKPT);
-    PPR.IC += 4;        // BUG: when should we bump IC?  probably not for aults, but probably yes for conditions
+    PPR.IC += 4;        // BUG: when should we bump IC?  probably not for faults, but probably yes for conditions
     return ret;
 }
 
@@ -4806,7 +4769,7 @@ static void long_right_shift(t_uint64 *hip, t_uint64 *lop, int n, int is_logical
 {
     const char *moi = (is_logical) ? "OPU::lrl" : "OPU::lrs";
 
-    int init_neg = bit36_is_neg(*hip);
+    flag_t init_neg = bit36_is_neg(*hip);
     if (opt_debug) log_msg(DEBUG_MSG, moi, "Shift %012llo,%012llo of %d bits.\n", *hip, *lop, n);
 
     if (n >= 72) {

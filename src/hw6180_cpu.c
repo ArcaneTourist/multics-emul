@@ -789,8 +789,6 @@ static void restore_PR_registers(void)
  *  two word instruction pair.   See cancel_run().
  */
 
-#define XED_NEW 1
-
 static t_stat control_unit(void)
 {
     // ------------------------------------------------------------------------
