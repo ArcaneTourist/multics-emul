@@ -434,9 +434,11 @@ int listing_parse(FILE *f, source_file &src)
             if (str_pmatch(edcl_type2, "entry") == 0) {
                 // printf("Explicit dcls: Found entry %s at loc %06o\n", edcl_name, edcl_loc);
                 if (! src.seg_name.empty()) {
-                    string entry_name = src.seg_name;
-                    entry_name += '$';
-                    entry_name += edcl_name;
+                    string entry_name;
+                    if (strchr(edcl_name, '$') != 0) {
+                        entry_name = edcl_name;
+                    } else
+                        entry_name = src.seg_name + '$' + edcl_name;
                     // Note: no relocation...
                     if (src.entries.find(edcl_loc) != src.entries.end()) {
                         fflush(stdout);
@@ -660,6 +662,58 @@ int listing_parse(FILE *f, source_file &src)
         errno = EINVAL;
         return -1;
     }
+
+    // Fixup entries that quietly share their parent's stack frame
+    for (map<string,entry_point*>::const_iterator eit = src.entries_by_name.begin(); eit != src.entries_by_name.end(); ++eit) {
+        entry_point *ep = (*eit).second;
+        if (ep->stack() != NULL)
+            continue;
+        string name = (*eit).first;
+        unsigned cpos = name.find('$');
+        if (cpos == string::npos) {
+            if (src.stack_frames.size() == 0)
+                fprintf(stderr, "LISTING: Entry %s has no stack and neither does anything in this source file.\n", name.c_str());
+            else if (src.stack_frames.size() != 1) {
+                // fprintf(stderr, "LISTING: Entry %s has no stack.\n", name.c_str());
+            } else {
+                const stack_frame& sf = (*src.stack_frames.begin()).second;
+                const entry_point* parent = sf.owner;
+                if (parent == NULL)
+                    fprintf(stderr, "LISTING: Entry %s has no stack and the single stack for this source file doesn't have an owner!.\n", name.c_str());
+                else {
+                    // fprintf(stderr, "LISTING: Entry %s will be assumed to share the stack frame of %s.\n", name.c_str(), parent->name.c_str());
+                    ep->stack_owner = parent;
+                }
+            }
+        } else {
+            name.erase(cpos);   // cannot just say: name[cpos] = 0;
+            entry_point* parent = src.find_entry(name);
+#if 0
+            if (parent == NULL) {
+                // Parent may be a procedure, e.g., "TURN_OFF", and we may
+                // have renamed it, e.g., real_initializer$TURN_OFF
+                fprintf(stderr, "LISTING: DEBUG: Entry %s has no stack and parent entry %s does not exist...\n", ep->name.c_str(), name.c_str());
+                name = src.seg_name + '$' + name;
+                parent = src.find_entry(name);
+            }
+#endif
+            if (parent == NULL) {
+                fprintf(stderr, "LISTING: DEBUG: Entry %s has no stack and parent entry %s does not exist.\n", ep->name.c_str(), name.c_str());
+                fprintf(stderr, "LISTING: DEBUG: Entries (by name) are:\n");
+                for (map<string,entry_point*>::const_iterator xit = src.entries_by_name.begin(); xit != src.entries_by_name.end(); ++xit) {
+                    fprintf(stderr, "\t%s => %s.\n", (*xit).first.c_str(), (*xit).second->name.c_str());
+                }
+            } else {
+                if (parent->stack() == NULL)
+                    fprintf(stderr, "LISTING: Entry %s has no stack and neither does parent %s.\n", ep->name.c_str(), name.c_str());
+                else {
+                    // fprintf(stderr, "LISTING: Note: entry %s has no stack but parent %s has one.\n", ep->name.c_str(), name.c_str());
+                    ep->stack_owner = parent;
+                }
+            }
+        }
+    }
+
     return ret;
 }
 

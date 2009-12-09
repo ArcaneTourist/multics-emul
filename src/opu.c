@@ -1094,7 +1094,7 @@ static int do_an_op(instr_t *ip)
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
-                    ret = sub36(reg_A, word, &reg_A);
+                    ret = sub36(reg_A, word, &word);
                     if (ret == 0)
                         ret = store_word(TPR.CA, word);
                 }
@@ -1106,7 +1106,7 @@ static int do_an_op(instr_t *ip)
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
                     extern DEVICE cpu_dev; ++ opt_debug; ++ cpu_dev.dctrl;
-                    ret = sub36(reg_Q, word, &reg_Q);
+                    ret = sub36(reg_Q, word, &word);
                     -- opt_debug; -- cpu_dev.dctrl;
                     if (ret == 0)
                         ret = store_word(TPR.CA, word);
