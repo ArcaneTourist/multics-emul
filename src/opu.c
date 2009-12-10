@@ -1762,7 +1762,8 @@ static int do_an_op(instr_t *ip)
                 op_mant_hi <<= 8;
                 op_mant_hi |= getbits36(word1, 0, 8);
                 t_uint64 op_mant_lo = getbits36(word1, 8, 28) << 8;
-                if (opt_debug) log_msg(DEBUG_MSG, "OPU::dfcmp", "op:  { %012llo, %012llo }, exp %d\n", op_mant_hi, op_mant_lo, op_exp);
+                if (opt_debug)
+                    log_msg(DEBUG_MSG, "OPU::dfcmp", "op:  { %012llo, %012llo }, exp %d\n", op_mant_hi, op_mant_lo, op_exp);
                 t_uint64 reg_a = reg_A;
                 t_uint64 reg_q = getbits36(reg_Q, 0, 28) << 8;  // need 64bit version of aq
 
@@ -1810,12 +1811,12 @@ static int do_an_op(instr_t *ip)
 
                 op_val = multics_to_double(op_mant_hi, op_mant_lo, 0, 1);
                 aq_val64 = multics_to_double(reg_a, reg_q, 0, 1);
-                if (IR.zero)
-                    log_msg(NOTIFY_MSG, "OPU::dfcmp", "Result: equal -- exp is %d; mantissa %f verus %f\n", exp, aq_val64, op_val);
-                else
-                    log_msg(NOTIFY_MSG, "OPU::dfcmp", "Result: Neg=%d -- exp is %d; mantissa %f verus %f\n", IR.neg, exp, aq_val64, op_val);
-                log_msg(NOTIFY_MSG, "OPU::dfcmp", "Auto breakpoint\n");
-                cancel_run(STOP_IBKPT);
+                if (IR.zero) {
+                    log_msg(NOTIFY_MSG, "OPU::dfcmp", "Result: equal -- exp is %d; mantissa %f versus %f\n", exp, aq_val64, op_val);
+                    log_msg(NOTIFY_MSG, "OPU::dfcmp", "Auto breakpoint\n");
+                    cancel_run(STOP_IBKPT);
+                } else
+                    log_msg(INFO_MSG, "OPU::dfcmp", "Result: Neg=%d -- exp is %d; mantissa %f versus %f\n", IR.neg, exp, aq_val64, op_val);
                 return 0;
             }
             

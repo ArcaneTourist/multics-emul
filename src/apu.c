@@ -943,17 +943,16 @@ static void chars_to_words(int n, uint nbits, uint *offp, uint *bitnop)
 
     uint nchars = n % chars_per_word;
     if (nchars != 0) {
-        log_msg(INFO_MSG, moi, "Reg mod for %d %d-bit chars: Value isn't evenly divisible by %d; result will contain a bit offset.\n", n, nbits, chars_per_word);
+        log_msg(DEBUG_MSG, moi, "Reg mod for %d %d-bit chars: Value isn't evenly divisible by %d; result will contain a bit offset.\n", n, nbits, chars_per_word);
         *bitnop += nchars * nbits;
         if (*bitnop >= 36) {
-            log_msg(WARN_MSG, moi, "Reg mod for %d %d-bit chars:  Dest is over 36 bits.  Wrapping.\n", n, nbits);
+            log_msg(DEBUG_MSG, moi, "Reg mod for %d %d-bit chars:  Dest is over 36 bits.  Wrapping.\n", n, nbits);
             *offp += *bitnop / 36;
             *bitnop = *bitnop % 36;
-            log_msg(WARN_MSG, moi, "Wrap is +%d words and +%d bits.\n",
+            log_msg(DEBUG_MSG, moi, "Wrap is +%d words and +%d bits.\n",
                 (nchars * nbits) / 36, (nchars * nbits) % 36);
-            log_msg(WARN_MSG, moi, "Dest changes from %06o+%02db to %06o+%02db.\n", 
+            log_msg(DEBUG_MSG, moi, "Dest changes from %06o+%02db to %06o+%02db.\n", 
                 o, b, *offp, *bitnop);
-            cancel_run(STOP_WARN);
         }
     } else {
         if (nbits != 36) {

@@ -75,16 +75,15 @@ int instr_dvf(t_uint64 word)
 
 int instr_ufa(t_uint64 word)
 {
-    log_msg(INFO_MSG, "opu::ufa", "E = %03o(%d) AQ = {%012llo,%012llo} aka (%lld,%lld).\n", reg_E, reg_E, reg_A, reg_Q, reg_A, reg_Q);
+    log_msg(DEBUG_MSG, "opu::ufa", "E = %03o(%d) AQ = {%012llo,%012llo} aka (%lld,%lld).\n", reg_E, reg_E, reg_A, reg_Q, reg_A, reg_Q);
     double x = multics_to_double(reg_A, reg_Q, 0, 1);
-    log_msg(NOTIFY_MSG, "opu::ufa", "AQE is %.4g * 2^%d\n", x, reg_E);
+    log_msg(INFO_MSG, "opu::ufa", "AQE is %.4g * 2^%d\n", x, reg_E);
 
-    // int aq_neg = bit36_is_neg(reg_A);
     uint8 op_exp = getbits36(word, 0, 8);
     uint32 op_mant = getbits36(word, 8, 28);    // 36-8=28 bits
-    log_msg(INFO_MSG, "opu::ufa", "op = %012llo => exp %03o(%d) and mantissa %010o (%d)\n", word, op_exp, (int8) op_exp, op_mant, op_mant);
+    log_msg(DEBUG_MSG, "opu::ufa", "op = %012llo => exp %03o(%d) and mantissa %010o (%d)\n", word, op_exp, (int8) op_exp, op_mant, op_mant);
     x = multics_to_double(op_mant, 0,  0, 1);
-    log_msg(NOTIFY_MSG, "opu::ufa", "op is %g * 2^%d\n", x, op_exp);
+    log_msg(INFO_MSG, "opu::ufa", "op is %g * 2^%d\n", x, op_exp);
 
     if (op_mant == 0) {
         // short circuit the addition of zero
@@ -93,19 +92,21 @@ int instr_ufa(t_uint64 word)
         IR.exp_overflow = 0;
         IR.exp_underflow = 0;
         IR.carry = 0;
-        log_msg(NOTIFY_MSG, "opu::ufa", "addition of zero, short circuiting otherwise untested code.\n");
+        log_msg(INFO_MSG, "opu::ufa", "addition of zero.\n");
         return 0;
     }
 
+    int untested = 0;
     uint8 new_e;
     if ((int8) op_exp < (int8) reg_E) {
         // operand has the smaller exponent
         new_e = reg_E;
-        int n =(int8) reg_E - (int8) op_exp;
+        int n = (int8) reg_E - (int8) op_exp;
         op_mant >>= n;
-        log_msg(NOTIFY_MSG, "opu::ufa", "exp diff is %d; op mantissa now %010o\n", n, op_mant);
+        log_msg(INFO_MSG, "opu::ufa", "exp diff is %d; op mantissa now %010o\n", n, op_mant);
     } else {
         // AQ has the smaller exponent
+        untested = 1;
         new_e = op_exp;
         int n = (int8) op_exp - (int8) reg_E;
         // Shift AQ right n bits
@@ -114,6 +115,7 @@ int instr_ufa(t_uint64 word)
         log_msg(NOTIFY_MSG, "opu::ufa", "exp diff is %d; AQ mantissa now {%012llo, %012llo} (%lld,%lld)\n", n, reg_A, reg_Q, reg_A, reg_Q);
         reg_E = op_exp;
     }
+
     int op_is_neg = (op_mant >> 27) != 0;
     int ret;
     if (op_is_neg) {
@@ -133,12 +135,15 @@ int instr_ufa(t_uint64 word)
     }
 
     x = multics_to_double(reg_A, reg_Q, 0, 1);
-    log_msg(NOTIFY_MSG, "opu::ufa", "resulting AQE is %.6g * 2^%d\n", x, reg_E);
+    log_msg(INFO_MSG, "opu::ufa", "resulting AQE is %.6g * 2^%d\n", x, reg_E);
 
-    log_msg(WARN_MSG, "OPU::ufa", "Unnormalized Floating Add is untested\n");
-    cancel_run(STOP_WARN);
-
-    return 1;   // untested
+    if (untested) {
+        log_msg(NOTIFY_MSG, "OPU::ufa", "Unnormalized Floating Add is untested\n");
+        cancel_run(STOP_WARN);
+        return 1;
+    }
+    
+    return 0;
 }
 
 // ============================================================================

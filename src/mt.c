@@ -85,7 +85,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
                     log_msg(NOTIFY_MSG, "MT::iom_cmd", "EOF: %s\n", simh_tape_msg(ret));
                     *majorp = 044;  // EOF category
                     *subp = 023;    // EOF file mark
-                    cancel_run(STOP_WARN);
+                    // cancel_run(STOP_IBKPT);
                     return 0;
                 } else {
                     log_msg(ERR_MSG, "MT::iom_cmd", "Cannot read tape: %d - %s\n", ret, simh_tape_msg(ret));

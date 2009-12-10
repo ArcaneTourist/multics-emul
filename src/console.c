@@ -115,22 +115,28 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
         case 023:               // Read ASCII
             con_statep->io_mode = read_mode;
             log_msg(NOTIFY_MSG, "CON::iom_cmd", "Read ASCII command received\n");
+            if (con_statep->tailp != con_statep->buf)
+                log_msg(WARN_MSG, "CON::iom_cmd", "Discarding previously buffered input.\n");
             // TODO: discard any buffered chars from SIMH
             con_statep->tailp = con_statep->buf;
             con_statep->readp = con_statep->buf;
             con_statep->have_eol = 0;
             *majorp = 00;
             *subp = 0;
+            // breakpoint not helpful as cmd is probably in a list with an IO
+            // cancel_run(STOP_IBKPT);
+            // log_msg(NOTIFY_MSG, "CON::iom_cmd", "Auto-breakpoint for read.\n");
             return 0;
         case 033:               // Write ASCII
             con_statep->io_mode = write_mode;
-            log_msg(NOTIFY_MSG, "CON::iom_cmd", "Write ASCII may not be fully functional.\n");
-            cancel_run(STOP_WARN);
+            log_msg(NOTIFY_MSG, "CON::iom_cmd", "Write ASCII cmd received\n");
+            if (con_statep->tailp != con_statep->buf)
+                log_msg(WARN_MSG, "CON::iom_cmd", "Might be discarding previously buffered input.\n");
             *majorp = 00;
             *subp = 0;
             return 0;
         case 040:               // Reset
-            log_msg(NOTIFY_MSG, "CON::iom_cmd", "Reset cmd received");
+            log_msg(NOTIFY_MSG, "CON::iom_cmd", "Reset cmd received\n");
             con_statep->io_mode = no_mode;
             *majorp = 0;
             *subp = 0;
@@ -139,6 +145,7 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             // AN70-1 says only console channels respond to this command
             out_msg("CONSOLE: ALERT\n");
             log_msg(NOTIFY_MSG, "CON::iom_cmd", "Write Alert cmd received\n");
+            sim_putchar('\a');
             *majorp = 0;
             *subp = 0;
             return 0;
@@ -216,16 +223,25 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
             }
             // We have an EOL from the operator
             log_msg(NOTIFY_MSG, moi, "Transfer for channel %d (%#o)\n", chan, chan);
-            unsigned char c;
-            if (con_statep->readp < con_statep->tailp) {
-                c = *con_statep->readp++;
-            } else
-                c = 0;
-            *wordp = (t_uint64) c << 27;
-            if (c <= 0177 && isprint(c))
-                log_msg(NOTIFY_MSG, moi, "Returning word %012llo: %c\n", *wordp, c);
-            else
-                log_msg(NOTIFY_MSG, moi, "Returning word %012llo: \\%03o\n", *wordp, c);
+            // bce_command_processor_ expects multiples chars per word
+            for (int charno = 0; charno < 4; ++charno) {
+                if (con_statep->readp >= con_statep->tailp) 
+                    break;
+                unsigned char c = *con_statep->readp++;
+                *wordp = setbits36(*wordp, charno * 9, 9, c);
+            }
+            if (1) {
+                char msg[17];
+                for (int charno = 0; charno < 4; ++charno) {
+                    unsigned char c = getbits36(*wordp, charno * 9, 9);
+                    if (c <= 0177 && isprint(c))
+                        sprintf(msg+charno*4, " '%c'", c);
+                    else
+                        sprintf(msg+charno*4, "\\%03o", c);
+                }
+                msg[16] = 0;
+                log_msg(NOTIFY_MSG, moi, "Returning word %012llo: %s\n", *wordp, msg);
+            }
             int ret;
             if (con_statep->readp == con_statep->tailp) {
                 con_statep->readp = con_statep->buf;
@@ -295,6 +311,8 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
  *
  * Check simulated keyboard and transfer input to buffer.
  *
+ * BUG: We allow input even when the console is not in input mode (but we're
+ * not really connected via a half-duplex channel either).
  */
 
 static void check_keyboard(int chan)
@@ -343,18 +361,32 @@ static void check_keyboard(int chan)
 
         // BUG: We don't allow user to set editing characters
         if (c == '\177' || c == '\010') {
-            if (con_statep->tailp > con_statep->buf)
+            if (con_statep->tailp > con_statep->buf) {
                 -- con_statep->tailp;
-        } else if (c == '\014') {
+                sim_putchar(c);
+            }
+        } else if (c == '\014') {   // Form Feed, \f, ^L
             sim_putchar('\r');
             sim_putchar('\n');
             for (const char *p = con_statep->buf; p < con_statep->tailp; ++p)
                 sim_putchar(*p);
-        } else if (c == '\015') {
+        } else if (c == '\012' || c == '\015') {
+            // 012: New line, '\n', ^J
+            // 015: Carriage Return, \r, ^M
+#if 0
+            // Transfer a NL to the buffer 
+            // bce_command_processor_ looks for newlines but not CRs
+            *con_statep->tailp++ = 012;
+#endif
+            // sim_putchar(c);
+            sim_putchar('\r');
+            sim_putchar('\n');
             con_statep->have_eol = 1;
             log_msg(NOTIFY_MSG, moi, "Got EOL for channel %d (%#o); con_statep is %p\n", chan, chan, con_statep);
             return;
-        } else
+        } else {
             *con_statep->tailp++ = c;
+            sim_putchar(c);
+        }
     }
 }

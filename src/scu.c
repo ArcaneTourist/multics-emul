@@ -539,10 +539,8 @@ int scu_set_config_switches(t_uint64 addr)
         ret = 1;
     }
 
-    if (ret == 0) {
+    if (ret == 0)
         log_msg(WARN_MSG, moi, "Unfinished but OK.\n");
-        cancel_run(STOP_WARN);
-    }
     else {
         log_msg(ERR_MSG, moi, "Unfinished and incorrect.\n");
         cancel_run(STOP_BUG);
@@ -736,6 +734,7 @@ static int pima_parse_raw(int pima, const char *moi)
         scu.interrupts[pima].mask_assign.unassigned = found == 0;
         if (found != 1) {
             log_msg(WARN_MSG, moi, "%d ports enabled for MASK %c: %#o\n", found, pima_name, scu.interrupts[pima].mask_assign.raw);
+            log_msg(WARN_MSG, moi, "Auto breakpoint.\n");
             cancel_run(STOP_WARN);
         }
         return found != 1;

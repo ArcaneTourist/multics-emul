@@ -366,7 +366,7 @@ static int do_channel(int chan, pcw_t *p)
     // Now loop doing list services and other actions
 
     if (ret != 0 || control == 0)
-        log_msg(WARN_MSG, moi, "Not doing a single DCW loop.\n");
+        log_msg(NOTIFY_MSG, moi, "Not doing a single DCW loop.\n");
 
     int nlist = 0;  // counter for debugging
     int need_indir_svc = 0; // control info from most recent DCW
@@ -805,8 +805,9 @@ static int dev_send_pcw(int chan, pcw_t *p)
     if (devp == NULL) {
         // BUG: no device connected, what's the fault code(s) ?
         chan_status.power_off = 1;
+        log_msg(WARN_MSG, "IOM::dev-send-pcw", "No device connected to channel %#o(%d); Auto breakpoint.\n", chan, chan);
         iom_fault(chan, __LINE__, 0, 0);
-        cancel_run(STOP_WARN);
+        cancel_run(STOP_IBKPT);
         return 1;
     }
     chan_status.power_off = 0;
@@ -815,6 +816,7 @@ static int dev_send_pcw(int chan, pcw_t *p)
         case DEV_NONE:
             // BUG: no device connected, what's the fault code(s) ?
             chan_status.power_off = 1;
+            log_msg(WARN_MSG, "IOM::dev-send-pcw", "Device on channel %#o (%d) is missing.\n", chan, chan);
             iom_fault(chan, __LINE__, 0, 0);
             cancel_run(STOP_WARN);
             return 1;
@@ -827,9 +829,10 @@ static int dev_send_pcw(int chan, pcw_t *p)
         case DEV_CON: {
             int ret = con_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chan_status.major, &chan_status.substatus);
             log_msg(DEBUG_MSG, "IOM::dev-send-pcw", "CON returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
-            log_msg(DEBUG_MSG, "IOM::dev-send-pcw", "CON: Auto breakpoint\n");
-            cancel_run(STOP_IBKPT);
-            return 0;   // ignore ret in favor of chan_status.{major,substatus}
+            // log_msg(NOTIFY_MSG, "IOM::dev-send-pcw", "CON: Auto breakpoint\n");
+            // cancel_run(STOP_IBKPT);
+            // return 0;    // ignore ret in favor of chan_status.{major,substatus}
+            return ret; // caller must choose between our return and the chan_status.{major,substatus}
         }
         default:
             log_msg(ERR_MSG, "IOM::dev-send-pcw", "Unknown device type 0%o\n", iom.channels[chan]);
@@ -860,7 +863,7 @@ static int dev_send_pcw(int chan, pcw_t *p)
  * 
  * BUG: BUG: We return zero to do_ddcw() even after a failed transfer.   This
  * causes addresses and tallys to become incorrect.   For example, we
- * return zero when the console operator is "distracted".
+ * return zero when the console operator is "distracted". -- fixed
  */
 
 static int dev_io(int chan, t_uint64 *wordp)
@@ -882,6 +885,7 @@ static int dev_io(int chan, t_uint64 *wordp)
             // BUG: no device connected, what's the fault code(s) ?
             chan_status.power_off = 1;
             iom_fault(chan, __LINE__, 0, 0);
+            log_msg(WARN_MSG, "IOM::dev-io", "Device on channel %#o (%d) is missing.\n", chan, chan);
             cancel_run(STOP_WARN);
             return 1;
         case DEV_TAPE: {
@@ -895,9 +899,12 @@ static int dev_io(int chan, t_uint64 *wordp)
             int ret = con_iom_io(chan, wordp, &chan_status.major, &chan_status.substatus);
             if (ret != 0 || chan_status.major != 0)
                 log_msg(DEBUG_MSG, "IOM::dev-io", "CON returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
+#if 0
             if (ret != 0)
                 log_msg(INFO_MSG, "IOM::dev-io", "BUG: Returning zero even though console has indicated an error.  Major code is %#o, substatus is %#o.\n", chan_status.major, chan_status.substatus);
             return 0;   // ignore ret in favor of chan_status.{major,substatus}
+#endif
+            return ret; // caller must choose between our return and the chan_status.{major,substatus}
         }
         default:
             log_msg(ERR_MSG, "IOM::dev-io", "Unknown device type 0%o\n", iom.channels[chan]);
@@ -953,6 +960,7 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
         // BUG: BUG: We increment daddr & tally even if device didn't do the
         // transfer, e.g. when the console operator is "distracted".  This
         // is because dev_io() returns zero on failed transfers
+        // -- fixed in dev_io()
         ++daddr;    // todo: remove from loop
         if (type != 3)
             ++wordp;
@@ -1235,7 +1243,7 @@ int lpw_write(int chan, int chanloc, const lpw_t* p)
 
 static int send_chan_flags()
 {
-    log_msg(WARN_MSG, "IOM", "send_chan_flags() unimplemented\n");
+    log_msg(NOTIFY_MSG, "IOM", "send_chan_flags() unimplemented\n");
     return 0;
 }
 
