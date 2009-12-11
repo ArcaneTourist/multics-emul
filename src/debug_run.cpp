@@ -930,7 +930,8 @@ static multics_stack_frame* find_frame(int segno, int ic)
 
     const seginfo& seg = segments(segno);
     if (seg.empty()) {
-        cerr << "check_autos: Odd, segment " << oct << segno << " is empty." << simh_endl;
+        if (segno != -1)
+            cerr << "check_autos: Odd, segment " << oct << segno << " is empty." << simh_endl;
         return NULL;
     }
 

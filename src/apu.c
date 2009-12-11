@@ -4,9 +4,17 @@
     See also eis_mw_desc.c for address descriptors used by EIS multi-word
     instructions.
 
+    Note that the typical way of changing from non-segmented, non-paging
+    ABSOLUTE mode to segmenting and paging APPEND mode is via the address
+    mode of an operand of an instruction.  The CPU stays in the new mode
+    after the operand fetch.
+
+    CAVEAT
+        The documentation says that the appending unit HW controls fault
+        recognition.  We handle recognition in the CPU source file in
+        the cycle loop.
 */
 
-// Supposedly, appending unit HW controls fault recognition?
 
 #include "hw6180.h"
 
@@ -19,7 +27,6 @@ typedef struct {    // BUG: having a temp CA is ugly
     enum atag_tm special;
 } ca_temp_t;
 
-#define DSBR_ZERO_KILL 0
 static const int page_size = 1024;      // CPU allows [2^6 .. 2^12]; multics uses 2^10
 
 static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp);
@@ -47,13 +54,22 @@ static inline uint max3(uint a, uint b, uint c)
 
 //=============================================================================
 
+/*
+ * set_addr_mode()
+ *
+ * Put the CPU into the specified addressing mode.   This involves
+ * setting a couple of IR flags and the PPR priv flag.
+ *
+ * TODO: set_addr_mode() probably belongs in the CPU source file.
+ *
+ */
 
 void set_addr_mode(addr_modes_t mode)
 {
-    // BUG: set_addr_mode() probably belongs in CPU
     if (mode == ABSOLUTE_mode) {
         IR.abs_mode = 1;
-        // BUG: T&D tape section 3 wants not-bar-mode true in absolute mode, but section 9 wants false?
+        // BUG: T&D tape section 3 wants not-bar-mode true in absolute mode,
+        // but section 9 wants false?
         IR.not_bar_mode = 1;    
         PPR.P = 1;
         if (opt_debug>0) log_msg(DEBUG_MSG, "APU", "Setting absolute mode.\n");
@@ -81,11 +97,18 @@ void set_addr_mode(addr_modes_t mode)
 //=============================================================================
 
 
+/*
+ * addr_modes_t get_addr_mode()
+ *
+ * Report what mode the CPU is in.
+ * This is determined by examining a couple of IR flags.
+ *
+ * TODO: get_addr_mode() probably belongs in the CPU source file.
+ *
+ */
+
 addr_modes_t get_addr_mode()
 {
-    // BUG: get_addr_mode() probably belongs in CPU
-    // NOTE: Operand modes can cause a change in the address mode
-
     if (IR.abs_mode)
         return ABSOLUTE_mode;
 
@@ -97,15 +120,25 @@ addr_modes_t get_addr_mode()
 
 //=============================================================================
 
+/*
+ * is_priv_mode()
+ *
+ * Report whether or or not the CPU is in privileged mode.
+ * True if in absolute mode or if priv bit is on in segment TPR.TSR
+ *
+ * TODO: is_priv_mode() probably belongs in the CPU source file.
+ *
+ */
+
 int is_priv_mode()
-    // True if in absolute mode or if priv bit is on in segment TPR.TSR
 {
     if (IR.abs_mode)
         return 1;
     SDW_t *SDWp = get_sdw();    // Get SDW for TPR.TSR
     if (SDWp == NULL) {
         if (cpu.apu_state.fhld) {
-            // Do we need to check cu.word1flags.oosb and other flags to know what kind of fault to gen?
+            // TODO: Do we need to check cu.word1flags.oosb and other flags to
+            // know what kind of fault to gen?
             fault_gen(acc_viol_fault);
             cpu.apu_state.fhld = 0;
         }
@@ -115,11 +148,19 @@ int is_priv_mode()
     }
     if (SDWp->priv)
         return 1;
-    if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Priv check fails for segment %#o.\n", TPR.TSR);
+    if(opt_debug>0)
+        log_msg(DEBUG_MSG, "APU", "Priv check fails for segment %#o.\n", TPR.TSR);
     return 0;
 }
 
 //=============================================================================
+
+/*
+ * reg2text()
+ *
+ * Format a "register modification" value for display.
+ *
+ */
 
 void reg2text(char* buf, uint r)
 {
@@ -144,6 +185,13 @@ void reg2text(char* buf, uint r)
             sprintf(buf, "<illegal reg mod td=%#o>", r);
     }
 }
+
+/*
+ * mod2text()
+ *
+ * Format an instruction address modifer for display.
+ *
+ */
 
 void mod2text(char *buf, uint tm, uint td)
 {
@@ -201,6 +249,15 @@ void mod2text(char *buf, uint tm, uint td)
 
 //=============================================================================
 
+/*
+ * instr2text()
+ *
+ * Format a (decoded) instruction for display.
+ *
+ * WARNING
+ *     Returned string is a static buffer and is only valid until the next call.
+ */
+
 char* instr2text(const instr_t* ip)
 {
     static char buf[100];
@@ -241,6 +298,14 @@ char* instr2text(const instr_t* ip)
     return buf;
 }
 
+/*
+ * print_instr()
+ *
+ * Format a word containing an (un-decoded) instruction for display.
+ *
+ * WARNING
+ *     Returned string is a static buffer and is only valid until the next call.
+ */
 
 char* print_instr(t_uint64 word)
 {
@@ -251,19 +316,32 @@ char* print_instr(t_uint64 word)
 
 //=============================================================================
 
+/*
+ * get_address(y, xbits, ar, reg, nbits, addrp, bitnop, minaddrp, maxaddrp)
+ *
+ * Translate an EIS instruction's "y-address" into a 24-bit absolute
+ * memory address.
+ *
+ * Called only (indirectly) by the OPU via get_eis_indir_ptr()
+ *
+ * Returns the absolute address given an address, 'ar' flag, 'reg' modifier,
+ * and "nbits" width.  Nbits is the data size and is used only for reg
+ * modifications.
+ * Argument "ar" should be negative to use current TPR or non-negative to
+ * use a pointer/address register.
+ * Xbits is obsolete.  It allowed the caller to provide an additional offset
+ *
+ * WARNING
+ *     Caller must not advanced the returned address below the minimum or
+ *     maximum page or segment offsets.
+ *
+ * BUG/TODO: This function should probably be replaced (or make use of)
+ * the decode_eis_address() and get_ptr_address() functions that were
+ * derived from it.
+ */
+    
 int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp)
 {
-    // Called only by the EIS multi-word instruction routines:
-    //      get_eis_indir_ptr(t_uint64 word, uint *addrp)
-    //      int get_mf_an_addr(const eis_mf_t* mfp, uint y, int nbits, uint *addrp, int* bitnop, uint *minaddrp, uint *maxaddrp)
-    // Return absolute address given an address, 'ar' flag, 'reg' modifier, and
-    // nbits.  Nbits is the data size and is used only for reg modifications.
-    // Arg ar should be negative to use current TPR or non-negative to use a
-    // pointer/address register.
-    // Xbits allow the caller to provide an additional offset
-    // BUG: some callers may keep results.  This isn't valid for multi-page segments.  They
-    // should take care to stay within minaddrp and maxaddrp.
-    
     // Note:
         // EIS indirect pointers to operand descriptors use PR registers.
         // However, operand descriptors use AR registers according to the
@@ -291,16 +369,7 @@ int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp,
         saved_bitno = TPR.TBR;
         //
         uint n = y >> 15;
-#if 1
         int32 soffset = sign15(y & MASKBITS(15));
-#else
-        // BUG: sometimes we want signed and sometimes not -- bad caller
-        int32 soffset = y & MASKBITS(15);
-        if ((soffset >> 14) != 0) {
-            log_msg(WARN_MSG, moi, "High bit set on offset %05o (+%d aka %d).\n", soffset, soffset, sign15(soffset));
-            cancel_run(STOP_WARN);
-        }
-#endif
         TPR.TSR = AR_PR[n].PR.snr;
         TPR.TRR = max3(AR_PR[n].PR.rnr, TPR.TRR, PPR.PRR);
         offset = AR_PR[n].wordno + soffset;
@@ -348,12 +417,10 @@ int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp,
     }
 
     if (ar) {
-#if 1
         TPR.TSR = saved_PSR;
         TPR.TRR = saved_PRR;
         TPR.CA = saved_CA;
         TPR.TBR = saved_bitno;
-#endif
     }
 
     return ret;
@@ -367,7 +434,6 @@ int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp,
 
 int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint *segnop, uint *offsetp, uint *bitnop)
 {
-    // char *moi = "APU::decode-eis-addr";  // BUG
     char *moi = "APU::get-addr";
 
     addr_modes_t addr_mode = get_addr_mode();
@@ -389,7 +455,8 @@ int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint
             offset += *bitnop / 36;
             *bitnop %= 36;
         }
-        if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o(0%o+0%o), bitno=0%o\n",
+        if(opt_debug>0) log_msg(DEBUG_MSG, moi,
+            "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o(0%o+0%o), bitno=0%o\n",
             n, *segnop, *ringp, offset, AR_PR[n].wordno, soffset, *bitnop);
     } else {
         *segnop = TPR.TSR;
@@ -1494,12 +1561,7 @@ static SDWAM_t* page_in_sdw()
     if (cpup->DSBR.u) {
         // Descriptor table is unpaged
         // Do a NDSW cycle
-#if DSBR_ZERO_KILL
-        if (segno * 2 >= cpup->DSBR.bound << 4) 
-#else
-        if (segno * 2 >= 16 * (cpup->DSBR.bound + 1))
-#endif
-        {
+        if (segno * 2 >= 16 * (cpup->DSBR.bound + 1)) {
             // Note that this test gets triggered when "null" pointers are created or copied even though
             // they're not being dereferenced.   We flag for a held fault and don't actually generate the
             // fault unless the instruction attempts to dereference through the "bad" pointer.

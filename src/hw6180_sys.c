@@ -147,6 +147,8 @@ static void hw6180_init(void)
     // AN87, 1-41 claims faults are at 100o
     // FLT_BASE switches are 7 MSB of 12bit addr
     switches.FLT_BASE = 2;  // multics requires setting 02; 2<<5 == 0100
+    // Actually, the diag tape may just choose different addresses
+    // for crashing depending on the setting of FLT_BASE...
     // switches.FLT_BASE = 0163; // diag tape allows any loc *except* 2->0100
     // switches.FLT_BASE = 0; // diag tape allows any location *except* 2->0100
 

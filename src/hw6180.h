@@ -538,65 +538,6 @@ typedef struct {
     uint iom_num;
 } iom_t;
 
-#if 0
-
-// EIS instructions use argument descriptors that provide addressing,
-// type information, counters, etc.
-typedef struct {
-    void* dummy;
-    struct {
-        uint address;   // 18 bits at  0..17
-    } initial;
-    uint cn;    //  3 bits at 18..20; character position
-    uint bitno; // only for bitstring operand descriptors, not alpha-numeric op descriptors
-    uint ta;    //  2 bits at 21..22; data type
-    uint n_orig;    // operand length or register code, unmodified for debugging
-    uint n;         // converted to value; 12 bits at 24..35; length (0..4096 or -2048..2047 ?)
-    // convenience members, not part of stored word
-    int nbits;      // derived from "ta" data type field
-    // tracking info for get_eis_an() and put_eis_an()
-    int len;
-    uint pr_bitno;
-    struct {
-        // Absolute memory locations -- first address pointed
-        // to by the descriptor and bounds of the relevent segment
-        // or page, if any.
-        // The addr member is initially the address of the first word
-        // pointed to by the descriptor.  On subsequent pages, the addr
-        // member matches min_addr.
-        uint ringno;
-        uint segno;
-        uint offset;
-        int bitpos;
-        // uint first_bitno;
-        uint min_addr;  // segment or page base
-        uint max_addr;  // segment or page last word
-        uint addr;
-    } area;
-    struct {
-        // absolute memory locations
-        uint addr;
-        int bitpos;
-    } curr;
-    flag_t first;
-    t_uint64 word;      // buffers full words to/from memory
-    struct {
-        // Info for numeric operand descriptors only
-        int s;      // sign and type: 00b floating with leading sign; 01b-11b scaled fixed point, 01 leading sign, 10 trailing, 11 unsigned
-        int scaling_factor;
-    } num;
-} eis_gen_desc_t;
-
-typedef eis_gen_desc_t eis_alpha_desc_t;
-typedef eis_alpha_desc_t eis_bit_desc_t;
-typedef eis_alpha_desc_t eis_num_desc_t;
-
-#endif  // OLD EIS stuff
-
-// obsolete typedef -- hold named register sub-fields in their inefficient
-// native format.
-/* #define CU_PPR_P(CU) (bitval36(CU.word0bits, 18)) */
-
 // ============================================================================
 // === Variables
 
@@ -612,7 +553,7 @@ extern AR_PR_t AR_PR[8];    // Combined Pointer Registers and Address Registers
 extern PPR_t PPR;           // Procedure Pointer Reg, 37 bits, internal only
 extern TPR_t TPR;           // Temporary Pointer Reg, 42 bits, internal only
 extern uint8 reg_RALR;      // Ring Alarm Reg, 3 bits
-extern cpu_t *cpup;     // Everything you ever wanted to know about a CPU
+extern cpu_t *cpup;     // Almost Everything you ever wanted to know about a CPU
 
 extern ctl_unit_data_t cu;
 extern cpu_state_t cpu;
@@ -762,26 +703,6 @@ extern const char* mf2text(const eis_mf_t* mfp);
 extern int fetch_mf_ops(const eis_mf_t* mf1p, t_uint64* word1p, const eis_mf_t* mf2p, t_uint64* word2p, const eis_mf_t* mf3p, t_uint64* word3p);
 extern int get_eis_indir_addr(t_uint64 word, uint* addrp);
 extern int addr_mod_eis_addr_reg(instr_t *ip);
-#if 0
-// EIS Alphanumeric operands
-extern const char* eis_alpha_desc_to_text(const eis_mf_t* mfp, const eis_gen_desc_t* descp);
-extern void parse_eis_alpha_desc(t_uint64 word, const eis_mf_t* mfp, eis_alpha_desc_t* descp);
-extern int get_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib);
-extern int get_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint *nib);
-extern int put_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib);
-extern int put_eis_an_rev(const eis_mf_t* mfp, eis_alpha_desc_t *descp, uint nib);
-extern int save_eis_an(const eis_mf_t* mfp, eis_alpha_desc_t *descp);
-// EIS Bit String Operands
-extern const char* eis_bit_desc_to_text(const eis_mf_t* mfp, const eis_bit_desc_t* descp);
-extern void parse_eis_bit_desc(t_uint64 word, const eis_mf_t* mfp, eis_bit_desc_t* descp);
-extern int get_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t *bitp);
-extern int retr_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t *bitp);
-extern int put_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp, flag_t bitval);
-extern int save_eis_bit(const eis_mf_t* mfp, eis_bit_desc_t *descp);
-// EIS Numeric Operands
-extern void parse_eis_num_desc(t_uint64 word, const eis_mf_t* mfp, eis_num_desc_t* descp);
-extern const char* eis_num_desc_to_text(const eis_mf_t* mfp, const eis_num_desc_t* descp);
-#endif
 
 /* mt.c */
 extern int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp);

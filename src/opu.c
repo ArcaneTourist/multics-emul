@@ -3323,11 +3323,142 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
  * NOTES
  *    AL39, section two claims that subtraction uses two's complement.  However,
  *    it's not that simple.  Diagnostic tape t4d_b.2.tap expects that
- *    <max negative number> minus zero will generate a carry.   So, instead of
- *    adding in the two's complement, we'll first add the one's complement and
- *    then add one.  The diagnostic tape also expects that negative one minus
- *    zero will yield a carry.
+ *    <max negative number> minus zero will generate a carry.  The diagnostic
+ *    tape also expects that negative one minus zero will yield a carry.
  *
+ * IMPLEMENTATION
+ *    So, instead of
+ *    adding in the two's complement, we'll first add the one's complement and
+ *    then add one.
+ *
+ * HOWEVER:
+ * Subtracting a small positive number from a larger positive number
+ * generates a carry!
+ *        004000000000
+ *      - 000100000000
+ *        ------------
+ *                        004000000000
+ *                      + 777677777777 (one's complement of 2nd arg)
+ *                        ------------
+ *                        003677777777 (carry is yes)
+ *                      +            1
+ *                        ------------
+ *                        003700000000 (no flags)
+ *        ------------
+ *        003700000000 (carry is yes -- really a borrow)
+ *
+ * WORSE:
+ * Subtracting a small number from itself yields carry & overflow:
+ *        000100000000
+ *      - 000100000000
+ *        ------------
+ *                        000100000000
+ *                      + 777677777777 (one's complement of 2nd arg)
+ *                        ------------
+ *                        777777777777 (carry is no)
+ *                      +            1
+ *                        ------------
+ *                        000000000000 (zero, carry, overflow?)
+ *       ------------
+ *       000000000000 (zero, carry, overflow?)
+ *
+ * NEED:
+ *        100000000000
+ *      - 000000000000
+ *        ------------
+ *        100000000000 (carry)
+ * NEED:
+ *        377777777777
+ *      - 000000000000
+ *        ------------
+ *        377777777777 (carry)
+ *
+ * WHAT IF add 1s complement first? (OK)
+ *        100000000000
+ *      - 000000000000
+ *        ------------
+ *                        100000000000 (max negative)
+ *                      +            1
+ *                        ------------
+ *                        100000000001 (no flags, almost max neg)
+ *                      + 777777777777 (one's complement of 2nd arg)
+ *                        ------------
+ *                        100000000000 (carry out)
+ *
+ * WHAT IF add 1s complement first? (maybe OK)
+ *        004000000000
+ *      - 000100000000
+ *        ------------
+ *                        004000000000
+ *                      +            1
+ *                        ------------
+ *                        004000000001 (no flags)
+ *                      + 777677777777 (one's complement of 2nd arg)
+ *                        ------------
+ *                        003700000000 (carry)
+ *        ------------
+ *        003700000000 (carry -- really a borrow)
+ *
+ * WHAT IF add 1s complement first? (no go)
+ *        000100000000
+ *      - 000100000000
+ *        ------------
+ *                        000100000000
+ *                      +            1
+ *                        ------------
+ *                        000100000001
+ *                      + 777677777777 (one's complement of 2nd arg)
+ *                        ------------
+ *                        000100000000 (oveflow or carry?)
+ *
+ * WHAT IF set flags during 2s complement? (OK?)
+ *        100000000000
+ *      - 000000000000
+ *                        000000000000 2nd arg
+ *                        777777777777 one's complement
+ *                      +            1
+ *                        ------------
+ *                        000000000000 (carry)
+ *                      + 100000000000
+ *                        ------------
+ *                      + 100000000000 (no flags)
+ *        ------------
+ *        100000000000 (carry)
+ *
+ * WHAT IF set flags during 2s complement? (maybe ok)
+ *        004000000000
+ *      - 000100000000
+ *        ------------
+ *                        000100000000 2nd arg
+ *                        777677777777 (one's complement of 2nd arg)
+ *                      +            1
+ *                        ------------
+ *                        777700000000 (no flags)
+ *                      + 004000000000
+ *                        ------------
+ *                        003700000000 (carry)
+ *        ------------
+ *        003700000000 (carry is yes -- really a borrow)
+ *
+ * WHAT IF set flags during 2s complement? (maybe ok)
+ * Subtracting a small number from itself
+ *        000100000000
+ *      - 000100000000
+ *        ------------
+ *                        777677777777 (one's complement of 2nd arg)
+ *                      +            1
+ *                        777700000000 (no flags)
+ *                      + 000100000000
+ *                        ------------
+ *                        000000000000 (zero, carry, overflow?)
+ *       ------------
+ *       000000000000 (zero, carry, overflow?)
+ *
+ *
+ * WHAT IF we don't allow the 2s complement ops to set flags?
+ * -- we would not get flags when subtracting zero...
+ *
+ * TODO: log the snippits of code from the diag tape...
  */
 
 static int sub36(t_uint64 a, t_uint64 b, t_uint64 *dest)
@@ -3335,41 +3466,39 @@ static int sub36(t_uint64 a, t_uint64 b, t_uint64 *dest)
     t_uint64 bsv = b;
     t_uint64 asv = a;
 
+#if 0
+    /*
+     * Add one, then add in the one's complement of the second arg
+     */
+
+    ...
+
+#else
+    /*
+     * Add in the one's complement of the second arg and then add one.
+     */
+
     b = (~ b) & MASK36;
     int ret = add36(a, b, &a);
 
     int carry = IR.carry;
-    log_msg(DEBUG_MSG, "OPU::subtract", "%012llo - %012llo ==> adding %012llo yields %012llo with carry=%c.\n", asv, bsv, b, a, IR.carry ? 'Y' : 'N');
+    if (opt_debug) {
+        log_msg(DEBUG_MSG, "OPU::subtract", "%012llo - %012llo\n", asv, bsv);
+        log_msg(DEBUG_MSG, "OPU::subtract", "%012llo + %012llo yields %012llo with carry=%c, overflow=%c.\n",
+            asv, b, a, IR.carry ? 'Y' : 'N', IR.overflow ? 'Y' : 'N');
+    }
 
     if (ret == 0) {
         b = 1;
         ret = add36(a, b, &a);
-        log_msg(DEBUG_MSG, "OPU::subtract", "adding one yields %012llo with carry=%c.\n", a, IR.carry ? 'Y' : 'N');
+        log_msg(DEBUG_MSG, "OPU::subtract", "adding one yields %012llo with carry=%c, overflow=%c.\n", a, IR.carry ? 'Y' : 'N', IR.overflow ? 'Y' : 'N');
         IR.carry |= carry;
-#if 0
-        if (do_18bit_math && TPR.is_value == 7 && (a>>18) == 0) {
-            // arithmetic on "dl" constant
-            if (opt_debug || (a>>18) != 0 || (w >> 18) != 0 || (a>>18) != 0)
-                log_msg(NOTIFY_MSG, "OPU::sub36", "Result = %012llo minus %06llo ,du operand yields %012llo at IC %06o \n", asv, bsv, a, PPR.IC);
-#if 0
-            flag_t is_neg = bit18_is_neg(a);
-            if (is_neg != IR.neg) {
-                log_msg(WARN_MSG, "OPU::sub36", "Changing IR.neg to %d for ,dl operand.\n", is_neg);
-                IR.neg = is_neg;
-                // cancel_run(STOP_WARN);
-            }
-#endif
-            if ((a >> 18) != 0 && ! IR.carry) {
-                log_msg(WARN_MSG, "OPU::sub36", "Carry may be wrong for ,dl operand.\n");
-                cancel_run(STOP_WARN);
-            }
-        }
-#endif  // 18-bit math
         if (ret == 0)
             *dest = a;
     } // ret == 0
 
     return ret;
+#endif
 }
 
 // ----------------------------------------------------------------------------
@@ -3459,6 +3588,8 @@ static int op_and(instr_t *ip, t_uint64 *op1, t_uint64 *op2, t_uint64 *dest1, t_
     if (op2 == NULL) {
         if ((ret = fetch_op(ip, &word1)) != 0)
             return ret;
+        if (opt_debug)
+            log_msg(DEBUG_MSG, "OPU::and", "%012llo & %012llo\n", *op1, word1);
     } else {
         if ((ret = fetch_pair(TPR.CA, &word1, &word2)) != 0)    // BUG: fetch_op not needed?
             return ret;

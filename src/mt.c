@@ -23,11 +23,16 @@ void mt_init()
     memset(tape_state, 0, sizeof(tape_state));
 }
 
+/*
+ * mt_iom_cmd()
+ *
+ */
+
 int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
 {
     log_msg(DEBUG_MSG, "MT::iom_cmd", "Chan 0%o, dev-cmd 0%o, dev-code 0%o\n", chan, dev_cmd, dev_code);
 
-    // BUG: Should Major be added to 040? and left shifted 6? Ans: it's 4 bits
+    // Major codes are 4 bits...
 
     if (chan < 0 || chan >= ARRAY_SIZE(iom.devices)) {
         *majorp = 05;   // Real HW could not be on bad channel
@@ -67,10 +72,13 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
                 *subp = 023;    // BUG: should be 040?
             }
             // todo: switch to having all cmds update status reg?  This would allow setting 047 bootload complete
+            log_msg(INFO_MSG, "MT::iom_cmd", "Request status is %02o,%02o.\n",
+                *majorp, *subp);
             return 0;
         }
         case 5: {               // CMD 05 -- Read Binary Record
-            // We read the record into the tape controllers memory; IOM can retrieve via PCW 
+            // We read the record into the tape controllers memory;
+            // IOM can retrieve via PCW 
             if (tape_statep->bufp == NULL)
                 if ((tape_statep->bufp = malloc(bufsz)) == NULL) {
                     log_msg(ERR_MSG, "MT::iom_cmd", "Malloc error\n");
@@ -107,9 +115,12 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             *majorp = 0;
             *subp = 0;
             if (sim_tape_wrp(unitp)) *subp |= 1;
+            log_msg(INFO_MSG, "MT::iom_cmd", "Reset status is %02o,%02o.\n",
+                *majorp, *subp);
             return 0;
         case 046: {             // BSR
             // BUG: Do we need to clear the buffer?
+            // BUG: We don't check the channel data for a count
             t_mtrlnt tbc;
             int ret;
             if ((ret = sim_tape_sprecr(unitp, &tbc)) == 0) {
@@ -135,6 +146,8 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             *majorp = 0;
             *subp = 0;
             if (sim_tape_wrp(unitp)) *subp |= 1;
+            log_msg(INFO_MSG, "MT::iom_cmd", "Reset device status is %02o,%02o.\n",
+                *majorp, *subp);
             return 0;
         default: {
             *majorp = 05;
@@ -194,10 +207,11 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
             log_msg(ERR_MSG, "MT::iom_io", "Read buffer exhausted on channel %d\n", chan);
             return 1;
         }
-        // log_msg(DEBUG_MSG, "MT::iom_io", "Data moved from tape controller buffer to IOM\n");
         *majorp = 0;
         *subp = 0;      // BUG: do we need to detect end-of-record?
         if (sim_tape_wrp(unitp)) *subp |= 1;
+        if (opt_debug)
+            log_msg(DEBUG_MSG, "MT::iom_io", "Data moved from tape controller buffer to IOM\n");
         return 0;
     } else {
         // write
@@ -217,7 +231,7 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
 
 t_stat mt_svc(UNIT *up)
 {
-    log_msg(DEBUG_MSG, "MT::service", "not doing anything!\n");
+    log_msg(INFO_MSG, "MT::service", "not doing anything!\n");
     cancel_run(STOP_WARN);
     return 0;
 }

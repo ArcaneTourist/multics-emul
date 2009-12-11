@@ -53,7 +53,7 @@ using namespace std;
 #include <iostream>
 #include "hw6180.h"
 
-enum atag_tm { atag_r = 0, atag_ri = 1, atag_it = 2, atag_ir = 3 }; // BUG: move to hdr
+// enum atag_tm { atag_r = 0, atag_ri = 1, atag_it = 2, atag_ir = 3 };  // BUG: move to hdr
 
 #include "eis.hpp"
 

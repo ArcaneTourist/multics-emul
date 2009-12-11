@@ -76,7 +76,7 @@ typedef struct pcw_s {
     flag_t mask;    // extension control or mask; 1 bit; bit 21
     int control;    // 2 bits; bit 22..23
     int chan_cmd;   // 6 bits; bit 24..29; AN87 says: 00 single record xfer, 02 non data xfer, 06 multi-record xfer, 10 single char record xfer
-    int chan_data;  // 6 bits; bit 30..35
+    int chan_data;  // 6 bits; bit 30..35; often some sort of count
     //
     int chan;       // 6 bits; bits 3..8 of word 2
 } pcw_t;
@@ -124,7 +124,7 @@ typedef struct {
     // chan_stat; 3 bits; 1=busy, 2=invalid chan, 3=incorrect dcw, 4=incomplete
     // iom_stat; 3 bits; 1=tro, 2=2tdcw, 3=bndry, 4=addr ext, 5=idcw,
     int addr_ext;   // BUG: not maintained
-    // rcound;  // residue in PCW or last IDCW
+    int rcount; // 3 bits; residue in (from) PCW or last IDCW count (chan-data)
     // addr;    // addr of *next* data word to be transmitted
     // char_pos
     // read;    // flag
@@ -310,7 +310,7 @@ static int handle_pcw(int chan, int addr)
  * being processed is the one specified in the PCW, not the connect
  * channel.
  *
- * Send a PCW to the device and perform any other operations specified
+ * Sends a PCW to the device and performs any other operations specified
  * by the PCW.  This can include requesting one or more list services,
  * sending interrupts, dispatching DCWs, and lastly performing a status
  * service.
@@ -339,7 +339,7 @@ static int do_channel(int chan, pcw_t *p)
 
 
     /*
-     * Second of three phases
+     * Second of four phases
      *     Loop requesting list service(s) and data service(s)
      *
      * Check to see the PCW requires us to request a list service,
@@ -445,6 +445,9 @@ static int do_channel(int chan, pcw_t *p)
      *
      * 3.0 -- Following the status service, the channel will request the
      * IOM to do a multiplex interrupt service.
+     *
+     * BUG: when do we need to do this?  Always?  Sometimes?
+     *
      */
 
     log_msg(DEBUG_MSG, moi, "Finished\n");
@@ -794,6 +797,8 @@ static int do_dcw(int chan, int addr, int *controlp, int *need_indir_svc)
  * expects two routines for each device: one to handle commands and
  * one to handle I/O transfers.
  *
+ * Note: we always set chan_status.rcount to p->chan_data -- we don't
+ * send/receive chan_data to/from any currently implemented devices...
  */
 
 static int dev_send_pcw(int chan, pcw_t *p)
@@ -803,7 +808,7 @@ static int dev_send_pcw(int chan, pcw_t *p)
     DEVICE* devp = iom.devices[chan];
     // if (devp == NULL || devp->units == NULL)
     if (devp == NULL) {
-        // BUG: no device connected, what's the fault code(s) ?
+        // BUG: no device connected; what's the appropriate fault code(s) ?
         chan_status.power_off = 1;
         log_msg(WARN_MSG, "IOM::dev-send-pcw", "No device connected to channel %#o(%d); Auto breakpoint.\n", chan, chan);
         iom_fault(chan, __LINE__, 0, 0);
@@ -812,9 +817,12 @@ static int dev_send_pcw(int chan, pcw_t *p)
     }
     chan_status.power_off = 0;
 
+    if (p->chan_data != 0)
+        log_msg(INFO_MSG, "IOM::dev-send-pcw", "Chan data is %o (%d)\n", p->chan_data, p->chan_data);
+
     switch(iom.channels[chan]) {
         case DEV_NONE:
-            // BUG: no device connected, what's the fault code(s) ?
+            // BUG: no device connected; what's the appropriate fault code(s) ?
             chan_status.power_off = 1;
             log_msg(WARN_MSG, "IOM::dev-send-pcw", "Device on channel %#o (%d) is missing.\n", chan, chan);
             iom_fault(chan, __LINE__, 0, 0);
@@ -822,12 +830,14 @@ static int dev_send_pcw(int chan, pcw_t *p)
             return 1;
         case DEV_TAPE: {
             int ret = mt_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chan_status.major, &chan_status.substatus);
+            chan_status.rcount = p->chan_data;
             log_msg(DEBUG_MSG, "IOM::dev-send-pcw", "MT returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
             //return 0; // ignore ret in favor of chan_status.{major,substatus}
             return ret; // caller must choose between our return and the chan_status.{major,substatus}
         }
         case DEV_CON: {
             int ret = con_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chan_status.major, &chan_status.substatus);
+            chan_status.rcount = p->chan_data;
             log_msg(DEBUG_MSG, "IOM::dev-send-pcw", "CON returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
             // log_msg(NOTIFY_MSG, "IOM::dev-send-pcw", "CON: Auto breakpoint\n");
             // cancel_run(STOP_IBKPT);
@@ -1236,7 +1246,7 @@ int lpw_write(int chan, int chanloc, const lpw_t* p)
 // ============================================================================
 
 /*
- * send_chan_flags(0
+ * send_chan_flags
  *
  * Stub
  */
@@ -1255,6 +1265,28 @@ static int send_chan_flags()
  * Write status info into a status mailbox.
  *
  * BUG: Only partially implemented.
+ * BUG: BUG: The diag tape will crash because don't write a non-zero
+ * value to the low 4 bits of the first status word.  However...
+ * It turns out that the last PCW sent to the tape before the diag
+ * crash had a zero for "channel data".  Unless the tape drive was
+ * supposted to write something to the 6-bit "channel data" field???
+ * Unless we should have been doing more status saves (and thus
+ * moving the status pointer)... Unlikely...
+ *
+ * More about the diag tape...
+ * Why is the SCW pointing at the mailbox LPW and LPW ext?  Not invalid,
+ * but perhaps somewhat odd...
+ * Actually:
+ *      1570 LPW
+ *      1571
+ *      1572 SCW
+ *      1573 DCW
+ * 4.3.3 Indirect Data Service says DCW is written back to the *mailbox* ?
+ * (Because the central can't find words in the middle of lists?)
+ *
+ * What's the chance that the diag tape has a timing issue and thinks
+ * it's looking at the LPW when we've already stomped it with the
+ * status?  The LPW has a 12 bit tally which initially is 3...
  *
  */
 
@@ -1272,16 +1304,20 @@ static int status_service(int chan)
     word1 = setbits36(word1, 6, 6, chan_status.substatus);
     word1 = setbits36(word1, 12, 1, 1); // BUG: even/odd
     word1 = setbits36(word1, 13, 1, 1); // BUG: marker int
-    // word1 = setbits36(word1, 14, 2, 0);
+    word1 = setbits36(word1, 14, 2, 0);
     word1 = setbits36(word1, 16, 1, 0); // BUG: initiate flag
-    // word1 = setbits36(word1, 17, 1, 0);
-    word2 = 0;
+    word1 = setbits36(word1, 17, 1, 0);
 #if 0
+    // BUG: Unimplemented status bits:
     word1 = setbits36(word1, 18, 3, chan_status.chan_stat);
     word1 = setbits36(word1, 21, 3, chan_status.iom_stat);
     word1 = setbits36(word1, 24, 6, chan_status.addr_ext);
-    word1 = setbits36(word1, 30, 6, chan_status.dcw_residue);
+#endif
+    word1 = setbits36(word1, 30, 6, chan_status.rcount);
 
+    word2 = 0;
+#if 0
+    // BUG: Unimplemented status bits:
     word2 = setbits36(word2, 0, 18, chan_status.addr);
     word2 = setbits36(word2, 18, 3, chan_status.char_pos);
     word2 = setbits36(word2, 21, 1, chan_status.is_read);
@@ -1298,7 +1334,6 @@ static int status_service(int chan)
         -- scw;         // force y-pair behavior
     }
     int addr = getbits36(M[scw], 0, 18);    // absolute
-    // log_msg(DEBUG_MSG, "IOM::status", "Writing status for chan %d to 0%o\n", chan, addr);
     log_msg(DEBUG_MSG, "IOM::status", "Writing status for chan %d to 0%o=>0%o\n", chan, scw, addr);
     log_msg(DEBUG_MSG, "IOM::status", "Status: 0%012llo 0%012llo\n", word1, word2);
     log_msg(DEBUG_MSG, "IOM::status", "Status: (0)t=Y, (1)pow=%d, (2..5)major=0%02o, (6..11)substatus=0%02o, (12)e/o=Z, (13)marker=Y, (14..15)Z, 16(Z?), 17(Z)\n",
