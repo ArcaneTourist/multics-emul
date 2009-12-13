@@ -155,6 +155,7 @@ static void hw6180_init(void)
     // Only one SCU
     memset(&scu, 0, sizeof(scu));
     scu.mode = 1;   // PROGRAM mode
+    scu.options.clock_speed = 250000; // about 1/4 of a MIP
     for (int i = 0; i < ARRAY_SIZE(scu.ports); ++i) {
         scu.ports[i].is_enabled = 0;
         scu.ports[i].idnum = -1;

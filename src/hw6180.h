@@ -497,10 +497,7 @@ typedef struct {
     } config_switches;
 #endif
 
-    // CPU/IOM connectivity; designated 0..7; negative to disable
-    // BUG: holds the port number of the connected device, but not
-    // that devices type or which of multiple devices it is...
-    // int ports[8];
+    // CPU/IOM connectivity; designated 0..7
     struct {
         flag_t is_enabled;
         enum active_dev type;   // type of connected device
@@ -527,6 +524,10 @@ typedef struct {
             uint port;          // port to which mask is assigned (0..7)
         } mask_assign;  // eima_data[4];
     } interrupts[4];
+
+    struct {
+        int clock_speed;    // 0 for realtime; otherwise instructions/sec
+    } options;
 } scu_t;
 
 // I/O Multiplexer
@@ -646,6 +647,7 @@ extern int scu_set_cpu_mask(t_uint64 addr);
 extern int scu_get_mode_register(t_uint64 addr);
 extern int scu_get_config_switches(t_uint64 addr);
 extern int scu_set_config_switches(t_uint64 addr);
+extern void scu_clock_service(void);
 extern int scu_get_calendar(t_uint64 addr);
 
 /* apu.c */

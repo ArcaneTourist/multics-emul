@@ -270,11 +270,12 @@ flag_t fault_gen_no_fault;
 // This only controls warning messages
 extern int bootimage_loaded;    // only relevent for the boot CPU ?
 
-// Debugging
+t_uint64 total_cycles;      // Used for statistics and for simulated clock
+
+// Debugging and statistics
 int opt_debug;
 t_uint64 calendar_a;
 t_uint64 calendar_q;
-t_uint64 total_cycles;
 t_uint64 total_instr;
 t_uint64 total_msec;
 
@@ -337,9 +338,8 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
      *  bootload_tape_label.alm will try to execute the undocumented "ldo"
      *  instruction.
      *  However, we might as well run the IOM or IOX to do the I/O.  Note that
-     *  prior to booting, the emulated IOM or IOX must load a tiny IOM control
-     *  program into memory.  This is done in init_memory_iom() or in
-     *  init_memory_iox().
+     *  prior to booting, the emulated IOM or IOX must load IOM control words
+     *  into memory.  This is done in init_memory_iom() or in init_memory_iox().
      *  This approach replaces the dozen or so lines of code that used to live
      *  here with a single call to iom_interrupt().
      */
@@ -502,12 +502,16 @@ uint32 ncycles = 0;
 ninstr = 0;
     uint32 start = sim_os_msec();
 
-    if (opt_debug && sim_interval > 32) {
+    // TODO: use sim_activate for the kbd poll
+    // if (opt_debug && sim_interval > 32)
+    if (opt_debug && sim_interval == NOQUEUE_WAIT) {
         // debug mode is slow, so be more responsive to keyboard interrupt
         sim_interval = 32;
     }
+
     int prev_seg = PPR.PSR;
-    while (reason == 0) {   /* loop until halted */
+    // Loop until it's time to bounce back to SIMH
+    while (reason == 0) {
         if (PPR.PSR != prev_seg) {
             check_seg_debug();
             prev_seg = PPR.PSR;
@@ -565,7 +569,8 @@ ninstr = 0;
         // And record history, etc
         //
 
-        ++ ncycles;
+        ++ total_cycles;
+        ++ ncycles;         // TODO: get rid of this
         sim_interval--; // todo: maybe only per instr or by brkpoint type?
         if (opt_debug) {
             log_ignore_ic_change();
@@ -581,7 +586,6 @@ ninstr = 0;
     }   // while (reason == 0)
 
     uint32 delta = sim_os_msec() - start;
-    total_cycles += ncycles;
     total_msec += delta;
     total_instr += ninstr;
     if (delta > 500)

@@ -634,25 +634,45 @@ int scu_get_calendar(t_uint64 addr)
     // 52 bit clock
     // microseconds since 0000 GMT, Jan 1, 1901 // not 1900 which was a per century exception to leap years
 
-    // sim_os_msec() gives elapsed time in microseconds; But does it return an OS agnositic value?
+    t_uint64 now;
+    if (scu.options.clock_speed != 0) {
+        t_uint64 i_cycles = total_cycles * 2 / 3;   // fetch, exec, exec
+        //t_uint64 e_sec = i_cycles / scu.options.clock_speed;
+        //int e_us = 1000000 * (i_cycles % scu.options.clock_speed) / scu.options.clock_speed;
+        t_uint64 elapsed = i_cycles * 1000000 / scu.options.clock_speed;
 
-    // gettimeofday() is POSIX complient
-    struct timeval tv;
-    struct timezone tz;
-    if (gettimeofday(&tv, &tz) != 0) {
-        log_msg(ERR_MSG, "SCU::getcal", "Error from OS gettimeofday\n");
-        reg_A = 0;
-        reg_Q = 0;
-        return 1;
+        // returned time is since epoch of 00:00:00 UTC, Jan 1, 1970
+        //t_uint64 epoch = (t_uint64) 69 * 365 * 24 * 3600;
+
+        now = (t_uint64) (2009 - 1901) * 365 * 24 * 3600;
+        now = now * 1000000 + elapsed;
+    } else {
+        // Use real time
+        // sim_os_msec() gives elapsed time in microseconds; But does it return an OS agnositic value?
+        // BUG: yes it does ... and uses gettimeofday under UNIX .. need to use it!
+
+        // gettimeofday() is POSIX complient
+        struct timeval tv;
+        struct timezone tz;
+        if (gettimeofday(&tv, &tz) != 0) {
+            log_msg(ERR_MSG, "SCU::getcal", "Error from OS gettimeofday\n");
+            reg_A = 0;
+            reg_Q = 0;
+            return 1;
+        }
+        t_uint64 seconds = tv.tv_sec;
+        seconds += (t_uint64) 69 * 365 * 24 * 3600; // returned time is since epoch of 00:00:00 UTC, Jan 1, 1970
+        now = seconds * 1000000 + tv.tv_usec;
+        // reg_Q = now & MASK36;
+        // reg_A = (now >> 36) & MASK36;
+        // log_msg(INFO_MSG, "calendar", "UNIX time %ld; multics time {%012llo, %012llo}\n", tv.tv_sec, reg_A, reg_Q);
     }
-    t_uint64 seconds = tv.tv_sec;
-    seconds += (t_uint64) 69 * 365 * 24 * 3600; // returned time is since epoch of 00:00:00 UTC, Jan 1, 1970
-    t_uint64 now = seconds * 1000000 + tv.tv_usec;
+
     reg_Q = now & MASK36;
     reg_A = (now >> 36) & MASK36;
+
     calendar_a = reg_A; // only for debugging
     calendar_q = reg_Q; // only for debugging
-    // log_msg(INFO_MSG, "calendar", "UNIX time %ld; multics time {%012llo, %012llo}\n", tv.tv_sec, reg_A, reg_Q);
 
     return 0;
 }

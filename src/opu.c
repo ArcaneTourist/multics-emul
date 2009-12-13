@@ -97,14 +97,14 @@ static int do_op(instr_t *ip)
     addr_modes_t orig_mode = get_addr_mode();
     int orig_ic = PPR.IC;
 
-#if 0
+#if 1
     if (ip->is_eis_multiword) {
         extern DEVICE cpu_dev;
         ++opt_debug; ++ cpu_dev.dctrl;  // BUG
     }
 #endif
     int ret = do_an_op(ip);
-#if 0
+#if 1
     if (ip->is_eis_multiword) {
         extern DEVICE cpu_dev;
         --opt_debug; --cpu_dev.dctrl;   // BUG
@@ -3327,9 +3327,13 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
  *    tape also expects that negative one minus zero will yield a carry.
  *
  * IMPLEMENTATION
- *    So, instead of
- *    adding in the two's complement, we'll first add the one's complement and
- *    then add one.
+ *    So, instead of adding in the two's complement, we'll first add the one's
+ *    complement and then add one.
+ *
+ *  ************
+ *  All the following in noise -- valid but unexpected behavior of carry bit...
+ *  ************
+ *
  *
  * HOWEVER:
  * Subtracting a small positive number from a larger positive number
