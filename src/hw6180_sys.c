@@ -5,12 +5,15 @@
 #include "hw6180.h"
 #include <ctype.h>
 
+// The following are assigned to SIMH function pointers
 static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr);
 static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr addr);
+static void hw6180_init(void);
 
 extern DEVICE cpu_dev;
 extern DEVICE tape_dev;
 extern DEVICE opcon_dev;
+extern DEVICE iom_dev;
 //extern DEVICE dsk_dev;
 extern REG cpu_reg[];
 extern t_uint64 M[];
@@ -20,6 +23,8 @@ extern switches_t switches;
 extern cpu_ports_t cpu_ports;
 extern scu_t scu;
 extern iom_t iom;
+
+//=============================================================================
 
 /* SCP data structures
 
@@ -44,6 +49,7 @@ DEVICE *sim_devices[] = {
     // &cpu_dev2,
     &tape_dev,
     &opcon_dev,
+    &iom_dev,
     NULL
 };
 
@@ -53,6 +59,8 @@ const char *sim_stop_messages[] = {
     "BUG-STOP -- Internal error, further execution probably pointless",
     "WARN-STOP -- Internal error, further processing might be ok",
     "Breakpoint",
+    "DIS -- A 'Delay Until Interrupt Set' instruction has been executed",
+    "SIMH requested stop",
     // "Invalid Opcode"
     0
 };
@@ -71,29 +79,38 @@ static struct sim_ctab sim_cmds[] =  {
 };
 
 // One-time-only initialization for emulator
-static void hw6180_init(void);
 void (*sim_vm_init)(void) = hw6180_init;
+
+//=============================================================================
 
 /*
     Variables custom to HW6180 that aren't normally present in other
     SIMH emulators.
 */
+
 int bootimage_loaded = 0;
+sysinfo_t sys_opts;
 
-/*  SIMH binary loader.
-        The load normally starts at the current value of the PC.
-    Args
-        fileref -- file opened by SIMH
-        cptr -- VM specific args (from cmd line?)
-        fnam -- filename
-        write_flag -- indicates whether to load or write
-    
-*/
+//-----------------------------------------------------------------------------
 
-// The following are set by parse_addr() and used by fprint_sym()
-//static int last_parsed_seg;
-//static int last_parsed_offset;
-//static t_addr last_parsed_addr;
+static void init_memory_iom(void);
+
+//=============================================================================
+
+/*
+ * sim_load()
+ *
+ * SIMH binary loader.
+ *
+ * The load normally starts at the current value of the PC.
+ * Args
+ *     fileref -- file opened by SIMH
+ *     cptr -- VM specific args (from cmd line?)
+ *     fnam -- filename
+ *     write_flag -- indicates whether to load or write
+ *
+ * BUG: Unimplemented
+ */
 
 t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
 {
@@ -109,12 +126,27 @@ t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
     abort();
 }
 
-// static void init_memory_iox(void);
-static void init_memory_iom(void);
+//=============================================================================
+
+/*
+ * hw6180_init()
+ *
+ * Once-only simulator initialization.  Called by SIMH via the sim_vm_init
+ * pointer.
+ *
+ * This function mostly sets the values of simulated physical switches
+ * and sets up structures representing how the various devices are
+ * physically cabled together.
+ *
+ * TODO: Provide a more general function interface for specifying
+ * that two devices are interconnected.
+ *
+ * TODO: Move some of this code into device reset routines.
+ */
 
 static void hw6180_init(void)
 {
-    out_msg("DEBUG:    SYS::init", "Once-only initialization running.\n");
+    log_msg(INFO_MSG, "SYS::init", "Once-only initialization running.\n");
 
     fault_gen_no_fault = 0;
     sim_vm_parse_addr = parse_addr;
@@ -123,15 +155,24 @@ static void hw6180_init(void)
 
     mt_init();
     console_init();
+    iom_init();
 
     // todo: set debug flags for all devices
     // cpu_dev.dctrl = 1;
     // tape_dev.dctrl = 1;
 
     sim_brk_types = SWMASK('E');    // execution
-    sim_brk_types |= SWMASK('M');   // memory (absolute address)
-    sim_brk_types |= SWMASK('W');   // memory write (absolute address)
+    sim_brk_types |= SWMASK('M');   // memory read/write
+    sim_brk_types |= SWMASK('W');   // memory write
     sim_brk_dflt = SWMASK('E');
+
+    // System-wide options
+    memset(&sys_opts, 0, sizeof(sys_opts));
+    sys_opts.clock_speed = 250000; // about 1/4 of a MIP
+    sys_opts.iom_times.connect = -1;
+    sys_opts.iom_times.chan_activate = -1;
+    sys_opts.mt_times.read = 1000;
+    sys_opts.mt_times.xfer = -1;
 
     // Hardware config -- todo - should be based on config cards!
     // BUG/TODO: need to write config deck at 012000 ? Probably not
@@ -144,39 +185,47 @@ static void hw6180_init(void)
     // CPU Switches
     memset(&switches, 0, sizeof(switches));
     switches.cpu_num = 0;   // CPU 'A' is bootload cpu (init_early_config.pl1)
-    // AN87, 1-41 claims faults are at 100o
-    // FLT_BASE switches are 7 MSB of 12bit addr
-    switches.FLT_BASE = 2;  // multics requires setting 02; 2<<5 == 0100
-    // Actually, the diag tape may just choose different addresses
-    // for crashing depending on the setting of FLT_BASE...
+    // FLT_BASE switches are the 7 MSB of a 12bit addr
+    // AN87, 1-41 claims multics requires faults to be at 100o
+    switches.FLT_BASE = 2;  // 2<<5 == 0100
+    // At one time, it seemed that the diag tape required using different
+    // fault base switch settings.  However, the diag tape may just choose
+    // different addresses for crashing depending on the setting of FLT_BASE...
     // switches.FLT_BASE = 0163; // diag tape allows any loc *except* 2->0100
     // switches.FLT_BASE = 0; // diag tape allows any location *except* 2->0100
 
     // Only one SCU
     memset(&scu, 0, sizeof(scu));
     scu.mode = 1;   // PROGRAM mode
-    scu.options.clock_speed = 250000; // about 1/4 of a MIP
-    for (int i = 0; i < ARRAY_SIZE(scu.ports); ++i) {
-        scu.ports[i].is_enabled = 0;
+    for (int i = 0; i < ARRAY_SIZE(scu.ports); ++i)
         scu.ports[i].idnum = -1;
-    }
-    for (int i = 0; i < ARRAY_SIZE(scu.interrupts); ++i)
+
+    // BUG/TODO: the following belongs in a scu_reset()
+    for (int i = 0; i < ARRAY_SIZE(scu.ports); ++i)
+        scu.ports[i].is_enabled = 0;
+    for (int i = 0; i < ARRAY_SIZE(scu.interrupts); ++i) {
         scu.interrupts[i].mask_assign.unassigned = 1;
+        scu.interrupts[i].exec_intr_mask = ~0 & MASKBITS(32);
+    }
+
+    // Only two of the four SCU masks are used; these correspond to the "A"
+    // and "B" rotary switches
+    scu.interrupts[0].avail = 1;
+    scu.interrupts[1].avail = 1;
 
     // Only one IOM
     memset(&iom, 0, sizeof(iom));
+    iom.iom_num = 0;    // IOM "A"
     for (int i = 0; i < ARRAY_SIZE(iom.ports); ++i) {
         iom.ports[i] = -1;
-        iom.channels[i] = DEV_NONE;
     }
-    iom.iom_num = 0;    // IOM "A"
+    for (int i = 0; i < ARRAY_SIZE(iom.channels); ++i) {
+        iom.channels[i].type = DEV_NONE;
+    }
 
+    // TODO: init_memory_iom() should probably be called by boot()
     //init_memory_iox();
     init_memory_iom();      // Using IOX causes use of unknown instr "ldo" and IOX has an undocumented mailbox architecture
-
-    // Only two of the four SCU masks are used; these correspond to the "A" and "B" rotary switches
-    scu.interrupts[0].avail = 1;
-    scu.interrupts[1].avail = 1;
 
     // CPU port 'd' (1) connected to port '0' of SCU
     // scas_init's call to make_card seems to require that the CPU be connected
@@ -190,6 +239,9 @@ static void hw6180_init(void)
     scu.ports[cpu_ports.scu_port].type = ADEV_CPU;
     scu.ports[cpu_ports.scu_port].idnum = switches.cpu_num;
     scu.ports[cpu_ports.scu_port].dev_port = cpu_port;
+
+    // The following should probably be in scu_rest() because mask
+    // assignments can be changed by running code
     // GB61, pages 9-1 and A-2: Set Mask A to port that the bootload CPU is
     // connected to; Set Mask B to off
     scu.interrupts[0].mask_assign.unassigned = 0;
@@ -212,80 +264,76 @@ static void hw6180_init(void)
 
     /* Console */
     int con_chan = 012; // channels 010 and higher are probed for an operators console
-    iom.channels[con_chan] = DEV_CON;
-    iom.devices[con_chan] = &opcon_dev;
-
-
-    log_msg(NOTIFY_MSG, "SYS::init", "Sizeof t_addr is %d -- %d bits\n", sizeof(t_addr), sizeof(t_addr) * 8);
+    iom.channels[con_chan].type = DEV_CON;
+    iom.channels[con_chan].dev = &opcon_dev;
+    log_msg(DEBUG_MSG, "SYS::init", "Once-only initialization complete.\n");
 }
 
 
+//=============================================================================
+
+/*
+ * init_memory_iom()
+ *
+ * Load a few words into memory.   Simulates pressing the BOOTLOAD button
+ * on an IOM or equivalent.
+ *
+ * All values are from bootload_tape_label.alm.  See the comments at the
+ * top of that file.  See also doc #43A239854.
+ *
+ * NOTE: The values used here are for an IOM, not an IOX.
+ * See init_memory_iox() below.
+ *
+ */
+
 static void init_memory_iom()
 {
-    // On the physical hardware, settings of various switchs are reflected into memory.  We provide
-    // no support for simulation of the physical switches because there is only one
-    // useful value for almost all of the switches.  So, we hard code the memory values
-    // that represent usable switch settings.
+    // On the physical hardware, settings of various switchs are reflected
+    // into memory.  We provide no support for simulation of of the physical
+    // switches because there is only one useful value for almost all of the
+    // switches.  So, we hard code the memory values that represent usable
+    // switch settings.
+
+    // The presence of a 0 in the top six bits of word 0 denote an IOM boot
+    // from an IOX boot
+
+    // " The channel number ("Chan#") is set by the switches on the IOM to be
+    // " the channel for the tape subsystem holding the bootload tape. The
+    // " drive number for the bootload tape is set by switches on the tape
+    // " MPC itself.
+
+    // Which controller channel is used for the tape drive would seem to be
+    // arbitrary.  However, the T&D tape actually executes an IMW word.
+    // Perhaps this is due to a bug elsewhere.  If not, our previous
+    // channel choice of 036 caused the instruction word to have an illegal
+    // tag.  The IMW at 00214 is 006715/075000 (lda 06715).  GB61 has an
+    // example of using channel 14; we'll use that which just happens to
+    // leave the 006715 value unchanged
     //
-    // All values from bootload_tape_label.alm
-    // See also doc #43A239854.
-    // BUG: This is for an IOM.  Do we want an IOM or an IOX?
-    // The presence of a 0 in the top six bits of word 0 denote an IOM boot from an IOX boot
+    // Channels range from 1 to 037; the first several channels are
+    // reserved.
+    int tape_chan = 14;     // 12 bits or 6 bits; controller channel
+    // "SCU port" # (deduced as meaning "to which bootload IOM is attached")
+    int port = iom.scu_port;    // 3 bits; 
 
-    // " The channel number ("Chan#") is set by the switches on the IOM to be the
-    // " channel for the tape subsystem holding the bootload tape. The drive number
-    // " for the bootload tape is set by switches on the tape MPC itself.
-
-    int tape_chan = 036;        // 12 bits or 6 bits;   // Arbitrary; controller channel; max=40
-    int port = iom.scu_port;    // 3 bits;  // SCU port # to which bootload IOM is attached (deduced)
-
-    iom.channels[tape_chan] = DEV_TAPE;
-    iom.devices[tape_chan] = &tape_dev;
+    iom.channels[tape_chan].type = DEV_TAPE;
+    iom.channels[tape_chan].dev = &tape_dev;
 
     int base = 014;         // 12 bits; IOM base
-    int pi_base = 01200;    // 15 bits; interrupt cells; bootload_io.alm insists that we match template_slt_$iom_mailbox_absloc
+    // bootload_io.alm insists that pi_base match
+    // template_slt_$iom_mailbox_absloc
+    int pi_base = 01200;    // 15 bits; interrupt cells
     int iom = 0;            // 3 bits; only IOM 0 would use vector 030
 
     t_uint64 cmd = 5;       // 6 bits; 05 for tape, 01 for cards
-    int dev = 0;        // 6 bits: drive number
+    int dev = 0;            // 6 bits: drive number
 
-    t_uint64 imu = 0;       // 1 bit; Maybe an is-IMU flag; IMU is later version of IOM
+    // Maybe an is-IMU flag; IMU is later version of IOM
+    t_uint64 imu = 0;       // 1 bit
 
 #define MAXMEMSIZE (16*1024*1024)   /* BUG */
     memset(M, 0, MAXMEMSIZE*sizeof(M[0]));
 
-#if 0
-    M[0] = 0720201;                 // Bootload channel PCW, word 1 (this is an 18 bit value)
-    //  3/0, 6/Chan#, 30/0, 3/Port -- NOT 3/0, 12/Chan#, 24/0, 3/Port# -- also non-zero port may not be valid for low bits
-    M[1] = ((t_uint64) tape_chan << 27) | port;     // Bootload channel PCW, word 2
-    // 12/Base, 6/0, 15/PIbase, 3/IOM#
-    // M[2] = ((t_uint64) base << 24) | (pi_base << 3) | iom;   // Info used by bootloaded pgm
-    M[2] = ((t_uint64) base << 24) | pi_base;   // Info used by bootloaded pgm -- force iom zero
-    // 6/Command, 6/Device#, 6/0, 18/700000; Bootload IDCW - Command is 05 for tape, 01 for cards.
-    M[3] = (cmd << 30) | (dev << 24) | 0700000;     // Bootload IDCW
-    M[4] = 030 << 18;               // Second IDCW: IOTD to loc 30 (startup fault vector)
-
-    // bootload_info$cold_tape_mpc is at location 7.   bootload_tape_fw$boot examines this value
-    // M[7] = 1;
-
-    t_uint64 dis0 = 0616200;
-    M[010 + 2 * iom] = (imu << 34) | dis0;          // system fault vector; DIS 0 instruction
-    M[030 + 2 * iom] = dis0;                        // terminate interrupt vector (overwritten by bootload)
-
-    // IOM Mailbox, at Base*6
-    int mbx = base * 64;
-    M[mbx+07] = ((t_uint64) base << 24) | (02 << 18) | 02;      // Fault channel DCW
-    // log_msg(DEBUG_MSG, "SYS", "IOM MBX @%#o: %#llo\n", mbx+7, M[mbx+7]);
-    M[mbx+010] = 04000;                             // Connect channel LPW -> PCW at 000000
-
-    // Channel mailbox, at Base*64 + 4*Chan#
-    mbx = (base * 64) + 4 * tape_chan;
-    M[mbx+0] = (3<<18) | (2<<12) | 3;                   //  Boot dev LPW -> IDCW @ 000003
-    // log_msg(DEBUG_MSG, "SYS", "Channel MBX @%0o: %#llo\n", mbx, M[mbx]);
-    M[mbx+2] = ((t_uint64) base <<24);                          //  Boot dev SCW -> IOM mailbox
-#endif
-
-#if 1
     /* Description of the bootload channel from 43A239854
         Legend
             BB - Bootload channel #
@@ -295,18 +343,18 @@ static void init_memory_iom()
             XXXX00 - Base Addr -- 01400
             XXYYYY0 Program Interrupt Base
     */
+
     t_uint64 dis0 = 0616200;
     /* 1*/ M[010 + 2 * iom] = (imu << 34) | dis0;           // system fault vector; DIS 0 instruction (imu bit not mentioned by 43A239854)
     /* 2*/ M[030 + 2 * iom] = dis0;                     // terminate interrupt vector (overwritten by bootload)
     int base_addr = base << 6; // 01400
 
-// 18 bit or 24 bit?
-    // /* 3*/ M[base_addr + 7] = ((t_uint64) base_addr << 24) | 02000002;   // tally word for sys fault status
     /* 3*/ M[base_addr + 7] = ((t_uint64) base_addr << 18) | 02000002;  // tally word for sys fault status
+                // ??? Fault channel DCW
 
-    /* 4*/ M[base_addr + 010] = 040000;     // Connect channel LPW
+    /* 4*/ M[base_addr + 010] = 040000;     // Connect channel LPW; points to PCW at 000000
     int mbx = base_addr + 4 * tape_chan;
-    /* 5*/ M[mbx] = 03020003;               // Boot device LPW
+    /* 5*/ M[mbx] = 03020003;               // Boot device LPW; points to IDCW at 000003
     /* 6*/ M[4] = 030 << 18;                // Second IDCW: IOTD to loc 30 (startup fault vector)
     /* 7*/ M[mbx + 2] = ((t_uint64)base_addr << 24);        // SCW -- verified correct
     /* 8*/ M[0] = 0720201;                  // 1st word of bootload channel PCW
@@ -314,31 +362,26 @@ static void init_memory_iom()
 
     // following verified correct; instr 362 will not yield 1572 with a different shift
     /*10*/ M[2] = ((t_uint64) base_addr << 18) | pi_base | iom; // word after PCW (used by program)
+        // SCW ?
 
     /*11*/ M[3] = (cmd << 30) | (dev << 24) | 0700000;      // IDCW for read binary
 
-#endif
-    
 }
+
+//=============================================================================
+
+/*
+ * init_memory_iox()
+ *
+ * Not useful; bootload_tape_label.alm will try to execute an undocumented
+ * ldo instruction if an IOX is detected.
+ *
+ */
 
 #if 0
 
 static void init_memory_iox()
 {
-    // On the physical hardware, settings of various switchs are reflected into memory.  We provide
-    // no support for simulation of the physical switches because there is only one
-    // useful value for almost all of the switches.  So, we hard code the memory values
-    // that represent usable switch settings.
-    //
-    // All values from bootload_tape_label.alm
-    // See also doc #43A239854.
-    // BUG: This is for an IOM.  Do we want an IOM or an IOX?
-    // The presence of a 0 in the top six bits of word 0 denote an IOM boot from an IOX boot
-
-    // " The channel number ("Chan#") is set by the switches on the IOM to be the
-    // " channel for the tape subsystem holding the bootload tape. The drive number
-    // " for the bootload tape is set by switches on the tape MPC itself.
-
     int iox_offset = 0;     // 12 bits; not sure what this is...
 
     int tape_chan = 036;                // 12 bits;
@@ -399,12 +442,22 @@ static void init_memory_iox()
 }
 #endif
 
+//=============================================================================
 
 extern UNIT cpu_unit;   // BUG: put in hdr
 extern char* print_instr(t_uint64 word); // BUG: put in hdr
 extern char* print_lpw(t_addr addr);    // BUG: put in hdr
 
-static where_t prior_dump;
+static where_t prior_dump;  // used to determine need to print location info
+
+//=============================================================================
+
+/*
+ * fprint_sym()
+ *
+ * Called by SIMH to print a memory location.
+ *
+ */
 
 t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int32 sw)
 {
@@ -526,12 +579,15 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
         return SCPE_ARG;
 }
 
+//=============================================================================
 
 t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
 {
     log_msg(ERR_MSG, "SYS::parse_sym", "unimplemented\n");
     return SCPE_ARG;
 }
+
+//=============================================================================
 
 int activate_timer()
 {
@@ -559,13 +615,14 @@ int activate_timer()
     return 0;
 }
 
+//=============================================================================
 
 t_stat clk_svc(UNIT *up)
 {
     // only valid for TR
     (void) sim_rtcn_calb (CLK_TR_HZ, TR_CLK);   // calibrate clock
     uint32 t = sim_is_active(&TR_clk_unit);
-    log_msg(DEBUG_MSG, "SYS::clock::service", "TR has %d time units left\n");
+    log_msg(INFO_MSG, "SYS::clock::service", "TR has %d time units left\n");
     return 0;
 }
 
@@ -592,18 +649,29 @@ static int inline is_octal_digit(char x)
     return isdigit(x) && x != '8' && x != '9';
 }
 
+//=============================================================================
+
+/*
+ * parse_addr()
+ *
+ * SIMH calls this function to parse an address.
+ *
+ * We return a packed format that encodes addressing mode, segment, and offset.
+ *
+ */
+
 static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
 {
 
-    // SIMH calls this function to parse an address.
-    // We return a packed format that encodes addressing mode, segment, and offset.
     // Obsolete comments:
     //      SIMH wants the absolute address.   However, SIMH may pass the
     //      resulting address to fprint_sym() or other simulator functions
     //      that need to know the segment and offset.   So, we set the
     //      following globals to in order to communicate that info:
-    //          int last_parsed_seg, int last_parsed_offset, t_addr last_parsed_addr
+    //          int last_parsed_seg, int last_parsed_offset, t_addr
+    //          last_parsed_addr
 
+    // BUG/TODO: cleanup the last_parsed gunk that's no longer needed
     addr_modes_t last_parsed_mode;
     int last_parsed_seg;
     int last_parsed_offset;
@@ -709,6 +777,16 @@ out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
     return addr_emul_to_simh(last_parsed_mode, last_parsed_seg, last_parsed_offset);
 }
 
+//=============================================================================
+
+/*
+ * fprint_addr()
+ *
+ * Called by SIMH to display an address
+ *
+ * Note that all addresses given by the simulator to SIMH are in a packed
+ * format.
+ */
 
 static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr simh_addr)
 {
@@ -730,7 +808,15 @@ static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr simh_addr)
 
 //=============================================================================
 
-/* The emulator gives SIMH a "packed" address form that encodes mode, segment, and offset */
+/*
+ * addr_emul_to_simh()
+ *
+ * Encode an address for handoff to SIMH.
+ *
+ * The emulator gives SIMH a "packed" address form that encodes mode,
+ * segment, and offset
+ * 
+ */
 
 t_uint64 addr_emul_to_simh(addr_modes_t mode, unsigned segno, unsigned offset)
 {
@@ -763,6 +849,17 @@ t_uint64 addr_emul_to_simh(addr_modes_t mode, unsigned segno, unsigned offset)
     return addr;
 }
 
+//=============================================================================
+
+/*
+ * addr_simh_to_emul()
+ *
+ * Decode an address returned by SIMH.
+ *
+ * The emulator gives SIMH a "packed" address form that encodes mode,
+ * segment, and offset.
+ * 
+ */
 
 int addr_simh_to_emul(t_uint64 addr, addr_modes_t *modep, unsigned *segnop, unsigned *offsetp)
 {

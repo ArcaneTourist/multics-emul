@@ -209,11 +209,16 @@ void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic)
 #define ic_hist_max 60
 static int ic_hist_ptr;
 static int ic_hist_wrapped;
-static struct {
+static struct ic_hist_t {
     addr_modes_t addr_mode;
     uint seg;
     uint ic;
-    instr_t instr;
+    enum hist_enum { instruction, fault, intr } htype;
+    union {
+        int intr;
+        int fault;
+        instr_t instr;
+    } detail;
 } ic_hist[ic_hist_max];
 
 void ic_history_init()
@@ -224,20 +229,49 @@ void ic_history_init()
 
 //=============================================================================
 
-void ic_history_add()
+ic_hist_t& ic_history_append()
 {
-    // Maintain a queue of recently executed instructions for later display via cmd_dump_history()
-    // Caller should make sure IR and PPR are set to the recently executed instruction.
 
-    ic_hist[ic_hist_ptr].addr_mode = get_addr_mode();
-    ic_hist[ic_hist_ptr].seg = PPR.PSR;
-    ic_hist[ic_hist_ptr].ic = PPR.IC;
+    ic_hist_t& ret =  ic_hist[ic_hist_ptr];
 
-    memcpy(&ic_hist[ic_hist_ptr].instr, &cu.IR, sizeof(ic_hist[ic_hist_ptr].instr));
     if (++ic_hist_ptr == ic_hist_max) {
         ic_hist_wrapped = 1;
         ic_hist_ptr = 0;
     }
+    return ret;
+}
+
+//=============================================================================
+
+// Maintain a queue of recently executed instructions for later display via cmd_dump_history()
+// Caller should make sure IR and PPR are set to the recently executed instruction.
+
+void ic_history_add()
+{
+    ic_hist_t& hist = ic_history_append();
+    hist.htype = ic_hist_t::instruction;
+    hist.addr_mode = get_addr_mode();
+    hist.seg = PPR.PSR;
+    hist.ic = PPR.IC;
+    memcpy(&hist.detail.instr, &cu.IR, sizeof(hist.detail.instr));
+}
+
+//=============================================================================
+
+void ic_history_add_fault(int fault)
+{
+    ic_hist_t& hist = ic_history_append();
+    hist.htype = ic_hist_t::fault;
+    hist.detail.fault = fault;
+}
+
+//=============================================================================
+
+void ic_history_add_intr(int intr)
+{
+    ic_hist_t& hist = ic_history_append();
+    hist.htype = ic_hist_t::intr;
+    hist.detail.intr = intr;
 }
 
 //=============================================================================
@@ -257,8 +291,19 @@ int cmd_dump_history(int32 arg, char *buf)
             end = ic_hist_ptr;
         }
         for (int i = start; i < end; ++i) {
-            int segno = (ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1;
-            print_src_loc("", ic_hist[i].addr_mode, segno, ic_hist[i].ic, &ic_hist[i].instr);
+            switch(ic_hist[i].htype) {
+                case ic_hist_t::instruction: {
+                    int segno = (ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1;
+                    print_src_loc("", ic_hist[i].addr_mode, segno, ic_hist[i].ic, &ic_hist[i].detail.instr);
+                    break;
+                }
+                case ic_hist_t::fault:
+                    out_msg("    Fault %#o (%d)\n", ic_hist[i].detail.fault, ic_hist[i].detail.fault);
+                    break;
+                case ic_hist_t::intr:
+                    out_msg("    Interrupt %#o (%d)\n", ic_hist[i].detail.intr, ic_hist[i].detail.intr);
+                    break;
+            }
         }
     }
     return 0;

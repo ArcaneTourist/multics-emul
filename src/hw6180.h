@@ -41,7 +41,8 @@ typedef enum { NORMAL_mode, PRIV_mode } instr_modes_t;
 // The FAULT_EXEC cycle did not exist in the physical hardware.
 typedef enum {
     ABORT_cycle, FAULT_cycle, EXEC_cycle, FAULT_EXEC_cycle, INTERRUPT_cycle,
-    FETCH_cycle
+    FETCH_cycle,
+    DIS_cycle   // A pseudo cycle for handling the DIS instruction
 // CA FETCH OPSTORE, DIVIDE_EXEC
 } cycles_t;
 
@@ -66,7 +67,9 @@ enum sim_stops {
     STOP_MEMCLEAR = 1,  // executing empty memory; zero reserved by SIMH
     STOP_BUG,           // impossible conditions, coding error, etc
     STOP_WARN,          // something odd or interesting; further exec might possible
-    STOP_IBKPT          // breakpoint, possibly auto-detected by emulator
+    STOP_IBKPT,         // breakpoint, possibly auto-detected by emulator
+    STOP_DIS,           // executed a "delay until interrupt set"
+    STOP_SIMH           // A simh routine returned non zero
 };
 
 // Devices connected to a SCU
@@ -524,25 +527,52 @@ typedef struct {
             uint port;          // port to which mask is assigned (0..7)
         } mask_assign;  // eima_data[4];
     } interrupts[4];
-
-    struct {
-        int clock_speed;    // 0 for realtime; otherwise instructions/sec
-    } options;
 } scu_t;
 
 // I/O Multiplexer
+enum { max_channels = 32 };     // enums are more constant than consts...
 typedef struct {
+    uint iom_num;
     int ports[8];   // CPU/IOM connectivity; designated a..h; negative to disable
     int scu_port;   // which port on the SCU(s) are we connected to?
-    enum dev_type channels[64];
-    DEVICE* devices[64];
-    uint iom_num;
+    struct {
+        enum dev_type type;
+        DEVICE* dev;    // attached device; points into sim_devices[]
+        // The channel "boards" do *not* point into the UNIT array of the
+        // IOM entry within sim_devices[].  These channel "boards" are used
+        // only for simulation of async operation (that is as arguments for
+        // sim_activate()).  Since they carry no state information, they
+        // are dynamically allocated by the IOM as needed.
+        UNIT* board;    // represents the channel; See comment just above
+    } channels[max_channels];
 } iom_t;
+
+// System-wide info not tied to a specific CPU, IOM, or SCU
+typedef struct {
+    int clock_speed;    // 0 for realtime; otherwise instructions/sec
+    // delay times are in cycles; negative for immediate
+    struct {
+        int connect;    // Delay between CIOC instr & connect channel operation
+        int chan_activate;  // Time for a list service to send a DCW
+    } iom_times;
+    struct {
+        int read;
+        int xfer;
+    } mt_times;
+} sysinfo_t;
 
 // ============================================================================
 // === Variables
 
+// Non CPU
 extern int opt_debug;
+extern sysinfo_t sys_opts;
+extern flag_t fault_gen_no_fault;   // Allows cmd-line to use APU w/o faulting
+extern t_uint64 total_cycles;
+extern t_uint64 total_instr;
+extern t_uint64 total_msec;
+
+// Parts of the CPU
 extern t_uint64 reg_A;      // Accumulator, 36 bits
 extern t_uint64 reg_Q;      // Quotient, 36 bits
 extern int8 reg_E;          // Floating Point exponent, 8 bits
@@ -555,16 +585,10 @@ extern PPR_t PPR;           // Procedure Pointer Reg, 37 bits, internal only
 extern TPR_t TPR;           // Temporary Pointer Reg, 42 bits, internal only
 extern uint8 reg_RALR;      // Ring Alarm Reg, 3 bits
 extern cpu_t *cpup;     // Almost Everything you ever wanted to know about a CPU
-
 extern ctl_unit_data_t cu;
 extern cpu_state_t cpu;
-extern flag_t fault_gen_no_fault;
-
 extern t_uint64 calendar_a;
 extern t_uint64 calendar_q;
-extern t_uint64 total_cycles;
-extern t_uint64 total_instr;
-extern t_uint64 total_msec;
 
 // ============================================================================
 // === Functions
@@ -590,6 +614,8 @@ extern void state_dump_changes(void);
 extern void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic);
 extern void ic_history_init(void);
 extern void ic_history_add(void);
+extern void ic_history_add_fault(int fault);
+extern void ic_history_add_intr(int intr);
 extern int cmd_dump_history(int32 arg, char *buf);
 extern int show_location(int show_source_lines);
 extern int cmd_xdebug(int32 arg, char *buf);

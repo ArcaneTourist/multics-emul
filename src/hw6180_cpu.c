@@ -48,7 +48,7 @@ extern int32 sim_switches;
 t_uint64 M[MAXMEMSIZE];
 
 //-----------------------------------------------------------------------------
-// *** Registers
+// *** CPU Registers
 
 // We give SIMH a description of our CPU "registers" and pointers to the
 // variables that hold "register" contents.  This allows SIMH to provide the
@@ -211,8 +211,10 @@ DEVICE cpu_dev = {
     NULL, DEV_DEBUG
 };
 
-extern t_stat clk_svc(UNIT *up);
+//-----------------------------------------------------------------------------
+// *** Other devices
 
+extern t_stat clk_svc(UNIT *up);
 UNIT TR_clk_unit = { UDATA(&clk_svc, UNIT_IDLE, 0) };
 
 extern t_stat mt_svc(UNIT *up);
@@ -237,6 +239,18 @@ DEVICE opcon_dev = {
     NULL, NULL, NULL,
     NULL, DEV_DEBUG
 };
+
+extern t_stat iom_svc(UNIT* up);
+extern t_stat iom_reset(DEVICE *dptr);
+UNIT iom_unit = { UDATA(&iom_svc, 0, 0) };
+DEVICE iom_dev = {
+    "IOM", &iom_unit, NULL, NULL, 1,
+    10, 8, 1, 8, 8,
+    NULL, NULL, &iom_reset,
+    NULL, NULL, NULL,
+    NULL, DEV_DEBUG
+};
+
 
 //-----------------------------------------------------------------------------
 // *** Other Globals holding state values
@@ -318,9 +332,16 @@ static void restore_PR_registers(void);
  *  cpu_boot()
  *
  *  Called by SIMH's BOOT command.
- *  Copies bootstrap loader from tape and loads into memory.   SIMH also expects
- *  us to set the program counter.  Instead, cpu_reset() will generate a
- *  startup fault.
+ *
+ *  SIMH usually expects the boot routine to load a bootstrap program into
+ *  memory and set the program counter.   Instead, we expect that control words
+ *  for the IOM have already been loaded in memory.  This is a BUG; we should
+ *  do that memory initializaion here.   With the IOM control words in memory,
+ *  we simply send an interrupt signal to the IOM.
+ *
+ *  The above process results in the IOM loading a bootstrap program from
+ *  tape into memory.   See cpu_reset() for a description of starting the
+ *  CPU.
  */
 
 t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
@@ -347,16 +368,24 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
     // ++ opt_debug; ++ cpu_dev.dctrl;
     if (cpu_dev.dctrl != 0) opt_debug = 1;  // todo: should CPU control all debug settings?
 
-    log_msg(INFO_MSG, "CPU::boot", "Issuing IOM interrupt.\n");
     // Send an interrupt to the IOM -- not to the CPU
-    iom_interrupt();
+    int ret = 0;
+    if (sys_opts.iom_times.connect < 0) {
+        log_msg(INFO_MSG, "CPU::boot", "Issuing IOM interrupt.\n");
+        iom_interrupt();
+    } else {
+        ret = sim_activate(&iom_dev.units[0], sys_opts.iom_times.connect);
+        log_msg(INFO_MSG, "CPU::boot", "Queuing an IOM interrupt to occur in %d cycles\n", sys_opts.iom_times.connect);
+        if (ret != 0)
+            log_msg(ERR_MSG, "CPU::boot", "Cannot activate IOM.\n");
+    }
 
     // -- opt_debug; -- cpu_dev.dctrl;
 
     bootimage_loaded = 1;
     log_msg(INFO_MSG, "CPU::boot", "Returning to SIMH.\n");
 
-    return 0;
+    return ret;
 }
 
 //=============================================================================
@@ -380,12 +409,15 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
  *  instruction into the IR (instruction register).  However, the emulation
  *  always initializes memory and/or calls cpu_boot(), so it is sufficient to
  *  simply record a startup fault or power-on interrupt.
+ *
+ *  BUG: We should probably let the IOM send a "terminate" interrupt rather
+ *  than generating one here.
  */
 
 t_stat cpu_reset (DEVICE *dptr)
 {
 
-    log_msg(DEBUG_MSG, "CPU", "Reset\n");
+    log_msg(INFO_MSG, "CPU", "Reset\n");
 
     init_opcodes();
     ic_history_init();
@@ -403,23 +435,33 @@ t_stat cpu_reset (DEVICE *dptr)
 
     set_addr_mode(ABSOLUTE_mode);
 
-    // We need to execute the pair of instructions at 030 -- a "lda" instruction
-    // and a transfer to the bootload code at 0330.   Location 030 is either
-    // part of the interrupt vector or part of a combined interrupt/fault
-    // vector.
+    // We'll first generate interrupt #4.  The IOM will have initialized
+    // memory to have a DIS (delay until interrupt set) instruction at the
+    // memory location used to hold the trap words for this interrupt.
+    // Later, after the tape drive has finished transferring the boot record,
+    // we'll receive a terminate interrupt (which has trap words at 030).
+    // Some documents hint that a CPU should perform a startup fault at
+    // reset, but that doesn't match the comments in bootload_tape_label.alm.
 #if 0
-    if (switches.FLT_BASE == 0) {
-        // Most documents indicate that the boot process uses the startup fault
-        cpu.cycle = FETCH_cycle;
-        fault_gen(startup_fault);   // pressing POWER ON button causes this fault
-    } else
+    // Generate a startup fault.
+    cpu.cycle = FETCH_cycle;
+    fault_gen(startup_fault);   // pressing POWER ON button causes this fault
 #endif
+#if 0
     {
         // Simulate an interrupt as described in bootload_tape_label.alm
+        // BUG: IOM should cause the interrupt after the record is read in.
         cpu.cycle = INTERRUPT_cycle;
         events.int_pending = 1;
         events.interrupts[12] = 1;
     }
+#endif
+#if 1
+    // cpu.cycle = FETCH_cycle;
+    cpu.cycle = INTERRUPT_cycle;
+    events.int_pending = 1;
+    events.interrupts[4] = 1;
+#endif
 
     calendar_a = 0xdeadbeef;
     calendar_q = 0xdeadbeef;
@@ -483,11 +525,13 @@ t_stat sim_instr(void)
     restore_from_simh();
     // setup_streams(); // Route the C++ clog and cdebug streams to match SIMH settings
 
+    int reason = 0;
+
     if (! bootimage_loaded) {
         // We probably should not do this
         // See AL70, section 8
         log_msg(WARN_MSG, "MAIN", "Memory is empty, no bootimage loaded yet\n");
-        // return STOP_MEMCLEAR;
+        reason = STOP_MEMCLEAR;
     }
 
     // opt_debug = (cpu_dev.dctrl != 0);    // todo: should CPU control all debug settings?
@@ -495,7 +539,6 @@ t_stat sim_instr(void)
     // Setup clocks
     (void) sim_rtcn_init(CLK_TR_HZ, TR_CLK);
     
-    int reason = 0;
     cancel = 0;
 
 uint32 ncycles = 0;
@@ -516,9 +559,11 @@ ninstr = 0;
             check_seg_debug();
             prev_seg = PPR.PSR;
         }
-        if (sim_interval <= 0) { /* check clock queue */
+        if (sim_interval<= 0) { /* check clock queue */
             // process any SIMH timed events including keyboard halt
-            if ((reason = sim_process_event()) != 0) break;
+            reason = sim_process_event();
+            if (reason != 0)
+                break;
         }
 #if 0
         uint32 t;
@@ -553,8 +598,6 @@ ninstr = 0;
 
         reason = control_unit();
 
-        // Show location info
-
         if (saved_cycle != FETCH_cycle) {
             if (!known_loc)
                 known_loc = cpu.trgo;
@@ -582,6 +625,14 @@ ninstr = 0;
         if (cancel) {
             if (reason == 0)
                 reason = cancel;
+#if 0
+            if (reason == STOP_DIS) {
+                // Until we implement something fancier, DIS will just freewheel...
+                cpu.cycle = DIS_cycle;
+                reason = 0;
+                cancel = 0;
+            }
+#endif
         }
     }   // while (reason == 0)
 
@@ -815,32 +866,67 @@ static t_stat control_unit(void)
     int break_on_fault = switches.FLT_BASE == 2;    // on for multics, off for t&d tape
 
     switch(cpu.cycle) {
+        case DIS_cycle: {
+            // TODO: Use SIMH's idle facility
+            // Until then, just freewheel
+            // 
+            // We should probably use the inhibit flag to determine
+            // whether or not to examine faults.  However, it appears
+            // that we should accept external interrupts regardless of
+            // the inhibit flag.   See AL-39 discussion of the timer
+            // register for hints.
+            if (events.int_pending) {
+                cpu.cycle = INTERRUPT_cycle;
+                if (cpu.ic_odd && ! cpu.irodd_invalid) {
+                    log_msg(NOTIFY_MSG, "CU", "DIS sees an interrupt.\n");
+                    log_msg(WARN_MSG, "CU", "Previously fetched odd instruction will be ignored.\n");
+                    cancel_run(STOP_WARN);
+                } else {
+                    log_msg(NOTIFY_MSG, "CU", "DIS sees an interrupt; Auto breakpoint.\n");
+                    cancel_run(STOP_IBKPT);
+                }
+                break;
+            }
+            // No interrupt pending; will we ever see one?
+            uint32 n = sim_qcount();
+            if (n == 0) {
+                log_msg(ERR_MSG, "CU", "DIS instruction running, but no activities are pending.\n");
+                reason = STOP_BUG;
+            } else
+                log_msg(DEBUG_MSG, "CU", "Delaying until an interrupt is set.\n");
+            break;
+        }
+            
         case FETCH_cycle:
             if (opt_debug) log_msg(DEBUG_MSG, "CU", "Cycle = FETCH; IC = %0o (%dd)\n", PPR.IC, PPR.IC);
             // If execution of the current pair is complete, the processor
             // checks two? internal flags for group 7 faults and/or interrupts.
             if (events.any) {
-                if (break_on_fault) {
-                    log_msg(WARN_MSG, "CU", "Fault: auto breakpoint\n");
-                    (void) cancel_run(STOP_IBKPT);
-                }
-                if (events.low_group != 0) {
-                    // BUG: don't need test below now that we detect 1-6 here
-                    if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Fault detected prior to FETCH\n");
-                    cpu.cycle = FAULT_cycle;
-                    break;
-                }
-                if (events.group7 != 0) {
-                    // Group 7 -- See tally runout in IR, connect fields of the
-                    // fault register.  DC power off must come via an interrupt?
-                    if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Fault detected prior to FETCH\n");
-                    cpu.cycle = FAULT_cycle;
-                    break;
-                }
-                if (events.int_pending) {
-                    if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Interrupt detected prior to FETCH\n");
-                    cpu.cycle = INTERRUPT_cycle;
-                    break;
+                if (cu.IR.inhibit)
+                    log_msg(DEBUG_MSG, "CU", "Interrupt or Fault inhibited.\n");
+                else {
+                    if (break_on_fault) {
+                        log_msg(WARN_MSG, "CU", "Fault: auto breakpoint\n");
+                        (void) cancel_run(STOP_IBKPT);
+                    }
+                    if (events.low_group != 0) {
+                        // BUG: don't need test below now that we detect 1-6 here
+                        if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Fault detected prior to FETCH\n");
+                        cpu.cycle = FAULT_cycle;
+                        break;
+                    }
+                    if (events.group7 != 0) {
+                        // Group 7 -- See tally runout in IR, connect fields of the
+                        // fault register.  DC power off must come via an interrupt?
+                        if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Fault detected prior to FETCH\n");
+                        cpu.cycle = FAULT_cycle;
+                        break;
+                    }
+                    if (events.int_pending) {
+                        if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Interrupt detected prior to FETCH\n");
+                        cpu.cycle = INTERRUPT_cycle;
+                        break;
+                    }
                 }
             }
             // Fetch a pair of words
@@ -943,6 +1029,7 @@ static t_stat control_unit(void)
                     }
                 }
             }
+            ic_history_add_fault(fault);
             log_msg(DEBUG_MSG, "CU", "fault = %d (group %d)\n", fault, group);
             if (fault != trouble_fault)
                 cu_safe_store();
@@ -996,15 +1083,14 @@ static t_stat control_unit(void)
 
             // Update history
             uint IC_temp = PPR.IC;
-            PPR.IC = addr;
-            ic_history_add();       // xed will be listed against the the addr of the first instruction
+            // PPR.IC = addr;
+            ic_history_add();       // record the xed
             PPR.IC = IC_temp;
 
             // TODO: Check for SIMH breakpoint on execution for the addr of
             // the XED instruction.  Or, maybe check in the code for the
             // xed opcode.
             log_msg(DEBUG_MSG, "CU::fault", "calling execute_ir() for xed\n");
-            // BUG: don't we need another ic_history_add() call here?
             execute_ir();   // executing in FAULT CYCLE, not EXECUTE CYCLE
             if (break_on_fault) {
                 log_msg(WARN_MSG, "CU", "Fault: auto breakpoint\n");
@@ -1045,6 +1131,7 @@ static t_stat control_unit(void)
                 log_msg(ERR_MSG, "CU", "Interrupt cycle with no pending interrupt.\n");
                 // BUG: Need error handling
             }
+            ic_history_add_intr(intr);
             log_msg(WARN_MSG, "CU", "Interrupt %#o (%d) found.\n", intr, intr);
             events.interrupts[intr] = 0;
 
@@ -1067,19 +1154,21 @@ static t_stat control_unit(void)
 
             // Update history
             uint IC_temp = PPR.IC;
-            PPR.IC = addr;
-            ic_history_add();       // xed will be listed against the the addr of the first instruction
+            // PPR.IC = 0;
+            ic_history_add();       // record the xed
             PPR.IC = IC_temp;
 
             // TODO: Check for SIMH breakpoint on execution for the addr of
             // the XED instruction.  Or, maybe check in the code for the
             // xed opcode.
             log_msg(DEBUG_MSG, "CU::interrupt", "calling execute_ir() for xed\n");
-            // BUG: don't we need another ic_history_add() call here?
             execute_ir();   // executing in INTERRUPT CYCLE, not EXECUTE CYCLE
             log_msg(WARN_MSG, "CU", "Interrupt -- lightly tested\n");
             (void) cancel_run(STOP_BUG);
 
+            // We executed an XED just above.  XED set various CPU flags.
+            // So, now, set the CPU into the EXEC cycle so that the
+            // instructions referenced by the XED will be executed.
             // cpu.cycle = FAULT_EXEC_cycle;
             cpu.cycle = EXEC_cycle;
             events.xed = 1;     // BUG: is this a hack?
@@ -1089,6 +1178,8 @@ static t_stat control_unit(void)
                     events.int_pending = 1;
                     break;
                 }
+            if (!events.int_pending && ! events.low_group && ! events.group7)
+                events.any = 0;
             break;
         }   // end case INTERRUPT_cycle
 
@@ -1170,7 +1261,14 @@ static t_stat control_unit(void)
             // We assume IC always points to the correct instr -- should
             // be advanced after even instr
             uint IC_temp = PPR.IC;
+            // Munge PPR.IC for history debug
+            if (cu.xde)
+                PPR.IC = TPR.CA;
+            else
+                if (cu.xdo)
+                    PPR.IC = TPR.CA + 1;
             ic_history_add();
+            PPR.IC = IC_temp;
             execute_ir();
 
             // Check for fault from instr
@@ -1301,9 +1399,9 @@ static t_stat control_unit(void)
                     if (events.xed) {
                         events.xed = 0;
                         if (events.any)
-                            log_msg(NOTIFY_MSG, "CU", "XED was from fault; other faults and/or interrupts occured during XED\n");
+                            log_msg(NOTIFY_MSG, "CU", "XED was from fault or interrupt; other faults and/or interrupts occured during XED\n");
                         else {
-                            log_msg(NOTIFY_MSG, "CU", "XED was from fault; checking if lower priority faults exist\n");
+                            log_msg(NOTIFY_MSG, "CU", "XED was from fault or interrupt; checking if lower priority faults exist\n");
                             check_events();
                         }
                     }
@@ -2126,6 +2224,9 @@ static t_stat cpu_dep (t_value v, t_addr simh_addr, UNIT *uptr, int32 switches)
  *
  * This initializes the is_eis[] array which we use to detect whether or
  * not an instruction is an EIS instruction. 
+ *
+ * TODO: Change the array values to show how many operand words are
+ * used.  This would allow for better symbolic disassembly.
  *
  * BUG: unimplemented instructions may not be represented
  */

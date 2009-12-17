@@ -281,14 +281,12 @@ int scu_set_mask(t_uint64 addr, int port)
         log_msg(WARN_MSG, moi, "Multiple masks assigned to cpu on port %d\n", rcv_port);
         cancel_run(STOP_WARN);
     }
-    if (rcv_port != port) {
-        if (! port_found) {
-            log_msg(INFO_MSG, moi, "No masks assigned to port %d\n", port);
-            return 0;
-        }
-        if (port_found > 1)
-            log_msg(WARN_MSG, moi, "Multiple masks assigned to port %d\n", port);
+    if (! port_found) {
+        log_msg(INFO_MSG, moi, "No masks assigned to port %d\n", port);
+        return 0;
     }
+    if (port_found > 1)
+        log_msg(WARN_MSG, moi, "Multiple masks assigned to port %d\n", port);
 
     if (port_pima > 1) {
         log_msg(ERR_MSG, moi, "Cannot write to masks other than zero and one: %d\n", port_pima);
@@ -300,6 +298,7 @@ int scu_set_mask(t_uint64 addr, int port)
     scu.interrupts[port_pima].exec_intr_mask = 0;
     scu.interrupts[port_pima].exec_intr_mask |= (getbits36(reg_A, 0, 16) << 16);
     scu.interrupts[port_pima].exec_intr_mask |= getbits36(reg_Q, 0, 16);
+    log_msg(DEBUG_MSG, moi, "PIMA %c: EI mask set to %s\n", port_pima + 'A', bin2text(scu.interrupts[port_pima].exec_intr_mask, 32));
     return 0;
 }
 
@@ -635,11 +634,11 @@ int scu_get_calendar(t_uint64 addr)
     // microseconds since 0000 GMT, Jan 1, 1901 // not 1900 which was a per century exception to leap years
 
     t_uint64 now;
-    if (scu.options.clock_speed != 0) {
+    if (sys_opts.clock_speed != 0) {
         t_uint64 i_cycles = total_cycles * 2 / 3;   // fetch, exec, exec
-        //t_uint64 e_sec = i_cycles / scu.options.clock_speed;
-        //int e_us = 1000000 * (i_cycles % scu.options.clock_speed) / scu.options.clock_speed;
-        t_uint64 elapsed = i_cycles * 1000000 / scu.options.clock_speed;
+        //t_uint64 e_sec = i_cycles / sys_opts.clock_speed;
+        //int e_us = 1000000 * (i_cycles % sys_opts.clock_speed) / sys_opts.clock_speed;
+        t_uint64 elapsed = i_cycles * 1000000 / sys_opts.clock_speed;
 
         // returned time is since epoch of 00:00:00 UTC, Jan 1, 1970
         //t_uint64 epoch = (t_uint64) 69 * 365 * 24 * 3600;
@@ -717,14 +716,23 @@ int scu_cioc(t_uint64 addr)
 
     // we only have one IOM, so signal it
     // todo: sanity check port connections
-    iom_interrupt();
+    if (sys_opts.iom_times.connect < 0)
+        iom_interrupt();
+    else {
+        extern DEVICE iom_dev;
+        log_msg(INFO_MSG, "SCU::cioc", "Queuing an IOM run for %p in %d cycles\n", &iom_dev.units[0], sys_opts.iom_times.connect);
+        if (sim_activate(&iom_dev.units[0], sys_opts.iom_times.connect) != SCPE_OK) {
+            cancel_run(STOP_SIMH);
+            ret = 1;
+        }
+    }
 
     if (n_cioc >= 306) {
         extern DEVICE cpu_dev;
         -- opt_debug; -- cpu_dev.dctrl;
     }
 
-    return 0;
+    return ret;
 }
 
 // =============================================================================
@@ -767,6 +775,44 @@ int scu_set_interrupt(int inum)
 {
     const char* moi = "SCU::interrupt";
 
-    log_msg(WARN_MSG, moi, "Unimplemented\n");
-    return 1;
+    if (inum < 0 || inum > 31) {
+        log_msg(WARN_MSG, moi, "Bad interrupt number %d\n", inum);
+        cancel_run(STOP_WARN);
+        return 1;
+    }
+
+    for (int pima = 0; pima < ARRAY_SIZE(scu.interrupts); ++pima) {
+        if (! scu.interrupts[pima].avail) {
+            log_msg(DEBUG_MSG, moi, "PIMA %c: Mask is not available.\n",
+                pima + 'A');
+            continue;
+        }
+        if (scu.interrupts[pima].mask_assign.unassigned) {
+            log_msg(DEBUG_MSG, moi, "PIMA %c: Mask is not assigned.\n",
+                pima + 'A');
+            continue;
+        }
+        uint mask = scu.interrupts[pima].exec_intr_mask;
+        int port = scu.interrupts[pima].mask_assign.port;
+        if ((mask & (1<<inum)) == 0) {
+            log_msg(INFO_MSG, moi, "PIMA %c: Port %d is masked against interrupts.\n",
+                'A' + pima, port);
+            log_msg(DEBUG_MSG, moi, "Mask: %s\n", bin2text(mask, 32));
+        } else {
+            if (scu.ports[port].type != ADEV_CPU)
+                log_msg(WARN_MSG, moi, "PIMA %c: Port %d should receive interrupt %d, but the device is not a cpu.\n",
+                    'A' + pima, port, inum);
+            else {
+                extern events_t events; // BUG: put in hdr file or hide behind an access function
+                log_msg(NOTIFY_MSG, moi, "PIMA %c: Port %d (which is connected to port %d of CPU %d will receive interrupt %d.\n",
+                    'A' + pima, port, scu.ports[port].dev_port,
+                    scu.ports[port].idnum, inum);
+                events.any = 1;
+                events.int_pending = 1;
+                events.interrupts[inum] = 1;
+            }
+        }
+    }
+
+    return 0;
 }

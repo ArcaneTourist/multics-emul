@@ -16,7 +16,7 @@ static struct s_tape_state {
     enum { no_mode, read_mode, write_mode } io_mode;
     uint8 *bufp;
     bitstream_t *bitsp;
-} tape_state[ARRAY_SIZE(iom.devices)];
+} tape_state[ARRAY_SIZE(iom.channels)];
 
 void mt_init()
 {
@@ -34,14 +34,14 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
 
     // Major codes are 4 bits...
 
-    if (chan < 0 || chan >= ARRAY_SIZE(iom.devices)) {
+    if (chan < 0 || chan >= ARRAY_SIZE(iom.channels)) {
         *majorp = 05;   // Real HW could not be on bad channel
         *subp = 2;
         log_msg(ERR_MSG, "MT::iom_cmd", "Bad channel %d\n", chan);
         return 1;
     }
 
-    DEVICE* devp = iom.devices[chan];
+    DEVICE* devp = iom.channels[chan].dev;
     if (devp == NULL || devp->units == NULL) {
         *majorp = 05;
         *subp = 2;
@@ -164,14 +164,14 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
 {
     // log_msg(DEBUG_MSG, "MT::iom_io", "Chan 0%o\n", chan);
 
-    if (chan < 0 || chan >= ARRAY_SIZE(iom.devices)) {
+    if (chan < 0 || chan >= ARRAY_SIZE(iom.channels)) {
         *majorp = 05;   // Real HW could not be on bad channel
         *subp = 2;
         log_msg(ERR_MSG, "MT::iom_io", "Bad channel %d\n", chan);
         return 1;
     }
 
-    DEVICE* devp = iom.devices[chan];
+    DEVICE* devp = iom.channels[chan].dev;
     if (devp == NULL || devp->units == NULL) {
         *majorp = 05;
         *subp = 2;
@@ -210,8 +210,8 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
         *majorp = 0;
         *subp = 0;      // BUG: do we need to detect end-of-record?
         if (sim_tape_wrp(unitp)) *subp |= 1;
-        if (opt_debug)
-            log_msg(DEBUG_MSG, "MT::iom_io", "Data moved from tape controller buffer to IOM\n");
+        //if (opt_debug > 2)
+        //  log_msg(DEBUG_MSG, "MT::iom_io", "Data moved from tape controller buffer to IOM\n");
         return 0;
     } else {
         // write

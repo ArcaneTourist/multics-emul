@@ -2784,7 +2784,7 @@ static int do_an_op(instr_t *ip)
                 int ret = 0;
                 uint y = TPR.CA >> 10;
                 if (y > 7) {
-                    log_msg(WARN_MSG, "OPU::opcode::rscr", "CA of %#o has high bits set, yielding port # greater than 7: %d (%#o)n", y, y);
+                    log_msg(WARN_MSG, "OPU::opcode::sscr", "CA of %#o has high bits set, yielding port # greater than 7: %d (%#o)n", y, y);
                     cancel_run(STOP_BUG);
                 }
                 uint ea = TPR.CA & 01770;
@@ -2884,20 +2884,13 @@ static int do_an_op(instr_t *ip)
 
             case opcode0_dis:
                 // delay until interrupt set
-                if (1 || ip->inhibit) {
-                    if (ip->inhibit) {
-                        log_msg(WARN_MSG, "OPU::dis", "DIS with inhibit set -- CPU now dead (but you can issue SIMH go)\n");
-                        cancel_run(STOP_BUG);
-                    } else {
-                        log_msg(WARN_MSG, "OPU::dis", "DIS unimplemented; simply continue when ready\n");
-                        cancel_run(STOP_IBKPT);
-                    }
-                    return 1;
+                if (ip->inhibit) {
+                    log_msg(WARN_MSG, "OPU::dis", "DIS with inhibit set\n");
                 } else {
-                    log_msg(WARN_MSG, "OPU::dis", "DIS unimplemented.   Continuing after history dump.\n");
-                    cmd_dump_history(-1, NULL);
-                    return 0;
+                    log_msg(WARN_MSG, "OPU::dis", "DIS\n");
                 }
+                cpu.cycle = DIS_cycle;
+                return 1;
 
 
             // limr ??

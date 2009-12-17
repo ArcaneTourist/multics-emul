@@ -42,14 +42,14 @@ void console_init()
 static int con_check_args(const char* moi, int chan, int dev_code, int* majorp, int* subp, DEVICE **devpp, con_state_t **statepp)
 {
 
-    if (chan < 0 || chan >= ARRAY_SIZE(iom.devices)) {
+    if (chan < 0 || chan >= ARRAY_SIZE(iom.channels)) {
         *majorp = 05;   // Real HW could not be on bad channel
         *subp = 1;
         log_msg(ERR_MSG, moi, "Bad channel %d\n", chan);
         return 1;
     }
 
-    *devpp = iom.devices[chan];
+    *devpp = iom.channels[chan].dev;
     DEVICE *devp = *devpp;
     if (devpp == NULL) {
         *majorp = 05;
@@ -319,11 +319,11 @@ static void check_keyboard(int chan)
 {
     const char* moi = "CON::input";
 
-    if (chan < 0 || chan >= ARRAY_SIZE(iom.devices)) {
+    if (chan < 0 || chan >= ARRAY_SIZE(iom.channels)) {
         log_msg(WARN_MSG, moi, "Bad channel\n");
         return;
     }
-    DEVICE* devp = iom.devices[chan];
+    DEVICE* devp = iom.channels[chan].dev;
     if (devp == NULL) {
         log_msg(WARN_MSG, moi, "No device\n");
         return;

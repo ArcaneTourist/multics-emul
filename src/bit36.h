@@ -44,7 +44,7 @@ static inline t_uint64 getbits36(t_uint64 x, int i, unsigned n) {
     // bit 35 is right end, bit zero is 36th from the right
     int shift = 35-i-n+1;
     if (shift < 0 || shift > 35) {
-        log_msg(ERR_MSG, "getbits36", "bad args (%Lo,i=%d,n=%d)\n", x, i, n);
+        log_msg(ERR_MSG, "getbits36", "bad args (%012llo,i=%d,n=%d)\n", x, i, n);
         cancel_run(STOP_BUG);
         return 0;
     } else
@@ -64,7 +64,7 @@ static inline t_uint64 setbits36(t_uint64 x, int p, unsigned n, t_uint64 val)
 {
     int shift = 36 - p - n;
     if (shift < 0 || shift > 35) {
-        log_msg(ERR_MSG, "setbits36", "bad arg, shift = %d\n", shift);
+        log_msg(ERR_MSG, "setbits36", "bad args (%012llo,pos=%d,n=%d)\n", x, p, n);
         cancel_run(STOP_BUG);
         return 0;
     }
