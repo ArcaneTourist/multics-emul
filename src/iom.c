@@ -233,8 +233,7 @@ static int send_terminate_interrupt(int chan);
 // static int list_service_whatif(int chan, int first_list, int *ptro, int *addrp);
 static int activate_chan(int chan, pcw_t* pcw);
 static channel_t* get_chan(int chan);
-// static int run_channel(int chan); // BUG
-static int run_channel(int chan, int first_list);
+static int run_channel(int chan);
 
 // ============================================================================
 
@@ -504,74 +503,32 @@ int do_channel(int chan)
         cancel_run(STOP_BUG);
     }
 
-    // Send PCW (and (BUG) do list services)
-    log_msg(NOTIFY_MSG, moi, "Doing run_channel() to handle PCW and list services...\n");
-    log_msg(INFO_MSG, "IOM::do-chan", "Starting for channel 0%o (%d)\n", chan, chan);
-    if (run_channel(chan, 1) != 0) {
-        log_msg(NOTIFY_MSG, moi, "Non-zero return for rcv-pcw run_channel() -- possibly expected...\n");
-    }
-
-    // Check results of sending PCW
-    log_msg(INFO_MSG, moi, "Post PCW, Chan state is %d.\n", chanp->state);
-    int ret = 0;
-    if (chanp->state != chn_pcw_sent && chanp->state != chn_cmd_sent && chanp->state != chn_io_sent && chanp->state != chn_pcw_done) {
-        ret = 1;
-        log_msg(ERR_MSG, moi, "Unexpected state %d.\n", chanp->state);
-    }
-chanp->have_status = 1; // forced
-
     /*
      * Now loop
      */
 
-#if 1
+    int ret = 0;
     log_msg(NOTIFY_MSG, moi, "Starting run_channel() loop.\n");
-    int first = 1;
     while (chanp->state != chn_idle && ! chanp->err) {
-        if (first) {
-            log_msg(NOTIFY_MSG, moi, "Running channel for PCW status.\n");
-        } else
-            log_msg(NOTIFY_MSG, moi, "Running channel.\n");
-        if (run_channel(chan, first) != 0) {
+        log_msg(NOTIFY_MSG, moi, "Running channel.\n");
+        if (run_channel(chan) != 0) {
+            // Often expected...
             log_msg(NOTIFY_MSG, moi, "Channel has non-zero return.\n");
         }
-        first = 0;
-        if (chanp->err)
+        if (chanp->err || chanp->state == chn_err) {
             log_msg(ERR_MSG, moi, "Channel has error flag set.\n");
-        else
-            chanp->have_status = 1; // forced
-    }
-#endif
-
-#if 0
-    /*
-     * Now, do status service
-     */
-
-#if 0
-    if (! chanp->have_status) {
-        ret = 1;
-        log_msg(ERR_MSG, moi, "Channel does not have device status.\n");
-    }
-    if (chanp->control != 0) {
-        ret = 1;
-        log_msg(ERR_MSG, moi, "Channel has non-zero control.\n");
-    }
-#endif
-    // BUG: Need to skip status service on IOM system faults
-    {
-        log_msg(NOTIFY_MSG, moi, "Doing run_channel() to get status service and interrupt.\n");
-        // Do status service and interrupr
-        if (run_channel(chan, 0) != 0) {
-            log_msg(ERR_MSG, moi, "Channel had error doing status and/or interrupts.\n");
-            return 1;
-        }
-        if (chanp->state != chn_idle) {
-            log_msg(ERR_MSG, moi, "Channel not idle after status run (got %d).\n", chanp->state);
             ret = 1;
         }
+        else {
+            log_msg(NOTIFY_MSG, moi, "Channel %s status from device.\n", chanp->have_status ? "has" : "does not have");
+            if (! chanp->have_status) {
+                // Break the loop.  The device will have queued an activity.
+                // When the device activates, it'll queue a run for the
+                // channel.
+            }
+        }
     }
-#endif
+
     log_msg(DEBUG_MSG, "IOM::do-chan", "Finished\n");
     return ret;
 }
@@ -601,11 +558,10 @@ chanp->have_status = 1; // forced
  * BUG/TODO: Redo for async operation via sim_activate()
  */
 
-static int run_channel(int chan, int first_list)
+static int run_channel(int chan)
 {
     // const char* moi = "IOM::channel";
     const char* moi = "IOM::do-chan";   // BUG: msg compatability 
-
 
     // log_msg(INFO_MSG, moi, "Starting for channel 0%o (%d)\n", chan, chan);
 
@@ -614,13 +570,13 @@ static int run_channel(int chan, int first_list)
         return 1;
 
     if (chanp->state == chn_idle && ! chanp->err) {
-        log_msg(NOTIFY_MSG, moi, "Channel %d is idle.\n", chan);
-        // cancel_run(STOP_WARN);
+        log_msg(WARN_MSG, moi, "Channel %d is idle.\n", chan);
+        cancel_run(STOP_WARN);
         return 0;
     }
-    log_msg(INFO_MSG, moi, "Chan state is %d.\n", chanp->state);
 
-    int ret = 0;
+    int first_list = chanp->state == chn_pcw_rcvd ||
+        chanp->state == chn_pcw_sent;
 
     /*
      * First of four phases -- send any PCW command to the device
@@ -631,31 +587,26 @@ static int run_channel(int chan, int first_list)
         chanp->control = chanp->dcw.fields.instr.control;
         pcw_t *p = &chanp->dcw.fields.instr;
         chanp->have_status = 0;
-        ret = dev_send_pcw(chan, p);
+        int ret = dev_send_pcw(chan, p);
         // BUG: Note: dev_send_pcw will either set chn_pcw_sent or do iom_fault()
         if (ret != 0) {
             log_msg(NOTIFY_MSG, moi, "Device on channel %d did not like our PCW -- non zero return.\n", chan);
             // dev_send_pcw() will have done an iom_fault() or gotten
             // a non-zero major code from a device
             // BUG: Put channel in a fault state or mask
-            // chanp->state = chn_idle;
             chanp->state = chn_err;
             return 1;
         }
-        if (chanp->state != chn_pcw_sent && /*BUG*/ chanp->state != chn_pcw_done) {
-            // dev_send_pcw() should not allow use to get here...
+        if (chanp->state != chn_pcw_sent) {
             log_msg(WARN_MSG, moi, "Bad state after sending PCW to channel.\n");
-            //chanp->state = chn_idle;
             chanp->state = chn_err;
             cancel_run(STOP_BUG);
             return 1;
         }
         if (chanp->have_status)
-            log_msg(NOTIFY_MSG, moi, "Odd, device is instantaneous...\n");
+            log_msg(INFO_MSG, moi, "Odd, device is instantaneous...\n");
         else
             return 0;
-log_msg(NOTIFY_MSG, moi, "Forcing return to simulate device pending.\n");
-return 0;   // simulate status not yet -- BUG
     }
 
     /*
@@ -678,33 +629,37 @@ return 0;   // simulate status not yet -- BUG
     // So, try to guess if we need a list service and/or data service.  If
     // so, force the control be two, the code for a list service.
 
-    //int first_list = chanp->state == chn_pcw_sent;
-    // if (chanp->state == chn_pcw_sent) 
     if (first_list) {
+        chanp->state = chn_pcw_done;
+        log_msg(INFO_MSG, moi, "Setting chan state to pcw-done (%d).\n", chanp->state);
         if (chanp->control == 0 && chan_status.major == 0) {
+#if 1
+            chanp->control = 2; // first-list requires at least on ls svc
+#else
             // BUG: Just after sending the PCW, it's not clear under
             // which conditions a list service is needed.
-            // The diag tape seems to want one unless (p->chan_cmd == 02)
+            // The diag tape seems to want one unless the PCW specified
+            // a "non data transfer" (a value of two for p->chan_cmd).
             // The boot tape seems to care whether or not (p->chan_data != 0)
             //
-            // At the moment, we force 305 times and don't force 3 times
-            // Two of the three are for bad channels.   The third is
-            // for the write alert sent while looking for consoles.
+            // At the moment, we force 305 times and don't force 1 time.
+            // The one time is for the write alert (ring bell command)
+            // sent while looking for consoles.   Note that the console's
+            // (set mode to) write-ascii command uses a channel-code of 2.
             // BUG -- So, we're down to at most one case where it was not
-            // appropriate to force a list service.  Need to double check
-            // if that one had another (unnecessary) DCW in its list...
+            // appropriate to force a list service.  And it turns out
+            // that command needed a list service (another bell ring
+            // and print a \012\015 sequence)
             pcw_t *pcwp = &chanp->dcw.fields.instr;
-            if (pcwp->chan_cmd != 02 || pcwp->chan_data != 0) {
+            if (pcwp->chan_cmd != 02 /* || pcwp->chan_data != 0 */) {
                 log_msg(WARN_MSG, moi, "Forcing at least one list service (this PCW implies data service).\n");
                 chanp->control = 2;
             } else {
                 log_msg(WARN_MSG, moi, "Not forcing at least one list service (this PCW does no data xfer).\n");
                 cancel_run(STOP_WARN);
             }
-        } else
-            log_msg(INFO_MSG, moi, "PCW requested services, no force required.\n");
-        chanp->state = chn_pcw_done;
-        log_msg(INFO_MSG, moi, "Setting chan state to pcw-done (%d).\n", chanp->state);
+#endif
+        }
     }
 
     flag_t do_status_svc = 0;
@@ -713,16 +668,19 @@ return 0;   // simulate status not yet -- BUG
         do_status_svc = 1;
     }
     if (chanp->err || chanp->state == chn_err) {
-        ret = chanp->err;
         log_msg(NOTIFY_MSG, moi, "Channel %d reports internal error; doing status.\n", chanp->chan);
         do_status_svc = 1;
     }
-    if (chanp->control == 0 && ! chanp->need_indir_svc && ! first_list) {
-        log_msg(INFO_MSG, moi, "Channel %d out of work; doing status.\n", chanp->chan);
-        do_status_svc = 1;  // no work left
-    }
+    if (! do_status_svc)
+        if (chanp->control == 0 && ! chanp->need_indir_svc && ! first_list) {
+            log_msg(INFO_MSG, moi, "Channel %d out of work; doing status.\n", chanp->chan);
+            do_status_svc = 1;  // no work left
+        }
 
     if (do_status_svc) {
+        int ret = 0;
+        if (chanp->err || chanp->state == chn_err)
+            ret = 1;
         /*
          * Third of four phases -- request a status service
          */
@@ -752,14 +710,12 @@ return 0;   // simulate status not yet -- BUG
      */
 
     static int nlist;   // counter for debugging
-    // int first_list = chanp->state == chn_pcw_sent;
     if (first_list) {
 #if 0
         chanp->control = chanp->dcw.fields.instr.control;
         // handled above
 #endif
         nlist = 0;  // counter for debugging
-        // BUG/TODO: if we need to set an error, we might need another state...
     }
 
     // BUG/TODO: Change the following to run one pass per invocation
@@ -767,82 +723,78 @@ return 0;   // simulate status not yet -- BUG
 
     // Now loop doing list services and other actions
 
-    if (ret != 0 || (chanp->control == 0 && ! first_list))
-        log_msg(NOTIFY_MSG, moi, "Not doing a single DCW loop.\n");
+    // Is the following msg obsolete?
+    // if (chanp->control == 0 && ! first_list)
+    //  log_msg(NOTIFY_MSG, moi, "Not doing a single DCW loop.\n");
+
+    int ret = 0;
 
     // int need_indir_svc = 0;  // control info from most recent DCW
-#define LS_LOOP 0
-#if LS_LOOP
-    while (ret == 0 && (chanp->control != 0 || chanp->need_indir_svc || first_list)) {
-#else
-    // Do only one iteration!
-#endif
-        log_msg(DEBUG_MSG, moi, "In channel loop.\n");
-        if (chan_status.major != 0) {
-            log_msg(DEBUG_MSG, moi, "Channel has non-zero major status; terminating DCW loop.\n");
-#if LS_LOOP
-            break;
-#endif
-        }
-        if (chanp->control == 2 || chanp->need_indir_svc) {
-            // do a list service
-            chanp->need_indir_svc = 0;
-            int addr;
-            ++ nlist;
-            log_msg(DEBUG_MSG, moi, "Asking for %s list service (svc # %d).\n", first_list ? "first" : "another", nlist);
-            if (list_service(chan, first_list, NULL, &addr) != 0) {
-                ret = 1;
-                log_msg(WARN_MSG, moi, "List service indicates failure\n");
-            } else {
-                log_msg(DEBUG_MSG, moi, "List service yields DCW at addr 0%o\n", addr);
-                chanp->control = -1;
-                // Send request to device
-                ret = do_dcw(chan, addr, &chanp->control, &chanp->need_indir_svc);
-                log_msg(DEBUG_MSG, moi, "Back from latest do_dcw (at %0o); control = %d\n", addr, chanp->control);
-                if (chan_status.major == 0) {
-                    if (chanp->need_indir_svc)
-                        log_msg(WARN_MSG, moi, "DCW requests indirect data service; will use a list-service to find the next DCW.\n");
-                } else {
-                    log_msg(DEBUG_MSG, moi, "do_dcw returns with non-zero channel status; terminating DCW loop\n");
-                    if (chanp->need_indir_svc) {
-                        log_msg(DEBUG_MSG, moi, "ignoring request for indirect data service due to non-zero channel status.\n");
-                        chanp->need_indir_svc = 0;
-                    }
-                    chanp->control = 0;
-                }
-            }
-            first_list = 0;
-        } else if (chanp->control == 0) {
-            // impossible
-            // do nothing, terminate
-            log_msg(DEBUG_MSG, moi, "DCW has control of zero; terminating DCW loop.\n");
-            ret = 1;
-        } else if (chanp->control == 3) {
-            // BUG: set marker interrupt and proceed (list service)
-            // Marker interrupts indicate normal completion of
-            // a PCW or IDCW
-            // PCW control == 3
-            // See also: 3.2.7, 3.5.2, 4.3.6
-            // See also 3.1.3
-#if 1
-            log_msg(ERR_MSG, moi, "Set marker not implemented\n");
-            ret = 1;
-#else
-            // Boot tape never requests marker interrupts...
-            ret = send_marker_interrupt(chan);
-            if (ret == 0) {
-                log_msg(NOTIFY_MSG, moi, "Asking for a list service due to set-marker-interrupt-and-proceed.\n");
-                chanp->control = 2;
-            }
-#endif
-        } else {
-            log_msg(ERR_MSG, moi, "Bad PCW/DCW control, %d\n", chanp->control);
-            cancel_run(STOP_BUG);
-            ret = 1;
-        }
-#if LS_LOOP
+
+    log_msg(DEBUG_MSG, moi, "In channel loop.\n");
+    if (chan_status.major != 0) {
+        log_msg(DEBUG_MSG, moi, "Channel has non-zero major status; terminating DCW loop.\n");
+        return 1;
     }
+    if (chanp->control == 2 || chanp->need_indir_svc) {
+        // do a list service
+        chanp->need_indir_svc = 0;
+        int addr;
+        ++ nlist;
+        log_msg(DEBUG_MSG, moi, "Asking for %s list service (svc # %d).\n", first_list ? "first" : "another", nlist);
+        if (list_service(chan, first_list, NULL, &addr) != 0) {
+            ret = 1;
+            log_msg(WARN_MSG, moi, "List service indicates failure\n");
+        } else {
+            if (chanp->state == chn_pcw_sent)
+                chanp->state = chn_pcw_done;
+            log_msg(DEBUG_MSG, moi, "List service yields DCW at addr 0%o\n", addr);
+            chanp->control = -1;
+            // Send request to device
+            ret = do_dcw(chan, addr, &chanp->control, &chanp->need_indir_svc);
+            log_msg(DEBUG_MSG, moi, "Back from latest do_dcw (at %0o); control = %d\n", addr, chanp->control);
+            if (chan_status.major == 0) {
+                if (chanp->need_indir_svc)
+                    log_msg(WARN_MSG, moi, "DCW requests indirect data service; will use a list-service to find the next DCW.\n");
+            } else {
+                log_msg(DEBUG_MSG, moi, "do_dcw returns with non-zero channel status; terminating DCW loop\n");
+                if (chanp->need_indir_svc) {
+                    log_msg(DEBUG_MSG, moi, "ignoring request for indirect data service due to non-zero channel status.\n");
+                    chanp->need_indir_svc = 0;
+                }
+                chanp->control = 0;
+            }
+        }
+        first_list = 0;
+    } else if (chanp->control == 0) {
+        // impossible
+        // do nothing, terminate
+        log_msg(DEBUG_MSG, moi, "DCW has control of zero; terminating DCW loop.\n");
+        ret = 1;
+    } else if (chanp->control == 3) {
+        // BUG: set marker interrupt and proceed (list service)
+        // Marker interrupts indicate normal completion of
+        // a PCW or IDCW
+        // PCW control == 3
+        // See also: 3.2.7, 3.5.2, 4.3.6
+        // See also 3.1.3
+#if 1
+        log_msg(ERR_MSG, moi, "Set marker not implemented\n");
+        ret = 1;
+#else
+        // Boot tape never requests marker interrupts...
+        ret = send_marker_interrupt(chan);
+        if (ret == 0) {
+            log_msg(NOTIFY_MSG, moi, "Asking for a list service due to set-marker-interrupt-and-proceed.\n");
+            chanp->control = 2;
+        }
 #endif
+    } else {
+        log_msg(ERR_MSG, moi, "Bad PCW/DCW control, %d\n", chanp->control);
+        cancel_run(STOP_BUG);
+        ret = 1;
+    }
+
     //log_msg(DEBUG_MSG, moi, "Finished\n");
     return ret;
 }
