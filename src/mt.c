@@ -28,13 +28,23 @@ void mt_init()
  *
  */
 
-int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
+int mt_iom_cmd(chan_devinfo* devinfop)
 {
+    int chan = devinfop->chan;
+    int dev_cmd = devinfop->dev_cmd;
+    int dev_code = devinfop->dev_code;
+    int* majorp = &devinfop->major;
+    int* subp = &devinfop->substatus;
+
     log_msg(DEBUG_MSG, "MT::iom_cmd", "Chan 0%o, dev-cmd 0%o, dev-code 0%o\n", chan, dev_cmd, dev_code);
+
+    devinfop->is_read = 1;
+    devinfop->time = -1;
 
     // Major codes are 4 bits...
 
     if (chan < 0 || chan >= ARRAY_SIZE(iom.channels)) {
+        devinfop->have_status = 1;
         *majorp = 05;   // Real HW could not be on bad channel
         *subp = 2;
         log_msg(ERR_MSG, "MT::iom_cmd", "Bad channel %d\n", chan);
@@ -43,6 +53,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
 
     DEVICE* devp = iom.channels[chan].dev;
     if (devp == NULL || devp->units == NULL) {
+        devinfop->have_status = 1;
         *majorp = 05;
         *subp = 2;
         log_msg(ERR_MSG, "MT::iom_cmd", "Internal error, no device and/or unit for channel 0%o\n", chan);
@@ -50,6 +61,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
     }
     UNIT* unitp = devp->units;
     if (dev_code < 0 || dev_code >= devp->numunits) {
+        devinfop->have_status = 1;
         // *major = 042;
         // *subp = 2;
         *majorp = 05;
@@ -63,6 +75,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
 
     switch(dev_cmd) {
         case 0: {               // CMD 00 Request status
+            devinfop->have_status = 1;
             *majorp = 0;
             *subp = 0;
             if (sim_tape_wrp(unitp)) *subp |= 1;
@@ -82,20 +95,27 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             if (tape_statep->bufp == NULL)
                 if ((tape_statep->bufp = malloc(bufsz)) == NULL) {
                     log_msg(ERR_MSG, "MT::iom_cmd", "Malloc error\n");
+                    devinfop->have_status = 1;
                     *majorp = 012;  // BUG: arbitrary error code; config switch
                     *subp = 1;
                     return 1;
                 }
-            t_mtrlnt tbc;
+            t_mtrlnt tbc = 0;
             int ret;
             if ((ret = sim_tape_rdrecf(unitp, tape_statep->bufp, &tbc, bufsz)) != 0) {
                 if (ret == MTSE_TMK || ret == MTSE_EOM) {
                     log_msg(NOTIFY_MSG, "MT::iom_cmd", "EOF: %s\n", simh_tape_msg(ret));
+                    devinfop->have_status = 1;
                     *majorp = 044;  // EOF category
                     *subp = 023;    // EOF file mark
+                    if (tbc != 0) {
+                        log_msg(ERR_MSG, "MT::iom_cmd", "Read %d bytes with EOF.\n", tbc);
+                        cancel_run(STOP_WARN);
+                    }
                     // cancel_run(STOP_IBKPT);
                     return 0;
                 } else {
+                    devinfop->have_status = 1;
                     log_msg(ERR_MSG, "MT::iom_cmd", "Cannot read tape: %d - %s\n", ret, simh_tape_msg(ret));
                     log_msg(ERR_MSG, "MT::iom_cmd", "Returning arbitrary error code\n");
                     *majorp = 010;  // BUG: arbitrary error code; config switch
@@ -103,15 +123,21 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
                     return 1;
                 }
             }
-            log_msg(INFO_MSG, "MT::iom_cmd", "Read %d bytes from simulated tape\n", (int) tbc);
             tape_statep->bitsp = bitstm_new(tape_statep->bufp, tbc);
             *majorp = 0;
             *subp = 0;
             if (sim_tape_wrp(unitp)) *subp |= 1;
             tape_statep->io_mode = read_mode;
+            devinfop->time = sys_opts.mt_times.read;
+            if (devinfop->time < 0) {
+                log_msg(INFO_MSG, "MT::iom_cmd", "Read %d bytes from simulated tape\n", (int) tbc);
+                devinfop->have_status = 1;
+            } else
+                log_msg(INFO_MSG, "MT::iom_cmd", "Queued read of %d bytes from tape.\n", (int) tbc);
             return 0;
         }
         case 040:               // CMD 040 -- Reset Status
+            devinfop->have_status = 1;
             *majorp = 0;
             *subp = 0;
             if (sim_tape_wrp(unitp)) *subp |= 1;
@@ -125,11 +151,13 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             int ret;
             if ((ret = sim_tape_sprecr(unitp, &tbc)) == 0) {
                 log_msg(NOTIFY_MSG, "MT::iom_cmd", "Backspace one record\n");
+                devinfop->have_status = 1;  // TODO: queue
                 *majorp = 0;
                 *subp = 0;
                 if (sim_tape_wrp(unitp)) *subp |= 1;
             } else {
                 log_msg(ERR_MSG, "MT::iom_cmd", "Cannot backspace record: %d - %s\n", ret, simh_tape_msg(ret));
+                devinfop->have_status = 1;
                 if (ret == MTSE_BOT) {
                     *majorp = 05;
                     *subp = 010;
@@ -143,6 +171,7 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             return 0;
         }
         case 051:               // CMD 051 -- Reset Device Status
+            devinfop->have_status = 1;
             *majorp = 0;
             *subp = 0;
             if (sim_tape_wrp(unitp)) *subp |= 1;
@@ -158,6 +187,8 @@ int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
     }
     return 1;   // not reached
 }
+
+// ============================================================================
 
 
 int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
@@ -231,9 +262,9 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
 
 t_stat mt_svc(UNIT *up)
 {
-    log_msg(INFO_MSG, "MT::service", "not doing anything!\n");
-    cancel_run(STOP_WARN);
-    return 0;
+    const char* moi = "MT::service";
+    log_msg(INFO_MSG, moi, "Calling channel service.\n");
+    return channel_svc(up);
 }
 
 static const char *simh_tape_msg(int code)

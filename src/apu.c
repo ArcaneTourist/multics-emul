@@ -519,7 +519,7 @@ int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint
 
 int get_ptr_address(uint ringno, uint segno, uint offset, uint *addrp, uint *minaddrp, uint* maxaddrp)
 {
-    char *moi = "APU::get-addr";    // BUG
+    char *moi = "APU::get-ptr-addr";
 
     addr_modes_t addr_mode = get_addr_mode();
     if (addr_mode != APPEND_mode) {

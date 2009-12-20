@@ -225,8 +225,8 @@ UNIT mt_unit = {
 };
 
 DEVICE tape_dev = {
-    "TAPE", &mt_unit, NULL, NULL,
-    1, 10, 31, 1, 8, 9,
+    "TAPE", &mt_unit, NULL, NULL, 1,
+    10, 31, 1, 8, 9,
     NULL, NULL, NULL,
     NULL, &sim_tape_attach, &sim_tape_detach,
     NULL, DEV_DEBUG
@@ -446,15 +446,6 @@ t_stat cpu_reset (DEVICE *dptr)
     // Generate a startup fault.
     cpu.cycle = FETCH_cycle;
     fault_gen(startup_fault);   // pressing POWER ON button causes this fault
-#endif
-#if 0
-    {
-        // Simulate an interrupt as described in bootload_tape_label.alm
-        // BUG: IOM should cause the interrupt after the record is read in.
-        cpu.cycle = INTERRUPT_cycle;
-        events.int_pending = 1;
-        events.interrupts[12] = 1;
-    }
 #endif
 #if 1
     // cpu.cycle = FETCH_cycle;
@@ -1751,7 +1742,7 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
         }
     }
 
-    cpu.read_addr = addr;
+    cpu.read_addr = addr;   // Should probably be in scu
     *wordp = M[addr];   // absolute memory reference
     if (get_addr_mode() == BAR_mode)
         log_msg(DEBUG_MSG, "CU::fetch-abs", "fetched word at %#o\n", addr);

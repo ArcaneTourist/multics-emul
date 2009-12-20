@@ -24,7 +24,7 @@ eis_desc.o: *.h eis.hpp
 bitstream.o: *.h
 apu.o: *.h
 scu.o: *.h
-iom.o: *.h
+iom.o: *.h iom.hincl
 mt.o: *.h
 math.o: *.h
 math_real.o: *.h

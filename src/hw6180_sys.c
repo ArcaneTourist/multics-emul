@@ -169,10 +169,15 @@ static void hw6180_init(void)
     // System-wide options
     memset(&sys_opts, 0, sizeof(sys_opts));
     sys_opts.clock_speed = 250000; // about 1/4 of a MIP
-    sys_opts.iom_times.connect = -1;
-    sys_opts.iom_times.chan_activate = -1;
-    sys_opts.mt_times.read = 1000;
-    sys_opts.mt_times.xfer = -1;
+    // Negative times imply instantaneous operation without making
+    // use of sim_activate().  Zero times have almost the same
+    // result, except that the caller queues an immediate run via
+    // sim_activate() and then returns.  The zero wait event(s) will
+    // be noticed and run prior to the next instruction execution.
+    sys_opts.iom_times.connect = 3;
+    sys_opts.iom_times.chan_activate = -1;  // unimplemented
+    sys_opts.mt_times.read = 100; // 1000;
+    sys_opts.mt_times.xfer = -1;            // unimplemented
 
     // Hardware config -- todo - should be based on config cards!
     // BUG/TODO: need to write config deck at 012000 ? Probably not
@@ -214,14 +219,7 @@ static void hw6180_init(void)
     scu.interrupts[1].avail = 1;
 
     // Only one IOM
-    memset(&iom, 0, sizeof(iom));
     iom.iom_num = 0;    // IOM "A"
-    for (int i = 0; i < ARRAY_SIZE(iom.ports); ++i) {
-        iom.ports[i] = -1;
-    }
-    for (int i = 0; i < ARRAY_SIZE(iom.channels); ++i) {
-        iom.channels[i].type = DEV_NONE;
-    }
 
     // TODO: init_memory_iom() should probably be called by boot()
     //init_memory_iox();
@@ -267,6 +265,7 @@ static void hw6180_init(void)
     iom.channels[con_chan].type = DEV_CON;
     iom.channels[con_chan].dev = &opcon_dev;
     log_msg(DEBUG_MSG, "SYS::init", "Once-only initialization complete.\n");
+    log_msg(DEBUG_MSG, "SYS::init", "Activity queue has %d entries.\n", sim_qcount());
 }
 
 
@@ -352,6 +351,8 @@ static void init_memory_iom()
     /* 3*/ M[base_addr + 7] = ((t_uint64) base_addr << 18) | 02000002;  // tally word for sys fault status
                 // ??? Fault channel DCW
 
+    // bootload_tape_label.alm says 04000, 43A239854 says 040000.  Since 43A239854 says
+    // "no change", 40000 is correct; 4000 would be a large tally
     /* 4*/ M[base_addr + 010] = 040000;     // Connect channel LPW; points to PCW at 000000
     int mbx = base_addr + 4 * tape_chan;
     /* 5*/ M[mbx] = 03020003;               // Boot device LPW; points to IDCW at 000003

@@ -547,6 +547,19 @@ typedef struct {
     } channels[max_channels];
 } iom_t;
 
+// Used to communicate between the IOM and devices
+typedef struct {
+    int chan;
+    int dev_cmd;    // 6 bits
+    int dev_code;   // 6 bits
+    int chan_data;  // 6 bits; often some sort of count
+    flag_t have_status; // set to true by the device when operation is complete
+    int major;
+    int substatus;
+    flag_t is_read;
+    int time;       // request by device for queuing via sim_activate()
+} chan_devinfo;
+
 // System-wide info not tied to a specific CPU, IOM, or SCU
 typedef struct {
     int clock_speed;    // 0 for realtime; otherwise instructions/sec
@@ -733,7 +746,7 @@ extern int get_eis_indir_addr(t_uint64 word, uint* addrp);
 extern int addr_mod_eis_addr_reg(instr_t *ip);
 
 /* mt.c */
-extern int mt_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp);
+extern int mt_iom_cmd(chan_devinfo* devinfop);
 extern int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 extern void mt_init(void);
 

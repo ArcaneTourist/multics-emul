@@ -1,0 +1,82 @@
+// Much of this is from AN87 as 43A23985 lacked details of 0..11 and 22..36
+typedef struct pcw_s {
+    int dev_cmd;    // 6 bits; 0..5
+    int dev_code;   // 6 bits; 6..11
+    int ext;        // 6 bits; 12..17; address extension
+    int cp;         // 3 bits; 18..20, must be all ones
+    flag_t mask;    // extension control or mask; 1 bit; bit 21
+    int control;    // 2 bits; bit 22..23
+    int chan_cmd;   // 6 bits; bit 24..29;
+        // AN87 says: 00 single record xfer, 02 non data xfer,
+        // 06 multi-record xfer, 10 single char record xfer
+    int chan_data;  // 6 bits; bit 30..35; often some sort of count
+    //
+    int chan;       // 6 bits; bits 3..8 of word 2
+} pcw_t;
+
+typedef struct dcw_s {
+    enum { ddcw, tdcw, idcw } type;
+    union {
+        pcw_t instr;
+        struct {
+            uint daddr; // data address; 18 bits at 0..17);
+            uint cp;    // char position; 3 bits 18..20
+            uint tctl;  // tally control; 1 bit at 21
+            uint type;  // 2 bits at 22..23
+            uint tally; // 12 bits at 24..35
+        } ddcw;
+        struct {
+            uint addr;
+            flag_t ec;  // extension control
+            flag_t i;   // IDCW control
+            flag_t r;   // relative addressing control
+        } xfer;
+    } fields;
+} dcw_t;
+
+// Channel Status Word -- from AN87, 3-11
+typedef struct {
+    int chan;       // not part of the status word; simulator only
+    int major;
+    int substatus;
+    // even/odd bit
+    // status marker bit
+    // soft, 2 bits set to zero by hw
+    // initiate bit
+    // chan_stat; 3 bits; 1=busy, 2=invalid chan, 3=incorrect dcw, 4=incomplete
+    // iom_stat; 3 bits; 1=tro, 2=2tdcw, 3=bndry, 4=addr ext, 5=idcw,
+    int addr_ext;   // BUG: not maintained
+    int rcount; // 3 bits; residue in (from) PCW or last IDCW count (chan-data)
+    // addr;    // addr of *next* data word to be transmitted
+    // char_pos
+    // read;    // flag
+    // type;    // 1 bit
+    // dcw_residue; // residue in tally of last dcw
+    flag_t power_off;
+} chan_status_t;
+
+typedef enum {
+    chn_idle,       // Channel ready to receive a PCW from connect channel
+    chn_pcw_rcvd,   // PCW received from connect channel
+    chn_pcw_sent,   // PCW (not IDCW) sent to device
+    chn_pcw_done,   // Received results from device
+    chn_cmd_sent,   // A command was sent to a device
+    chn_io_sent,    // A io transfer is in progress
+    chn_err         // BUG: may not need this state
+} chn_state;
+typedef struct {
+    int chan;
+    // BUG/TODO: represent "masked" state
+    chn_state state;
+    int n_list;     // could be flag for first_list, but counter aids debug
+    flag_t need_indir_svc;
+    flag_t have_status;         // from device
+    chan_status_t status;
+    UNIT* unitp;    // used for sim_activate() timing; BUG: steal from chn DEV
+    // pcw_t pcw;           // received from the connect channel
+    dcw_t dcw;      // most recent (in progress) dcw
+    int control;    // Indicates next action; mostly from PCW/IDCW ctrl fields
+    int err;        // BUG: temporary hack to replace "ret" auto vars...
+    chan_devinfo devinfo;
+} channel_t;
+
