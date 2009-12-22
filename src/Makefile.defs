@@ -24,6 +24,12 @@ CXX = g++ -pedantic -O3 -Wall -Wno-long-long -Wno-unused-variable -march=native 
 # debugging, remove optimization
 # CXX = g++ -pedantic -O0 -Wall -Wno-long-long -Wno-unused-variable -march=native -pipe -DUSE_INT64 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I ..
 LDFLAGS=-lm -lrt -lgmp
+# Solaris
+# sol: OS_CCDEFS = -D_GNU_SOURCE
+# sol: OS_LDDEFS = -lsocket -lnsl -lpthread
+# sol: CC = gcc -std=c99 -pedantic -O3 -Wall -Wno-unused-variable -pipe -DUSE_INT64 -DUSE_ADDR64 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I ..
+# sol: CXX = g++ -pedantic -O3 -Wall -Wno-long-long -Wno-unused-variable -pipe -DUSE_INT64 -DUSE_ADDR64 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I ..
+# sol: LDFLAGS=$(OS_LDDEFS) -lm -lrt -lgmp
 endif
 ifeq ($(USE_NETWORK),)
 else

@@ -550,6 +550,7 @@ typedef struct {
 // Used to communicate between the IOM and devices
 typedef struct {
     int chan;
+    void* statep;   // For use by device specific code
     int dev_cmd;    // 6 bits
     int dev_code;   // 6 bits
     int chan_data;  // 6 bits; often some sort of count

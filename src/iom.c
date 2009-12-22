@@ -122,9 +122,6 @@ typedef struct {
 #define IOM_A_MBX 01400     /* location of mailboxes for IOM A */
 #define IOM_CONNECT_CHAN 2
 
-static chan_status_t chan_status;
-
-
 // ============================================================================
 // === Internal functions
 
@@ -177,8 +174,8 @@ t_stat channel_svc(UNIT *up)
     chanp->have_status = 1;
     chanp->status.major = chanp->devinfo.major;
     chanp->status.substatus = chanp->devinfo.substatus;
-    chan_status.major = chanp->devinfo.major;
-    chan_status.substatus = chanp->devinfo.substatus;
+    chanp->status.rcount = chanp->devinfo.chan_data;
+    chanp->status.read = chanp->devinfo.is_read;
     do_channel(chanp);
     return 0;
 }
@@ -212,6 +209,7 @@ void iom_init()
             chanp->state = chn_idle;
             // DEVICEs ctxt pointers point at chanp->devinfo
             chanp->devinfo.chan = chan;
+            chanp->devinfo.statep = NULL;
         }
     }
 }
@@ -461,8 +459,25 @@ static int activate_chan(int chan, pcw_t* pcwp)
     chanp->n_list = 0;      // first list flag (and debug counter)
     chanp->err = 0;
     chanp->state = chn_pcw_rcvd;
+
+    // Receive the PCW
     chanp->dcw.type = idcw;
     chanp->dcw.fields.instr = *pcwp;
+
+#if 0
+    // T&D tape does *not* expect us to cache original SCW, it expects us to
+    // use the SCW loaded from tape.
+    int chanloc = IOM_A_MBX + chan * 4;
+    int scw = chanloc + 2;
+    if (scw % 2 == 1) { // 3.2.4
+        log_msg(WARN_MSG, "IOM::status", "SCW address 0%o is not even\n", scw);
+        -- scw;         // force y-pair behavior
+    }
+    (void) fetch_abs_word(scw, &chanp->scw);
+    log_msg(DEBUG_MSG, moi, "Caching SCW value %012llo from address %#o for channel %d.\n",
+        chanp->scw, scw, chan);
+#endif
+
     // TODO: allow sim_activate on the channel instead of do_channel()
     int ret = do_channel(chanp);
     // BUG/TODO: Let do_channel update the state -- done?
@@ -719,33 +734,10 @@ static int run_channel(int chan)
         } else {
             ++ chanp->n_list;
             log_msg(DEBUG_MSG, moi, "List service yields DCW at addr 0%o\n", addr);
-#if 0
-            // BUG: redundant
-            if (chanp->state == chn_pcw_sent) {
-                log_msg(DEBUG_MSG, moi, "Flagging state as pcw done.\n");
-                chanp->state = chn_pcw_done;
-                print_chan_state(moi, chanp);
-            }
-#endif
             chanp->control = -1;
             // Send request to device
             ret = do_dcw(chan, addr, &chanp->control, &chanp->need_indir_svc);
             log_msg(DEBUG_MSG, moi, "Back from latest do_dcw (at %0o); control = %d; have-status = %d\n", addr, chanp->control, chanp->have_status);
-#if 0
-            if (chanp->have_status) {
-                if (chan_status.major == 0) {
-                    if (chanp->need_indir_svc)
-                        log_msg(WARN_MSG, moi, "DCW requests indirect data service; will use a list-service to find the next DCW.\n");
-                } else {
-                    log_msg(DEBUG_MSG, moi, "do_dcw returns with non-zero channel status; terminating DCW loop\n");
-                    if (chanp->need_indir_svc) {
-                        log_msg(DEBUG_MSG, moi, "ignoring request for indirect data service due to non-zero channel status.\n");
-                        chanp->need_indir_svc = 0;
-                    }
-                    chanp->control = 0; // stop
-                }
-            }
-#endif
         }
     } else if (chanp->control == 3) {
         // BUG: set marker interrupt and proceed (list service)
@@ -1141,13 +1133,13 @@ static int dev_send_idcw(int chan, pcw_t *p)
     // if (devp == NULL || devp->units == NULL)
     if (devp == NULL) {
         // BUG: no device connected; what's the appropriate fault code(s) ?
-        chan_status.power_off = 1;
+        chanp->status.power_off = 1;
         log_msg(WARN_MSG, moi, "No device connected to channel %#o(%d); Auto breakpoint.\n", chan, chan);
         iom_fault(chan, moi, 0, 0);
         cancel_run(STOP_IBKPT);
         return 1;
     }
-    chan_status.power_off = 0;
+    chanp->status.power_off = 0;
 
     if (p->chan_data != 0)
         log_msg(INFO_MSG, moi, "Chan data is %o (%d)\n", p->chan_data, p->chan_data);
@@ -1155,18 +1147,12 @@ static int dev_send_idcw(int chan, pcw_t *p)
     switch(iom.channels[chan].type) {
         case DEV_NONE:
             // BUG: no device connected; what's the appropriate fault code(s) ?
-            chan_status.power_off = 1;
+            chanp->status.power_off = 1;
             log_msg(WARN_MSG, moi, "Device on channel %#o (%d) is missing.\n", chan, chan);
             iom_fault(chan, moi, 0, 0);
             cancel_run(STOP_WARN);
             return 1;
         case DEV_TAPE: {
-#if 0
-            int ret = mt_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chan_status.major, &chan_status.substatus);
-            chanp->state = chn_cmd_sent;
-            chanp->have_status = 1;
-            chan_status.rcount = p->chan_data;
-#else
             chan_devinfo* devinfop = devp->ctxt;
             if (devinfop == NULL || devinfop->chan != p->chan) {
                 log_msg(ERR_MSG, moi, "Device on channel %#o (%d) has missing or bad context.\n", chan, chan);
@@ -1183,9 +1169,9 @@ static int dev_send_idcw(int chan, pcw_t *p)
             if (devinfop->have_status) {
                 chanp->status.major = devinfop->major;
                 chanp->status.substatus = devinfop->substatus;
-                chan_status.major = devinfop->major;
-                chan_status.substatus = devinfop->substatus;
-                log_msg(DEBUG_MSG, moi, "MT returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
+                chanp->status.rcount = devinfop->chan_data;
+                chanp->status.read = devinfop->is_read;
+                log_msg(DEBUG_MSG, moi, "MT returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             } else if (devinfop->time >= 0) {
                 extern int32 sim_interval;
                 int si = sim_interval;
@@ -1201,15 +1187,14 @@ static int dev_send_idcw(int chan, pcw_t *p)
                 chanp->err = 1;
                 cancel_run(STOP_BUG);
             }
-#endif
-            return ret; // caller must choose between our return and the chan_status.{major,substatus}
+            return ret; // caller must choose between our return and the status.{major,substatus}
         }
         case DEV_CON: {
-            int ret = con_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chan_status.major, &chan_status.substatus);
+            int ret = con_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chanp->status.major, &chanp->status.substatus);
             chanp->state = chn_cmd_sent;
             chanp->have_status = 1;
-            chan_status.rcount = p->chan_data;
-            log_msg(DEBUG_MSG, moi, "CON returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
+            chanp->status.rcount = p->chan_data;
+            log_msg(DEBUG_MSG, moi, "CON returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             return ret; // caller must choose between our return and the chan_status.{major,substatus}
         }
         default:
@@ -1248,38 +1233,41 @@ static int dev_io(int chan, t_uint64 *wordp)
 {
     const char* moi = "IOM::dev-io";
 
+    channel_t* chanp = get_chan(chan);
+    if (chanp == NULL)
+        return 1;
+
     DEVICE* devp = iom.channels[chan].dev;
     // if (devp == NULL || devp->units == NULL)
     if (devp == NULL) {
         // BUG: no device connected, what's the fault code(s) ?
         log_msg(WARN_MSG, "IOM::dev-io", "No device connected to chan 0%o\n", chan);
-        chan_status.power_off = 1;
+        chanp->status.power_off = 1;
         iom_fault(chan, moi, 0, 0);
         cancel_run(STOP_WARN);
         return 1;
     }
-    chan_status.power_off = 0;
+    chanp->status.power_off = 0;
 
     switch(iom.channels[chan].type) {
         case DEV_NONE:
             // BUG: no device connected, what's the fault code(s) ?
-            chan_status.power_off = 1;
+            chanp->status.power_off = 1;
             iom_fault(chan, moi, 0, 0);
             log_msg(WARN_MSG, "IOM::dev-io", "Device on channel %#o (%d) is missing.\n", chan, chan);
             cancel_run(STOP_WARN);
             return 1;
         case DEV_TAPE: {
-            int ret = mt_iom_io(chan, wordp, &chan_status.major, &chan_status.substatus);
-            if (ret != 0 || chan_status.major != 0)
-                log_msg(DEBUG_MSG, "IOM::dev-io", "MT returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
-            //return 0; // ignore ret in favor of chan_status.{major,substatus}
-            return ret; // caller must choose between our return and the chan_status.{major,substatus}
+            int ret = mt_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
+            if (ret != 0 || chanp->status.major != 0)
+                log_msg(DEBUG_MSG, "IOM::dev-io", "MT returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
+            return ret; // caller must choose between our return and the status.{major,substatus}
         }
         case DEV_CON: {
-            int ret = con_iom_io(chan, wordp, &chan_status.major, &chan_status.substatus);
-            if (ret != 0 || chan_status.major != 0)
-                log_msg(DEBUG_MSG, "IOM::dev-io", "CON returns major code 0%o substatus 0%o\n", chan_status.major, chan_status.substatus);
-            return ret; // caller must choose between our return and the chan_status.{major,substatus}
+            int ret = con_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
+            if (ret != 0 || chanp->status.major != 0)
+                log_msg(DEBUG_MSG, "IOM::dev-io", "CON returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
+            return ret; // caller must choose between our return and the status.{major,substatus}
         }
         default:
             log_msg(ERR_MSG, "IOM::dev-io", "Unknown device type 0%o\n", iom.channels[chan].type);
@@ -1303,6 +1291,10 @@ static int dev_io(int chan, t_uint64 *wordp)
 
 static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
 {
+
+    channel_t* chanp = get_chan(chan);
+    if (chanp == NULL)
+        return 1;
 
     log_msg(DEBUG_MSG, "IOW::DO-DDCW", "%012llo: %s\n", M[addr], dcw2text(dcwp));
 
@@ -1330,7 +1322,7 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
         ret = dev_io(chan, wordp);
         if (ret != 0)
             log_msg(DEBUG_MSG, "IOM::DDCW", "Device for chan 0%o(%d) returns non zero (out of band return)\n", chan, chan);
-        if (ret != 0 || chan_status.major != 0)
+        if (ret != 0 || chanp->status.major != 0)
             break;
         // BUG: BUG: We increment daddr & tally even if device didn't do the
         // transfer, e.g. when the console operator is "distracted".  This
@@ -1666,14 +1658,18 @@ static int status_service(int chan)
 {
     // See page 33 and AN87 for format of y-pair of status info
 
+    channel_t* chanp = get_chan(chan);
+    if (chanp == NULL)
+        return 1;
+
     // BUG: much of the following is not tracked
     
     t_uint64 word1, word2;
     word1 = 0;
     word1 = setbits36(word1, 0, 1, 1);
-    word1 = setbits36(word1, 1, 1, chan_status.power_off);
-    word1 = setbits36(word1, 2, 4, chan_status.major);
-    word1 = setbits36(word1, 6, 6, chan_status.substatus);
+    word1 = setbits36(word1, 1, 1, chanp->status.power_off);
+    word1 = setbits36(word1, 2, 4, chanp->status.major);
+    word1 = setbits36(word1, 6, 6, chanp->status.substatus);
     word1 = setbits36(word1, 12, 1, 1); // BUG: even/odd
     word1 = setbits36(word1, 13, 1, 1); // BUG: marker int
     word1 = setbits36(word1, 14, 2, 0);
@@ -1685,20 +1681,26 @@ static int status_service(int chan)
     word1 = setbits36(word1, 21, 3, chan_status.iom_stat);
     word1 = setbits36(word1, 24, 6, chan_status.addr_ext);
 #endif
-    word1 = setbits36(word1, 30, 6, chan_status.rcount);
+    word1 = setbits36(word1, 30, 6, chanp->status.rcount);
 
     word2 = 0;
 #if 0
     // BUG: Unimplemented status bits:
     word2 = setbits36(word2, 0, 18, chan_status.addr);
     word2 = setbits36(word2, 18, 3, chan_status.char_pos);
-    word2 = setbits36(word2, 21, 1, chan_status.is_read);
+#endif
+    word2 = setbits36(word2, 21, 1, chanp->status.read);
+#if 0
     word2 = setbits36(word2, 22, 2, chan_status.type);
     word2 = setbits36(word2, 24, 12, chan_status.dcw_residue);
 #endif
 
     // BUG: need to write to mailbox queue
 
+    // T&D tape does *not* expect us to cache original SCW, it expects us to
+    // use the SCW loaded from tape.
+
+#if 1
     int chanloc = IOM_A_MBX + chan * 4;
     int scw = chanloc + 2;
     if (scw % 2 == 1) { // 3.2.4
@@ -1709,16 +1711,21 @@ static int status_service(int chan)
     (void) fetch_abs_word(scw, &sc_word);
     int addr = getbits36(sc_word, 0, 18);   // absolute
     log_msg(DEBUG_MSG, "IOM::status", "Writing status for chan %d to 0%o=>0%o\n", chan, scw, addr);
+#else
+    t_uint64 sc_word = chanp->scw;
+    int addr = getbits36(sc_word, 0, 18);   // absolute
+    log_msg(DEBUG_MSG, "IOM::status", "Writing status for chan %d to %#o\n", chan, addr);
+#endif
     log_msg(DEBUG_MSG, "IOM::status", "Status: 0%012llo 0%012llo\n", word1, word2);
     log_msg(DEBUG_MSG, "IOM::status", "Status: (0)t=Y, (1)pow=%d, (2..5)major=0%02o, (6..11)substatus=0%02o, (12)e/o=%c, (13)marker=%c, (14..15)Z, 16(Z?), 17(Z)\n",
-        chan_status.power_off, chan_status.major, chan_status.substatus,
+        chanp->status.power_off, chanp->status.major, chanp->status.substatus,
         '1', // BUG 
         'Y');   // BUG
     int lq = getbits36(sc_word, 18, 2);
     int tally = getbits36(sc_word, 24, 12);
 #if 1
     if (lq == 3) {
-        log_msg(WARN_MSG, "IOM::status", "SCW address 0%o has illegal LQ\n", scw);
+        log_msg(WARN_MSG, "IOM::status", "SCW for channel %d has illegal LQ\n", chan);
         lq = 0;
     }
 #endif

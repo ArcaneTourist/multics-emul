@@ -12,7 +12,9 @@ extern iom_t iom;
 static const char *simh_tape_msg(int code); // hack
 static const size_t bufsz = 4096 * 1024;
 static struct s_tape_state {
-    // BUG: this should hang off of UNIT structure
+    // BUG: this should hang off of UNIT structure (not that the UNIT
+    // structure contains a pointer...)
+    // BUG: An array index by channel doesn't allow multiple tapes per channel
     enum { no_mode, read_mode, write_mode } io_mode;
     uint8 *bufp;
     bitstream_t *bitsp;
@@ -48,6 +50,7 @@ int mt_iom_cmd(chan_devinfo* devinfop)
         *majorp = 05;   // Real HW could not be on bad channel
         *subp = 2;
         log_msg(ERR_MSG, "MT::iom_cmd", "Bad channel %d\n", chan);
+        cancel_run(STOP_BUG);
         return 1;
     }
 
@@ -57,19 +60,18 @@ int mt_iom_cmd(chan_devinfo* devinfop)
         *majorp = 05;
         *subp = 2;
         log_msg(ERR_MSG, "MT::iom_cmd", "Internal error, no device and/or unit for channel 0%o\n", chan);
+        cancel_run(STOP_BUG);
         return 1;
     }
-    UNIT* unitp = devp->units;
     if (dev_code < 0 || dev_code >= devp->numunits) {
         devinfop->have_status = 1;
-        // *major = 042;
-        // *subp = 2;
-        *majorp = 05;
-        *subp = 2;
+        *majorp = 05;   // Command Reject
+        *subp = 2;      // Invalid Device Code
         log_msg(ERR_MSG, "MT::iom_cmd", "Bad dev unit-num 0%o (%d decimal)\n", dev_code, dev_code);
+        cancel_run(STOP_BUG);
         return 1;
     }
-    // BUG: dev_code unused
+    UNIT* unitp = &devp->units[dev_code];
 
     struct s_tape_state *tape_statep = &tape_state[chan];
 
@@ -91,7 +93,26 @@ int mt_iom_cmd(chan_devinfo* devinfop)
         }
         case 5: {               // CMD 05 -- Read Binary Record
             // We read the record into the tape controllers memory;
-            // IOM can retrieve via PCW 
+            // IOM can then retrieve the data via DCWs
+            if (devp->numunits <= 1) {
+                devinfop->chan_data = 0;
+            } else {
+                // T&D tape seems to want to see non-zero residue from tape
+                // read.
+                // Bootload_tape_label.alm indicates that after a read binary
+                // operation, the field is interpreted as the device number
+                // and that a device number of zero is legal.
+                // AN70, page 2-1 says that when the tape is read in
+                // native mode via an IOM or IOCC, the tape drive number
+                // in the IDCW will be zero.  A non-zero tape drive number
+                // in the IDCW indicates that BOS is being used to simulate
+                // an IOM.
+                // Perhaps the T&D tape requires BOS (or the BCE replacement
+                // for BOS) ?
+                // Yes, the below results in zero if we only have one unit,
+                // but provides a place for this long comment. :-)
+                devinfop->chan_data = unitp - devp->units;
+            }
             if (tape_statep->bufp == NULL)
                 if ((tape_statep->bufp = malloc(bufsz)) == NULL) {
                     log_msg(ERR_MSG, "MT::iom_cmd", "Malloc error\n");

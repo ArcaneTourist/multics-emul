@@ -98,17 +98,17 @@ public:
     void bit_advance(int nbits) { return _bit_advance(nbits,0); }
     void char_advance(int nchars);
     void word_advance(int nwords);  // positions to bit zero of requested word
-    int addr() const { return page.valid() ? page.addr : -1; }
-    int min() const { return page.valid() ? page.lo : -1; }
-    int max() const { return page.valid() ? page.hi : -1; }
+    int addr() const { return page.valid() ? (int) page.addr : -1; }
+    int min() const { return page.valid() ? (int) page.lo : -1; }
+    int max() const { return page.valid() ? (int) page.hi : -1; }
     int _addr() const { return page.addr; }
     int _min() const { return page.lo; }
     int _max() const { return page.hi; }
     unsigned _bitnum;
-    int bitno() const { return page.valid() ? _bitnum : -1; }
+    int bitno() const { return page.valid() ? (int) _bitnum : -1; }
     int _bitno() const { return _bitnum; }
-    int char_charno() const { return page.valid() ? _bitnum / 9 : -1; }
-    int char_bitno() const { return page.valid() ? _bitnum % 9 : -1; }
+    int char_charno() const { return page.valid() ? (int) _bitnum / 9 : -1; }
+    int char_bitno() const { return page.valid() ? (int) _bitnum % 9 : -1; }
     int get();
     // int get(unsigned* addrp, unsigned* bitnop, unsigned* minp, unsigned* maxp);
 };

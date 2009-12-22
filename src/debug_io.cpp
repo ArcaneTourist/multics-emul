@@ -15,6 +15,7 @@ using namespace std;
 // #include <vector>
 
 #include <fstream>
+#if 0
 #include <boost/iostreams/device/file.hpp>
 #include <boost/iostreams/stream.hpp>
 #include <boost/iostreams/device/file_descriptor.hpp>
@@ -35,6 +36,7 @@ public:
 //fd_sink cdebug_buf;
 //ostream cdebug(&cdebug_buf);
 ostream cdebug(NULL);
+#endif
 
 // ============================================================================
 
@@ -44,13 +46,13 @@ public:
         { segno = seg; lo = off_lo; hi = off_hi; }
 private:
     int segno;
-    offset_t lo, hi;
+    seg_offset_t lo, hi;
 friend ostream& operator<<(ostream& out, const range_t& r);
 };
 
 // ============================================================================
 
-ostream& operator<<(ostream& out, const offset_t& o)
+ostream& operator<<(ostream& out, const seg_offset_t& o)
 {
     if (o.offset >= 0)
         out << setw(6) << setfill('0');
@@ -106,7 +108,7 @@ ostream& operator<<(ostream& out, const range_t& r)
 ostream& linkage_info::print(ostream& out, int indent) const
 {
     out << string(indent, ' ');
-    out << "Offset " << offset_t(offset) << ": entry point " << name << simh_nl;
+    out << "Offset " << seg_offset_t(offset) << ": entry point " << name << simh_nl;
 
     return out;
 }
@@ -163,7 +165,7 @@ ostream& stack_frame::print(ostream& out, int indent) const
         for (map<int,string>::const_iterator it = automatics.begin(); it != automatics.end(); it++) {
             int offset = (*it).first;
             const string& name = (*it).second;
-            out << string(indent, ' ') << offset_t(offset) << " " << name << simh_nl;
+            out << string(indent, ' ') << seg_offset_t(offset) << " " << name << simh_nl;
         }
     }
 

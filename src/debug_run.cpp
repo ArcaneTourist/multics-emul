@@ -293,7 +293,7 @@ int cmd_dump_history(int32 arg, char *buf)
         for (int i = start; i < end; ++i) {
             switch(ic_hist[i].htype) {
                 case ic_hist_t::instruction: {
-                    int segno = (ic_hist[i].addr_mode == APPEND_mode) ? ic_hist[i].seg: -1;
+                    int segno = (ic_hist[i].addr_mode == APPEND_mode) ? (int) ic_hist[i].seg: -1;
                     print_src_loc("", ic_hist[i].addr_mode, segno, ic_hist[i].ic, &ic_hist[i].detail.instr);
                     break;
                 }
@@ -367,7 +367,7 @@ int show_location(int show_source_lines)
 
     // Scan segments for entry points to procedures
     addr_modes_t amode = get_addr_mode();
-    int segno = (amode == APPEND_mode) ? PPR.PSR : -1;
+    int segno = (amode == APPEND_mode) ? (int) PPR.PSR : -1;
     if (segno >= 0 && segno < (int) ARRAY_SIZE(seg_scanned) && ! seg_scanned[segno]) {
         scan_seg(segno, 0);
         seg_scanned[segno] = 1;
@@ -946,7 +946,7 @@ void show_variables(unsigned segno, int ic)
     addr_modes_t amode = get_addr_mode();
     //int segno = (amode == APPEND_mode) ? PPR.PSR : -1;
     // check_autos(segno, ic);
-    check_autos((amode == APPEND_mode) ? segno : -1, ic);
+    check_autos((amode == APPEND_mode) ? (int) segno : -1, ic);
 }
 
 //=============================================================================

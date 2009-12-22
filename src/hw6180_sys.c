@@ -174,9 +174,9 @@ static void hw6180_init(void)
     // result, except that the caller queues an immediate run via
     // sim_activate() and then returns.  The zero wait event(s) will
     // be noticed and run prior to the next instruction execution.
-    sys_opts.iom_times.connect = 3;
+    sys_opts.iom_times.connect = -1;    // 3    // 10 seconds is too long...
     sys_opts.iom_times.chan_activate = -1;  // unimplemented
-    sys_opts.mt_times.read = 100; // 1000;
+    sys_opts.mt_times.read = -1;    // 100; // 1000;
     sys_opts.mt_times.xfer = -1;            // unimplemented
 
     // Hardware config -- todo - should be based on config cards!
@@ -198,6 +198,7 @@ static void hw6180_init(void)
     // different addresses for crashing depending on the setting of FLT_BASE...
     // switches.FLT_BASE = 0163; // diag tape allows any loc *except* 2->0100
     // switches.FLT_BASE = 0; // diag tape allows any location *except* 2->0100
+//switches.FLT_BASE = 0;
 
     // Only one SCU
     memset(&scu, 0, sizeof(scu));
@@ -357,13 +358,19 @@ static void init_memory_iom()
     int mbx = base_addr + 4 * tape_chan;
     /* 5*/ M[mbx] = 03020003;               // Boot device LPW; points to IDCW at 000003
     /* 6*/ M[4] = 030 << 18;                // Second IDCW: IOTD to loc 30 (startup fault vector)
-    /* 7*/ M[mbx + 2] = ((t_uint64)base_addr << 24);        // SCW -- verified correct
+
+    // Default SCW points at unused first mailbox.
+    // T&D tape overwrites this before the first status is savec, though.
+    /* 7*/ M[mbx + 2] = ((t_uint64)base_addr << 18);        // SCW
+
     /* 8*/ M[0] = 0720201;                  // 1st word of bootload channel PCW
+
+    // Why are we putting a port # in the 2nd word of the PCW?  The lower 27
+    // bits of the odd word of a PCW should be all zero.
     /* 9*/ M[1] = ((t_uint64) tape_chan << 27) | port;      // 2nd word of PCW pair
 
     // following verified correct; instr 362 will not yield 1572 with a different shift
     /*10*/ M[2] = ((t_uint64) base_addr << 18) | pi_base | iom; // word after PCW (used by program)
-        // SCW ?
 
     /*11*/ M[3] = (cmd << 30) | (dev << 24) | 0700000;      // IDCW for read binary
 

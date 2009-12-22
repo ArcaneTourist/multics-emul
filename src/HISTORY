@@ -477,9 +477,60 @@ History of pre-release versions
 === Pre-Version 52, Dec 11, 2008
 === Pre-Version 53, Dec 13, 2008
 === Pre-Version 54, Dec 14, 2008
+    General
+        Updates to debug messages
+        Rename cpu.xfr to cpu.trgo
+    cpu.c
+        fetch
+        Add fault_check() and fault_check_group()
+        Update re cache invalidation
+    opu.c
+        Bug fix for lls; add lrs, cmk, call6, rtcd, tspX, spbpX
+        Update to cams
 === Pre-Version 55, Dec 18, 2008
+    General
+        Support for bitstring instructions
+    apu.c
+        Updates to debug msgs
+        Changes to reg_mod_x() and register_mod() to support returing
+        bit offset.
+    eis_mw_desc.c
+        Added support for bit descriptors.
+        Updates re bit position within a word.
+        Possibly other changes re descriptors.
+    opu.c
+        Added lca, lcq, stcq, lrl, adlq, asq, ttf, adwpX, scm, csl
+        Fixes to some shifts
 === Pre-Version 56, Dec 19, 2008
+    apu.c
+        Updates to messages
+    eis_mw_desc.c
+        Updates re bitno position in descriptors
+    cpu.c
+        Don't do startup fault for unusual FLT_BASE settings
+        Add cu.instr_fetch flag
+        Fix for location of fault vector
+    opu.c
+        Fix to rsw
+        Disable auto-breakpoint on xed for non-standard FLD_BASE
 === Pre-Version 57, Dec 23, 2008
+    General
+        Investigation of diag tape's 18-bit oddity
+    apu.c
+        Updates to get_address() which is used for EIS instructions
+        Fixes re DSBR bounds handling
+    cpu.c
+        Added cu_safe_store() and other tweaks to fault handling.
+    sys.c
+        Added memory write breakpoints
+    iom.c
+        Fixes to status words
+    opu.c
+        Changes to messages re address mode being changed by an operand
+        fix to lreg and fld for reg E
+        Added tss, sbar, lbar, scu
+        Fix to absa
+        Debugging re adding ,dl operands
 === Pre-Version 58, Feb 15, 2009
     General
         Examining the name table and pre-linking.

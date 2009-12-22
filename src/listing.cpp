@@ -289,7 +289,7 @@ int listing_parse(FILE *f, source_file &src)
         if (!asm_seen_begin) {
             if (str_pmatch(lbufp, "BEGIN") == 0) {
                 asm_seen_begin = 1;
-                alm_lineno = -1;
+                alm_lineno = 0;
                 asm_consume_next = 0;
                 continue;
             }

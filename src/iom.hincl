@@ -49,7 +49,7 @@ typedef struct {
     int rcount; // 3 bits; residue in (from) PCW or last IDCW count (chan-data)
     // addr;    // addr of *next* data word to be transmitted
     // char_pos
-    // read;    // flag
+    flag_t read;    // was last or current operation a read or a write
     // type;    // 1 bit
     // dcw_residue; // residue in tally of last dcw
     flag_t power_off;

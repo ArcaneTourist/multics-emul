@@ -55,23 +55,23 @@ int seginfo_automatic_list(int segno, int offset, int *count, automatic_t *list)
 #include <list>
 #include <map>
 
-// The offset_t and seg_addr_t classes exist mainly to provide
+// The seg_offset_t and seg_addr_t classes exist mainly to provide
 // formatted output support.
 
-class offset_t {
+class seg_offset_t {
 public:
-    offset_t(int o) { offset = o; }
-    offset_t() { offset = -1; }
+    seg_offset_t(int o) { offset = o; }
+    seg_offset_t() { offset = -1; }
     operator int() const { return offset; }
     int offset; // BUG: rename to val
-    friend ostream& operator<<(ostream& out, const offset_t& o);
+    friend ostream& operator<<(ostream& out, const seg_offset_t& o);
 };
 
 class seg_addr_t {
 public:
     seg_addr_t(int s, int o) { segno = s; offset = o; }
     int segno;
-    offset_t offset;
+    seg_offset_t offset;
     int operator == (const seg_addr_t& x) const { return x.segno == segno && x.offset == offset; }
     friend ostream& operator<<(ostream& out, const seg_addr_t& sa);
     operator string(void) const;
@@ -81,13 +81,13 @@ public:
 class addr_t {
     addr_modes_t _mode;
     unsigned _segno;
-    offset_t _offset;
+    seg_offset_t _offset;
 public:
     addr_modes_t mode() { return _mode; }
     addr_t(int offset) { _mode = ABSOLUTE_mode; _offset = offset; }
     addr_t(unsigned segno, int offset) { _mode = APPEND_mode; _segno = segno; _offset = offset; }
-    const offset_t& offset() const { return _offset; }
-    offset_t& offset() { return _offset; }
+    const seg_offset_t& offset() const { return _offset; }
+    seg_offset_t& offset() { return _offset; }
     int segno() const { return (_mode == APPEND_mode) ? _segno : -1; }
 };
 #endif
@@ -101,7 +101,7 @@ public:
     ostream& print(ostream& out, int indent) const;
     friend ostream& operator<<(ostream& out, const source_line& sl)
         { return sl.print(out,0); }
-    offset_t offset;            // segment offset of first of probably multiple instructions for the line
+    seg_offset_t offset;            // segment offset of first of probably multiple instructions for the line
     int line_no;
     string text;
 };
@@ -131,8 +131,8 @@ public:
     entry_point(const string& nm, int off, int lst = -1)
         { name = nm; offset = off; last = lst; _stack  = NULL; stack_owner = NULL; source = NULL; }
     string name;
-    offset_t offset;            // Un-relocated offset reported by the compiler
-    offset_t last;              // negative if unknown
+    seg_offset_t offset;            // Un-relocated offset reported by the compiler
+    seg_offset_t last;              // negative if unknown
     stack_frame* stack() const { return _stack ? _stack : stack_owner ? stack_owner ->_stack : NULL; }
     stack_frame* _stack;
     const entry_point* stack_owner;
@@ -182,7 +182,7 @@ public:
     string fname;
     int segno;
     offset_ lo;
-    offset_t hi;
+    seg_offset_t hi;
 };
 #endif
 
@@ -192,12 +192,12 @@ public:
     source_file(const char* name) { fname = name; reloc = -1; }
     string fname;
     string seg_name;
-    offset_t reloc;     // Compiled segment may be relocated by binder
+    seg_offset_t reloc;     // Compiled segment may be relocated by binder
     // Assembly sources are tracked only by file name and a range of offsets
-    offset_t _lo;
-    offset_t _hi;
-    offset_t lo() const { return (reloc < 0) ? -1 : _lo + reloc; }
-    offset_t hi() const { return (reloc < 0) ? -1 : _hi < 0 ? -1 : _hi + reloc; }
+    seg_offset_t _lo;
+    seg_offset_t _hi;
+    seg_offset_t lo() const { return (reloc < 0) ? -1 : _lo + reloc; }
+    seg_offset_t hi() const { return (reloc < 0) ? -1 : _hi < 0 ? -1 : _hi + reloc; }
     map <int, source_line> lines;   // Key is source_line.offset
     map <int, entry_point> entries; // Key is entry_point.offset
     map <string,stack_frame> stack_frames;  // Key is stack frame name (which should match some entry_point)

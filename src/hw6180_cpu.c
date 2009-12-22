@@ -219,7 +219,6 @@ UNIT TR_clk_unit = { UDATA(&clk_svc, UNIT_IDLE, 0) };
 
 extern t_stat mt_svc(UNIT *up);
 UNIT mt_unit = {
-    // one drive
     // NOTE: other SIMH tape sims don't set UNIT_SEQ
     UDATA (&mt_svc, UNIT_ATTABLE | UNIT_SEQ | UNIT_ROABLE | UNIT_DISABLE | UNIT_IDLE, 0)
 };

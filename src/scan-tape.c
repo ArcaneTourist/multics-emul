@@ -4,7 +4,7 @@
 #include <fcntl.h>
 
 #include "hw6180.h"
-#include "bits.h"
+#include "bitstream.h"
 
 //hacks
 DEVICE cpu_dev;
@@ -229,7 +229,7 @@ int doit()
 //=============================================================================
 
 
-#define force030 0
+#define force030 1
 
 void tape_block(int n_blocks, unsigned char *p, uint32 len)
 {

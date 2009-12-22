@@ -57,6 +57,14 @@ static int con_check_args(const char* moi, int chan, int dev_code, int* majorp, 
         log_msg(ERR_MSG, moi, "Internal error, no device for channel 0%o\n", chan);
         return 1;
     }
+    chan_devinfo* devinfop = devp->ctxt;
+    if (devinfop == NULL) {
+        *majorp = 05;
+        *subp = 1;
+        log_msg(ERR_MSG, moi, "Internal error, no device info for channel 0%o\n", chan);
+        return 1;
+    }
+    struct s_console_state *con_statep = devinfop->statep;
     if (dev_code != 0) {
         // Consoles don't have units
         *majorp = 05;
@@ -64,14 +72,12 @@ static int con_check_args(const char* moi, int chan, int dev_code, int* majorp, 
         log_msg(ERR_MSG, moi, "Bad dev unit-num 0%o (%d decimal)\n", dev_code, dev_code);
         return 1;
     }
-
-    struct s_console_state *con_statep = devp->ctxt;
     if (con_statep == NULL) {
-        if ((devp->ctxt = malloc(sizeof(struct s_console_state))) == NULL) {
+        if ((con_statep = malloc(sizeof(struct s_console_state))) == NULL) {
             log_msg(ERR_MSG, moi, "Internal error, malloc failed.\n");
             return 1;
         }
-        con_statep = devp->ctxt;
+        devinfop->statep = con_statep;
         con_statep->io_mode = no_mode;
         con_statep->tailp = con_statep->buf;
         con_statep->readp = con_statep->buf;
@@ -328,7 +334,12 @@ static void check_keyboard(int chan)
         log_msg(WARN_MSG, moi, "No device\n");
         return;
     }
-    struct s_console_state *con_statep = devp->ctxt;
+    chan_devinfo* devinfop = devp->ctxt;
+    if (devinfop == NULL) {
+        log_msg(WARN_MSG, moi, "No device info\n");
+        return;
+    }
+    struct s_console_state *con_statep = devinfop->statep;
     if (con_statep == NULL) {
         log_msg(WARN_MSG, moi, "No state\n");
         return;
