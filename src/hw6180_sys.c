@@ -33,7 +33,8 @@ extern iom_t iom;
    sim_emax             number of words needed for examine
    sim_devices          array of pointers to simulated devices
    sim_stop_messages    array of pointers to stop messages
-   sim_load             binary loader
+   sim_load             binary loader/dumper
+
 */
 
 char sim_name[] = "hw6180";
@@ -94,37 +95,6 @@ sysinfo_t sys_opts;
 //-----------------------------------------------------------------------------
 
 static void init_memory_iom(void);
-
-//=============================================================================
-
-/*
- * sim_load()
- *
- * SIMH binary loader.
- *
- * The load normally starts at the current value of the PC.
- * Args
- *     fileref -- file opened by SIMH
- *     cptr -- VM specific args (from cmd line?)
- *     fnam -- filename
- *     write_flag -- indicates whether to load or write
- *
- * BUG: Unimplemented
- */
-
-t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
-{
-    /*  Maybe:
-            This emulator will load boot tape format files starting
-            at location 30 as an emulation of the physical boot loaders.
-        Or:
-            Define a boot procedure so the user can use the "boot" command.
-            However, the boot command may not allow specification of a
-            command.
-    */
-    bootimage_loaded = 1;
-    abort();
-}
 
 //=============================================================================
 

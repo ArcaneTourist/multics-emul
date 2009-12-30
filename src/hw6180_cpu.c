@@ -463,6 +463,58 @@ t_stat cpu_reset (DEVICE *dptr)
     return 0;
 }
 
+//=============================================================================
+
+/*
+ * sim_load()
+ *
+ * SIMH binary loader.
+ *
+ * The load normally starts at the current value of the PC.
+ * Args
+ *     fileref -- file opened by SIMH
+ *     cptr -- VM specific args (from cmd line?)
+ *     fnam -- filename
+ *     write_flag -- indicates whether to load or write
+ *
+ * This is just a quick stub to save/load all of memory and may not have
+ * any use beyond debugging.  Most files that we'd want to load are
+ * bootable tapes...
+ */
+
+t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
+{
+    const char hdr[] = "MulticsDump\n\0\0\0\0";
+    if (write_flag) {
+        out_msg("Dumping memory to %s.\n", fnam);
+        if (fwrite(hdr, sizeof(hdr), 1, fileref) != 1) {
+            log_msg(ERR_MSG, "DUMP", "Error writing %s: %s\n", fnam, strerror(errno));
+            return SCPE_IOERR;
+        }
+        if (fwrite(M, sizeof(*M), MAXMEMSIZE, fileref) != MAXMEMSIZE) {
+            log_msg(ERR_MSG, "DUMP", "Error writing %s: %s\n", fnam, strerror(errno));
+            return SCPE_IOERR;
+        }
+    } else {
+        char buf[sizeof(hdr)];
+        out_msg("Loading memory from %s.\n", fnam);
+        if (fread(buf, sizeof(buf), 1, fileref) != 1) {
+            log_msg(ERR_MSG, "LOAD", "Error reading %s: %s\n", fnam, strerror(errno));
+            return SCPE_IOERR;
+        }
+        if (memcmp(buf, hdr, sizeof(hdr)) != 0) {
+            log_msg(ERR_MSG, "LOAD", "Bad magic in %s\n", fnam);
+            return SCPE_FMT;
+        }
+        if (fread(M, sizeof(*M), MAXMEMSIZE, fileref) != MAXMEMSIZE) {
+            log_msg(ERR_MSG, "LOAD", "Error reading %s: %s\n", fnam, strerror(errno));
+            return SCPE_IOERR;
+        }
+    }
+    out_msg("Done.\n");
+    return SCPE_OK;
+}
+
 
 //=============================================================================
 

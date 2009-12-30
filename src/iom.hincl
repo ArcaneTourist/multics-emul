@@ -69,7 +69,7 @@ typedef struct {
     // BUG/TODO: represent "masked" state
     chn_state state;
     int n_list;     // could be flag for first_list, but counter aids debug
-    flag_t need_indir_svc;
+    flag_t need_indir_svc;  // Note: Currently equivalent to forcing control=2
     flag_t have_status;         // from device
     chan_status_t status;
     UNIT* unitp;    // used for sim_activate() timing; BUG: steal from chn DEV

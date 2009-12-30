@@ -1,6 +1,51 @@
 /*
     mt.c -- mag tape
         See manual AN87
+
+    COMMENTS ON "CHAN DATA" AND THE T&D TAPE (test and diagnostic tape)
+
+        The IOM status service provides the "residue" from the last PCW or
+        IDCW as part of the status.  Bootload_tape_label.alm indicates
+        that after a read binary operation, the field is interpreted as the
+        device number and that a device number of zero is legal.  
+
+        The IOM boot channel will store an IDCW with a chan-data field of zero.
+        AN70, page 2-1 says that when the tape is read in native mode via an
+        IOM or IOCC, the tape drive number in the IDCW will be zero.  It says
+        that a non-zero tape drive number in the IDCW indicates that BOS is
+        being used to simulate an IOM. (Presumaby written before BCE replaced
+        BOS.)
+
+        However...
+
+        This seems to imply that an MPC could be connected to a single 
+        channel and support multiple tape drives by using chan-data as a
+        device id.  If so, it seems unlikely that chan-data could ever
+        represent anything else such as a count of a number of records to
+        back space over (which is hinted at as an example in AN87).
+
+        Using chan-data as a device-id that is zero from the IOM also
+        implies that Multics could only be cold booted from a tape drive with
+        device-id zero.  That doesn't seem to mesh with instructions
+        elsewhere... And BCE has to (initially) come from the boot tape...
+
+        The T&D tape seems to want to see non-zero residue from the very
+        first tape read.  That seems to imply that the T&D tape could not
+        be booted by the IOM!  Perhaps the T&D tape requires BCE (which
+        replaced BOS) ?
+
+    TODO
+
+        Get rid of bitstream; that generality isn't needed since all
+        records seem to be in multiples of 8*9=72 bits.
+
+        When simulating timing, switch to queuing the activity instead
+        of queueing the status return.   That may allow us to remove most
+        of our state variables and more easily support save/restore.
+
+        Convert the rest of the routines to have a chan_devinfo argument.
+
+        Allow multiple tapes per channel.
 */
 
 #include "hw6180.h"
@@ -38,7 +83,8 @@ int mt_iom_cmd(chan_devinfo* devinfop)
     int* majorp = &devinfop->major;
     int* subp = &devinfop->substatus;
 
-    log_msg(DEBUG_MSG, "MT::iom_cmd", "Chan 0%o, dev-cmd 0%o, dev-code 0%o\n", chan, dev_cmd, dev_code);
+    log_msg(DEBUG_MSG, "MT::iom_cmd", "Chan 0%o, dev-cmd 0%o, dev-code 0%o\n",
+        chan, dev_cmd, dev_code);
 
     devinfop->is_read = 1;
     devinfop->time = -1;
@@ -73,6 +119,7 @@ int mt_iom_cmd(chan_devinfo* devinfop)
     }
     UNIT* unitp = &devp->units[dev_code];
 
+    // BUG: Assumes one drive per channel
     struct s_tape_state *tape_statep = &tape_state[chan];
 
     switch(dev_cmd) {
@@ -86,33 +133,16 @@ int mt_iom_cmd(chan_devinfo* devinfop)
                 *majorp = 044;  // BUG? should be 3?
                 *subp = 023;    // BUG: should be 040?
             }
-            // todo: switch to having all cmds update status reg?  This would allow setting 047 bootload complete
+            // todo: switch to having all cmds update status reg?
+            // This would allow setting 047 bootload complete after
+            // power-on -- if we need that...
             log_msg(INFO_MSG, "MT::iom_cmd", "Request status is %02o,%02o.\n",
                 *majorp, *subp);
             return 0;
         }
         case 5: {               // CMD 05 -- Read Binary Record
             // We read the record into the tape controllers memory;
-            // IOM can then retrieve the data via DCWs
-            if (devp->numunits <= 1) {
-                devinfop->chan_data = 0;
-            } else {
-                // T&D tape seems to want to see non-zero residue from tape
-                // read.
-                // Bootload_tape_label.alm indicates that after a read binary
-                // operation, the field is interpreted as the device number
-                // and that a device number of zero is legal.
-                // AN70, page 2-1 says that when the tape is read in
-                // native mode via an IOM or IOCC, the tape drive number
-                // in the IDCW will be zero.  A non-zero tape drive number
-                // in the IDCW indicates that BOS is being used to simulate
-                // an IOM.
-                // Perhaps the T&D tape requires BOS (or the BCE replacement
-                // for BOS) ?
-                // Yes, the below results in zero if we only have one unit,
-                // but provides a place for this long comment. :-)
-                devinfop->chan_data = unitp - devp->units;
-            }
+            // IOM can subsequently retrieve the data via DCWs.
             if (tape_statep->bufp == NULL)
                 if ((tape_statep->bufp = malloc(bufsz)) == NULL) {
                     log_msg(ERR_MSG, "MT::iom_cmd", "Malloc error\n");
@@ -133,7 +163,6 @@ int mt_iom_cmd(chan_devinfo* devinfop)
                         log_msg(ERR_MSG, "MT::iom_cmd", "Read %d bytes with EOF.\n", tbc);
                         cancel_run(STOP_WARN);
                     }
-                    // cancel_run(STOP_IBKPT);
                     return 0;
                 } else {
                     devinfop->have_status = 1;
@@ -167,7 +196,7 @@ int mt_iom_cmd(chan_devinfo* devinfop)
             return 0;
         case 046: {             // BSR
             // BUG: Do we need to clear the buffer?
-            // BUG: We don't check the channel data for a count
+            // BUG? We don't check the channel data for a count
             t_mtrlnt tbc;
             int ret;
             if ((ret = sim_tape_sprecr(unitp, &tbc)) == 0) {
@@ -192,6 +221,8 @@ int mt_iom_cmd(chan_devinfo* devinfop)
             return 0;
         }
         case 051:               // CMD 051 -- Reset Device Status
+            // BUG: How should 040 reset status differ from 051 reset device
+            // status?  Presumably the former is for the MPC itself...
             devinfop->have_status = 1;
             *majorp = 0;
             *subp = 0;
@@ -244,19 +275,24 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
     } else if (tape_statep->io_mode == read_mode) {
         // read
         if (bitstm_get(tape_statep->bitsp, 36, wordp) != 0) {
-            // BUG: There isn't another word to be read from the tape buffer, but the IOM wants
-            // another word.
-            // BUG: How did this tape hardare handle an attempt to read more data than was present?
-            // One answer is in bootload_tape_label.alm which seems to assume a 4000 all-clear status.
-            // Boot_tape_io.pl1 seems to assume that "short reads" into an over-large buffer
-            // should not yield any error return.
-            // So we'll set the flags to all-ok, but return an out-of-band non-zero status to
-            // make the iom stop.
-            // BUG: The IOM should be updated to return its DCW tally residue to the caller.
+            // BUG: There isn't another word to be read from the tape buffer,
+            // but the IOM wants  another word.
+            // BUG: How did this tape hardare handle an attempt to read more
+            // data than was present?
+            // One answer is in bootload_tape_label.alm which seems to assume
+            // a 4000 all-clear status.
+            // Boot_tape_io.pl1 seems to assume that "short reads" into an
+            // over-large buffer should not yield any error return.
+            // So we'll set the flags to all-ok, but return an out-of-band
+            // non-zero status to make the iom stop.
+            // BUG: See some of the IOM status fields.
+            // BUG: The IOM should be updated to return its DCW tally residue
+            // to the caller.
             *majorp = 0;
             *subp = 0;
             if (sim_tape_wrp(unitp)) *subp |= 1;
-            log_msg(ERR_MSG, "MT::iom_io", "Read buffer exhausted on channel %d\n", chan);
+            log_msg(WARN_MSG, "MT::iom_io",
+                "Read buffer exhausted on channel %d\n", chan);
             return 1;
         }
         *majorp = 0;
@@ -292,6 +328,7 @@ static const char *simh_tape_msg(int code)
 {
     // WARNING: Only selected SIMH tape routines return private tape codes
     // WARNING: returns static buf
+    // BUG: Is using a string constant equivalent to using a static buffer?
     // static char msg[80];
     if (code == MTSE_OK)
         return "OK";

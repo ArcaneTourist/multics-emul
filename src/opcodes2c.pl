@@ -40,7 +40,10 @@ print "\n";
 
 printf "char *opcodes2text[1024] = {\n";
 print "\t// index by all 10 bits of all opcodes\n";
-dump_all_txt(\@ops0, \@ops1);
+# dump_all_txt(\@ops0, \@ops1);
+dump_txt(@ops0);
+print ",\n";
+dump_txt(@ops1);
 print "};\n";
 print "\n";
 
@@ -81,10 +84,11 @@ sub dump_txt {
 	foreach my $op (@ops) {
 		# my $val = $i << 1;
 		printf "%s", ($i % 16 == 0) ? "\t" : " ";
+		my $term = ($i == $#ops) ? "" : ",";
 		if ($op eq '-') {
-			printf "%-8s", "NULL,";
+			printf "%-8s", "NULL" . $term;
 		} else {
-			printf "%-8s", "\"$op\",";
+			printf "%-8s", "\"$op\"" . $term;
 		}
 		++ $i;
 		print "\n" if ($i % 16 == 0);

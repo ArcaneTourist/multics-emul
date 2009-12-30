@@ -51,7 +51,7 @@ static int do_spri(int n);
 static int do_spbp(int n);
 
 static int op_dvf(const instr_t* ip);
-static int op_ufa(const instr_t* ip);
+static int op_ufa(const instr_t* ip, flag_t subtract);
 static int op_ufm(const instr_t* ip);
 static void long_right_shift(t_uint64 *hip, t_uint64 *lop, int n, int is_logical);
 static void rsw_get_port_config(int low_port);
@@ -97,14 +97,14 @@ static int do_op(instr_t *ip)
     addr_modes_t orig_mode = get_addr_mode();
     int orig_ic = PPR.IC;
 
-#if 1
+#if 0
     if (ip->is_eis_multiword) {
         extern DEVICE cpu_dev;
         ++opt_debug; ++ cpu_dev.dctrl;  // BUG
     }
 #endif
     int ret = do_an_op(ip);
-#if 1
+#if 0
     if (ip->is_eis_multiword) {
         extern DEVICE cpu_dev;
         --opt_debug; --cpu_dev.dctrl;   // BUG
@@ -1708,19 +1708,26 @@ static int do_an_op(instr_t *ip)
             // dufa unimplemented
 
             case opcode0_fad: {         // floating add
-                int ret = op_ufa(ip);
+                int ret = op_ufa(ip, 0);
                 if (ret == 0)
                     ret = instr_fno();
                 return ret;
             }
 
             case opcode0_ufa:           // unnormalized floating add
-                return op_ufa(ip);
+                return op_ufa(ip, 0);
 
 
             // dfsb unimplemented -- double precision floating subtract
             // dufs unimplemented -- double precision unnormalized floating subtract
-            // fsb unimplemented -- floating subtract
+
+            case opcode0_fsb: { // floating subtract
+                int ret = op_ufa(ip, 1);
+                if (ret == 0)
+                    ret = instr_fno();
+                return ret;
+            }
+
             // ufs unimplemented -- unnormalized floating subtract
             // dfmp unimplemented -- double-precision floating multiply
             // dufmp unimplemented -- double-precision unnormalized floating multiply
@@ -1821,7 +1828,75 @@ static int do_an_op(instr_t *ip)
             }
             
             // fcmg unimplemented -- floating compare magnitude
-            // fcmp unimplemented -- floating compare
+
+            case opcode0_fcmp: {        // floating compare
+                t_uint64 word;
+                int ret;
+                if (fetch_op(ip, &word) != 0)
+                    return 1;
+                uint8 op_exp = getbits36(word, 0, 8);
+                t_uint64 op_mant = getbits36(word, 8, 28);  // 36-8=28 bits
+                t_uint64 reg_a = getbits36(reg_A, 0, 28);
+                log_msg(INFO_MSG, "OPU::fcmp", "A =  %012llo => mantissa %012llo, E = %d\n", reg_A, reg_a, reg_E);
+                log_msg(INFO_MSG, "OPU::fcmp", "op:  %12s    mantissa %012llo, exp %d\n", "", op_mant, op_exp);
+                double op_val = multics_to_double(op_mant << 8, 0, 0, 1);
+                double a_val = multics_to_double(reg_a << 8, 0, 0, 1);
+                log_msg(INFO_MSG, "OPU::fcmp", "Comparing %.4f*2^%d to %.4f*2^%d\n", a_val, reg_E, op_val, op_exp);
+
+                // treat fractions as sign-magnitude for shifting
+                int op_neg = bit36_is_neg(op_mant);
+                if (op_neg)
+                    op_mant = negate36(op_mant);
+                int a_neg = bit36_is_neg(reg_a);
+                if (a_neg)
+                    reg_a = negate36(reg_a);
+            
+                // right shift
+                int exp;    // debug
+                if ((int8) op_exp < (int8) reg_E) {
+                    // operand has the smaller exponent
+                    exp = (int8) reg_E;
+                    int n = (int8) reg_E - (int8) op_exp;
+                    if (n >= 36)
+                        op_mant = 0;
+                    else
+                        op_mant >>= n;
+                } else {
+                    // AQ has the smaller exponent
+                    exp = (int8) op_exp;
+                    int n = (int8) op_exp - (int8) reg_E;
+                    if (n >= 36)
+                        reg_a = 0;
+                    else
+                        reg_a >>= n;
+                }
+                if (op_mant == 0)
+                    op_neg = 0;
+                if (reg_a == 0)
+                    a_neg = 0;
+                IR.zero = a_neg == op_neg && reg_a == op_mant;
+                if (IR.zero)
+                    IR.neg = 0;
+                else if (a_neg && ! op_neg)
+                    IR.neg = 1;
+                else if (!a_neg && op_neg)
+                    IR.neg = 0;
+                else if (!a_neg && ! op_neg)
+                    IR.neg = reg_a < op_mant;
+                else
+                    IR.neg = reg_a > op_mant;
+
+                op_val = multics_to_double(op_mant << 8, 0, 0, 1);
+                a_val = multics_to_double(reg_a << 8, 0, 0, 1);
+                if (IR.zero) {
+                    log_msg(NOTIFY_MSG, "OPU::fcmp", "Result: equal -- exp is %d; mantissa %f versus %f\n", exp, a_val, op_val);
+                    log_msg(NOTIFY_MSG, "OPU::fcmp", "Auto breakpoint\n");
+                    cancel_run(STOP_IBKPT);
+                } else
+                    log_msg(INFO_MSG, "OPU::fcmp", "Result: Neg=%d -- exp is %d; mantissa %f versus %f\n", IR.neg, exp, a_val, op_val);
+                log_msg(NOTIFY_MSG, "OPU::fcmp", "Untested!\n");
+                return 0;
+            }
             
             // ade unimplemented
             // fszn unimplemented
@@ -3170,7 +3245,20 @@ static int do_an_op(instr_t *ip)
             // dtb unimplemented --  decimal to binary convert
             // ad2d unimplemented -- add using two decimal operands
             // ad3d unimplemented -- add using three decimal operands
-            // sb2d unimplemented -- subtract using two decimal operands; BUG: see comments by rmabee@comcast.net
+
+            // sb2d unimplemented -- subtract using two decimal operands; BUG: see comments by rmabee@comcast.net:
+        /*
+        On Aug 11, 3:14 am, rfm <rma...@comcast.net> wrote:
+        > The EIS decimal subtract SB2D and DV2D do not agree on the order of
+        > the inputs in the RTL:
+        > SB2D: Y1 - Y2 -> Y2
+        > DV2D: Y2 - Y1 -> Y2
+        > I believe SB2D is misdocumented.
+        
+        I dug out a 1972 manual for the EIS add-on (to pre-Multics base),
+        which confirms that SB2D is Y2 - Y1 -> Y2.
+        */
+
             // sb3d unimplemented -- subtract using three decimal operands
             // mp2d unimplemented -- multiply using two decimal operands
             // mp2d unimplemented -- multiply using three decimal operands
@@ -3792,13 +3880,13 @@ static int op_dvf(const instr_t* ip)
 
 // ============================================================================
 
-static int op_ufa(const instr_t* ip)
+static int op_ufa(const instr_t* ip, flag_t subtract)
 {
     t_uint64 word;
     int ret = fetch_op(ip, &word);
     if (ret != 0)
         return ret;
-    ret = instr_ufa(word);
+    ret = instr_ufas(word, subtract);
     return ret;
 }
 

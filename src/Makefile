@@ -14,6 +14,18 @@ opcode-count:
 t: t.c
 	gcc -o t t.c
 
+malm: malm.o y.tab.o lex.yy.o opcode_text.o
+	g++ -o $@ $^
+
+y.tab.c: malm.y
+	yacc -d $?
+y.tab.h: malm.y
+	yacc -d $?
+lex.yy.c: malm.l y.tab.h
+	lex malm.l
+y.tab.o: *.h
+malm.o: *.h
+
 hw6180_cpu.o: *.h opcodes.h
 hw6180_sys.o: *.h
 opcode_text.o: *.h

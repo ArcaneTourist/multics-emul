@@ -73,7 +73,47 @@ int instr_dvf(t_uint64 word)
 
 // ============================================================================
 
-int instr_ufa(t_uint64 word)
+/*
+ * negate28()
+ *
+ * Negate an 28-bit signed value within the lower part of a 36bit word.
+ * Result is in Multics representation; use sign28()
+ * to extract values for computation.
+ *
+ */
+
+static inline int32 negate28(t_uint64 x)
+{
+    // overflow not detected
+    if (bit_is_neg(x,28))
+        return ((~x & MASKBITS(28)) + 1) & MASKBITS(28);
+    else
+        return (- x) & MASKBITS(28);
+}
+
+// ============================================================================
+
+/*
+ * sign28()
+ *
+ * Extract an 28bit signed value from a 36-bit word.
+ *
+ */
+
+static inline int32 sign28(t_uint64 x)
+{
+    if (bit_is_neg(x, 28)) {
+        int32 r = - ((1<<28) - (x&MASKBITS(28)));
+        return r;
+    }
+    else
+        return x;
+}
+
+
+// ============================================================================
+
+int instr_ufas(t_uint64 word, flag_t subtract)
 {
     log_msg(DEBUG_MSG, "opu::ufa", "E = %03o(%d) AQ = {%012llo,%012llo} aka (%lld,%lld).\n", reg_E, reg_E, reg_A, reg_Q, reg_A, reg_Q);
     double x = multics_to_double(reg_A, reg_Q, 0, 1);
@@ -94,6 +134,16 @@ int instr_ufa(t_uint64 word)
         IR.carry = 0;
         log_msg(INFO_MSG, "opu::ufa", "addition of zero.\n");
         return 0;
+    }
+
+    if (subtract) {
+        double x = multics_to_double(op_mant << 8, 0, 0, 1);
+        log_msg(INFO_MSG, "opu::ufs", "Op mantissa originally %sb (aka %#o aka %+d).\n", bin2text(op_mant, 36), op_mant, x);
+        log_msg(INFO_MSG, "opu::ufs", "Op mantissa originally %sb (aka %#o aka %+d).\n", bin2text(op_mant, 28), op_mant, x);
+        op_mant = negate28(op_mant);
+        x = multics_to_double(op_mant << 8, 0, 0, 1);
+        log_msg(INFO_MSG, "opu::ufs", "Negating yields:       %sb (aka %#o aka %+d).\n", bin2text(op_mant, 28), op_mant, x);
+        log_msg(INFO_MSG, "opu::ufs", "Negating yields:       %sb (aka %#o aka %+d).\n", bin2text(op_mant, 36), op_mant, x);
     }
 
     int untested = 0;

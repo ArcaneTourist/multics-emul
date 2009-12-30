@@ -734,7 +734,7 @@ extern void mpy72fract(t_uint64 ahi, t_uint64 alow, t_uint64 b, t_uint64* hip, t
 /* math_real.c */
 double multics_to_double(t_uint64 xhi, t_uint64 xlo, int show, int is_signed);
 extern int instr_dvf(t_uint64 word);
-extern int instr_ufa(t_uint64 word);
+extern int instr_ufas(t_uint64 word, flag_t subtract);  // ufa and ufs
 extern int instr_ufm(t_uint64 word);
 extern int instr_fno(void);
 
