@@ -40,10 +40,10 @@ print "\n";
 
 printf "char *opcodes2text[1024] = {\n";
 print "\t// index by all 10 bits of all opcodes\n";
-# dump_all_txt(\@ops0, \@ops1);
-dump_txt(@ops0);
-print ",\n";
-dump_txt(@ops1);
+dump_all_txt(\@ops0, \@ops1);
+#dump_txt(@ops0);
+#print ",\n";
+#dump_txt(@ops1);
 print "};\n";
 print "\n";
 
@@ -83,7 +83,7 @@ sub dump_txt {
 	my $i = 0;
 	foreach my $op (@ops) {
 		# my $val = $i << 1;
-		printf "%s", ($i % 16 == 0) ? "\t" : " ";
+		printf "%s", ($i % 8 == 0) ? "\t" : " ";
 		my $term = ($i == $#ops) ? "" : ",";
 		if ($op eq '-') {
 			printf "%-8s", "NULL" . $term;
@@ -91,7 +91,7 @@ sub dump_txt {
 			printf "%-8s", "\"$op\"" . $term;
 		}
 		++ $i;
-		print "\n" if ($i % 16 == 0);
+		print "\n" if ($i % 8 == 0);
 	}
 }
 
@@ -105,6 +105,7 @@ sub dump_all_txt {
 	my $i = 0;
 	foreach my $op0 (@$ops0ref) {
 		# printf "%s", ($i % 8 == 0) ? "\t" : " ";
+		# First print op0 which has a 10th bit of zero
 		if ($i % 8 == 0) {
 			print "\t";
 		} else {
@@ -116,11 +117,13 @@ sub dump_all_txt {
 			printf "%-8s", "\"$op0\",";
 		}
 		print " ";
+		# Second, print op1 which has a 10th bit of one
 		my $op1 = shift @ops1;
+		my $term = ($i/2 == $#$ops0ref) ? "" : ",";
 		if ($op1 eq '-') {
-			printf "%-8s", "NULL,";
+			printf "%-8s", "NULL" . $term;
 		} else {
-			printf "%-8s", "\"$op1\",";
+			printf "%-8s", "\"$op1\"" . $term;
 		}
 		$i += 2;
 		print "\n" if ($i % 8 == 0);

@@ -403,7 +403,12 @@ char* instr2text(const instr_t* ip)
 void encode_instr(const instr_t *ip, t_uint64 *wordp)
 {
 		*wordp = setbits36(0, 0, 18, ip->addr);
+#if 1
 		*wordp = setbits36(*wordp, 18, 10, ip->opcode);
+#else
+		*wordp = setbits36(*wordp, 18, 9, ip->opcode & 0777);
+		*wordp = setbits36(*wordp, 27, 1, ip->opcode >> 9);
+#endif
 		*wordp = setbits36(*wordp, 28, 1, ip->inhibit);
 		if (! is_eis[ip->opcode&MASKBITS(10)]) {
 			*wordp = setbits36(*wordp, 29, 1, ip->mods.single.pr_bit);

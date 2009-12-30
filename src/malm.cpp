@@ -89,8 +89,10 @@ int lookup_op(const char* s)
         return -1;
     for (unsigned op = 0; op < ARRAY_SIZE(opcodes2text); ++op) {
         const char *txt = opcodes2text[op];
-        if (txt != NULL && strcmp(txt, s) == 0)
+        if (txt != NULL && strcmp(txt, s) == 0) {
+            // printf("op %s is %#o => %03o(%d)\n", s, op, op>>1, op&1);
             return op;
+        }
     }
     return -1;
 }

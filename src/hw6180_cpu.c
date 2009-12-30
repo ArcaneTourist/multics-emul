@@ -324,6 +324,8 @@ static void check_events(void);
 static void save_to_simh(void);
 static void save_PR_registers(void);
 static void restore_PR_registers(void);
+static int write72(FILE* fp, t_uint64 word0, t_uint64 word1);
+static int read72(FILE* fp, t_uint64* word0p, t_uint64* word1p);
 
 //=============================================================================
 
@@ -484,31 +486,26 @@ t_stat cpu_reset (DEVICE *dptr)
 
 t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
 {
-    const char hdr[] = "MulticsDump\n\0\0\0\0";
+    // Assumes that MAXMEMSIZE is an even number...
     if (write_flag) {
         out_msg("Dumping memory to %s.\n", fnam);
-        if (fwrite(hdr, sizeof(hdr), 1, fileref) != 1) {
-            log_msg(ERR_MSG, "DUMP", "Error writing %s: %s\n", fnam, strerror(errno));
-            return SCPE_IOERR;
-        }
-        if (fwrite(M, sizeof(*M), MAXMEMSIZE, fileref) != MAXMEMSIZE) {
-            log_msg(ERR_MSG, "DUMP", "Error writing %s: %s\n", fnam, strerror(errno));
-            return SCPE_IOERR;
+        for (int i = 0; i < MAXMEMSIZE - 1; i += 2) {
+            if (write72(fileref, M[i], M[i+1]) != 0) {
+                log_msg(ERR_MSG, "DUMP", "Error writing %s: %s\n", fnam, strerror(errno));
+                return SCPE_IOERR;
+            }
         }
     } else {
-        char buf[sizeof(hdr)];
         out_msg("Loading memory from %s.\n", fnam);
-        if (fread(buf, sizeof(buf), 1, fileref) != 1) {
-            log_msg(ERR_MSG, "LOAD", "Error reading %s: %s\n", fnam, strerror(errno));
-            return SCPE_IOERR;
-        }
-        if (memcmp(buf, hdr, sizeof(hdr)) != 0) {
-            log_msg(ERR_MSG, "LOAD", "Bad magic in %s\n", fnam);
-            return SCPE_FMT;
-        }
-        if (fread(M, sizeof(*M), MAXMEMSIZE, fileref) != MAXMEMSIZE) {
-            log_msg(ERR_MSG, "LOAD", "Error reading %s: %s\n", fnam, strerror(errno));
-            return SCPE_IOERR;
+        for (int i = 0; i < MAXMEMSIZE - 1; i += 2) {
+            if (feof(fileref)) {
+                out_msg("EOF on %s after %d words\n", fnam, i);
+                return SCPE_OK;
+            }
+            if (read72(fileref, &M[i], &M[i+1]) != 0) {
+                log_msg(ERR_MSG, "DUMP", "Error reading %s: %s\n", fnam, strerror(errno));
+                return SCPE_IOERR;
+            }
         }
     }
     out_msg("Done.\n");
@@ -2147,7 +2144,12 @@ void decode_instr(instr_t *ip, t_uint64 word)
 void encode_instr(const instr_t *ip, t_uint64 *wordp)
 {
         *wordp = setbits36(0, 0, 18, ip->addr);
+#if 1
         *wordp = setbits36(*wordp, 18, 10, ip->opcode);
+#else
+        *wordp = setbits36(*wordp, 18, 9, ip->opcode & 0777);
+        *wordp = setbits36(*wordp, 27, 1, ip->opcode >> 9);
+#endif
         *wordp = setbits36(*wordp, 28, 1, ip->inhibit);
         if (! is_eis[ip->opcode&MASKBITS(10)]) {
             *wordp = setbits36(*wordp, 29, 1, ip->mods.single.pr_bit);
@@ -2299,3 +2301,51 @@ static void init_opcodes()
     is_eis[(opcode1_btd<<1)|1] = 1;
     is_eis[(opcode1_mvne<<1)|1] = 1;
 }
+
+// ============================================================================
+
+static int write72(FILE* fp, t_uint64 word0, t_uint64 word1)
+{
+    for (int i = 0; i < 4; ++i) {
+        unsigned char c;
+        c = (word0 >> (36 - 8 - i * 8)) & 0xff;
+        if (fputc(c, fp) == EOF)
+            return 1;
+    }
+    word1 |= (word0 & 0xf) << 36;
+    for (int i = 0; i < 5; ++i) {
+        unsigned char c;
+        c = (word1 >> ((4-i) * 8)) & 0xff;
+        if (fputc(c, fp) == EOF)
+            return 1;
+    }
+    return 0;
+}
+
+//=============================================================================
+
+static int read72(FILE* fp, t_uint64* word0p, t_uint64* word1p)
+{
+    unsigned char buf[9];
+    memset(buf, 0, sizeof(buf));
+    unsigned nread = fread(buf, 1, sizeof(buf), fp);
+    if (nread == 0)
+        return 0;   // caller should test for feof() and ferror()
+    *word0p = 0;
+    for (int i = 0; i < 4; ++i) {
+        *word0p <<= 8;
+        *word0p |= buf[i];
+    }
+    *word0p <<= 4;
+    *word0p |= buf[4] >> 4;
+    if (nread < 5)
+        return 1;   // read less than 36 bits, don't stomp 2nd word
+    *word1p = buf[4] & 0xf;
+    for (int i = 5; i < 9; ++i) {
+        *word1p <<= 8;
+        *word1p |= buf[i];
+    }
+    return (nread == 9) ? 0 : 1;
+}
+
+//=============================================================================
