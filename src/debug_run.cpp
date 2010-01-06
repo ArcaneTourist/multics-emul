@@ -1096,3 +1096,25 @@ static void update_autos(int segno, int ic, multics_stack_frame& msf)
 
 //=============================================================================
 
+int seginfo_show_all(int seg, int first)
+{
+    where_t where;
+    if (seginfo_find_all(seg, first, &where) != 0) {
+        out_msg("Cannot find anything.\n");
+        return -1;
+    }
+    if (where.file_name)
+        out_msg("File name: %s\n", where.file_name);
+    else
+        out_msg("File name unknown.\n");
+    if (where.entry)
+        out_msg("Entry point: %s\n", where.entry);
+    else
+        out_msg("Entry point unknown.\n");
+    if (where.line_no >= 0)
+        out_msg("Line number %d: %s\n", where.line_no, where.line ? where.line : "<no text>");
+    return 0;
+}
+
+//=============================================================================
+

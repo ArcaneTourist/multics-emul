@@ -426,7 +426,8 @@ extern UNIT cpu_unit;   // BUG: put in hdr
 extern char* print_instr(t_uint64 word); // BUG: put in hdr
 extern char* print_lpw(t_addr addr);    // BUG: put in hdr
 
-static where_t prior_dump;  // used to determine need to print location info
+static const char* prior_line;
+static int prior_lineno;
 
 //=============================================================================
 
@@ -455,24 +456,25 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
         static int need_init = 1;
         if (need_init) {
             need_init = 0;
-            prior_dump.line_no = 0;
-            prior_dump.line = NULL;
+            prior_lineno = 0;
+            prior_line = NULL;
         }
         /* First print matching source line if we're dumping instructions */
         if (sw & SWMASK('M')) {
             // M -> instr -- print matching source line if we have one
-            where_t where;
-            seginfo_find_all(segno, offset, &where);
-            if (where.line != NULL && prior_dump.line_no != where.line_no && prior_dump.line != where.line) {
+            const char* line;
+            int lineno;
+            seginfo_find_line(segno, offset, &line, &lineno);
+            if (line == NULL && prior_lineno != lineno && prior_line != line) {
                 fprintf(ofile, "\r\n");
                 fprint_addr(ofile, NULL, simh_addr);    // UNIT doesn't include a reference to a DEVICE
                 fprintf(ofile, ":\t");
-                fprintf(ofile, "Line %d: %s\n", where.line_no, where.line);
+                fprintf(ofile, "Line %d: %s\n", lineno, line);
                 // fprintf(ofile, "%06o:\t", abs_addr); // BUG: print seg|offset too
                 fprint_addr(ofile, NULL, simh_addr);    // UNIT doesn't include a reference to a DEVICE
                 fprintf(ofile, ":\t");
-                prior_dump.line_no = where.line_no;
-                prior_dump.line = where.line;
+                prior_lineno = lineno;
+                prior_line = line;
             }
         }
         /* Next, we always output the numeric value */
@@ -718,7 +720,7 @@ out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
         cptr += 2;
 #endif
     
-    prior_dump.line = NULL;
+    prior_line = NULL;
 
     // uint addr;
     if (force_abs || (seg == -1 && get_addr_mode() == ABSOLUTE_mode)) {

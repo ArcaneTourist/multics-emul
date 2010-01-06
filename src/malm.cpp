@@ -1,3 +1,23 @@
+/*
+ *  malm.cpp -- Minimalistic ALM assembler
+ *
+ *  TODO
+ *
+ *      Note: "%" not accepted as white space
+ *      Note: ";" does not end a comment
+ *      Names need to allow dots and underscores
+ *      Recognize keywords for pseudo ops -- but only at beginning of line
+ *          "tra lda" should interpret the "lda" as a label.
+ *      Allow the pseudo-ops after optional labels
+ *          ... (format varies, so get lexer to recognize)
+ *      EIS MW:
+ *          eisop (MF1),(MF2),keyword(octexpression),keyword2
+ *      Allow arithmetic expressions, especially involving IC (*)
+ *      Support quote (") for acc, aci, bci
+ *      Allow "*" to specify the IC
+ *
+ */
+
 #include <string>
 #include <algorithm>
 #include <list>

@@ -1,14 +1,17 @@
 /*
-    seginfo.cpp -- Symbol tables and related functions for representing information about segments.
+    seginfo.cpp -- Symbol tables and related functions for representing
+    information about segments.
     Only used for debug output, not for actual instruction execution.
 */
 
 /*
-    BUG: Need to implement algorithm for searching through an ordered list of (possibly nested) ranges.
+    BUG: Need to implement algorithm for searching through an ordered list
+    of (possibly nested) ranges.
     Currently, some ranges may have unknown ending point.
 
     BUG: relocation
-        Scanning config_.list shows find: at offset 314; seg scanning shows find$find at 401.
+        Scanning config_.list shows find: at offset 314; seg scanning
+        shows find$find at 401.
         Difference is 65.  Hand estimate was 60.
 */
 
@@ -31,7 +34,7 @@ static const int max_alm_per_line = 10;     // Used for estimating the location 
 // ============================================================================
 // ============================================================================
 // ============================================================================
-//
+
 entry_point* source_file::find_entry(const string& s)
 {
     map<string,entry_point*>::iterator it = entries_by_name.find(s);
@@ -41,7 +44,10 @@ entry_point* source_file::find_entry(const string& s)
         return (*it).second;
 }
 
+// ============================================================================
+
 template<typename Map> typename Map::const_iterator 
+
 find_lower(Map const& m, typename Map::key_type const& k)
 {
     typename Map::const_iterator it = m.upper_bound(k);
@@ -50,8 +56,10 @@ find_lower(Map const& m, typename Map::key_type const& k)
     return --it;
 }
 
+// ============================================================================
 
 template<typename Map> typename Map::iterator 
+
 find_lower(Map & m, typename Map::key_type const& k)
 {
     typename Map::iterator it = m.upper_bound(k);
@@ -155,6 +163,7 @@ int seginfo_add_name(int segno, int offset, const char *name)
 
 #endif
 
+// ============================================================================
 
 int seginfo_add_linkage(int segno, int offset, const char* name)
 {
@@ -210,8 +219,13 @@ int seginfo_add_linkage(int segno, int offset, const char* name)
 
 // ============================================================================
 
+/*
+ * seginfo::find_entry
+ *
+ * Find entry in linkage table
+ */
+
 map<int,linkage_info>::const_iterator seginfo::find_entry(int offset) const
-    // Find entry in linkage table
 {
     // Entry points (but not files) may nest; We'll look for the highest offset
     // that's lower than the given offset, but that may not be quite right...
@@ -313,6 +327,7 @@ public:
     // const stack_frame* frame;
 };
 
+// ============================================================================
 
 int seginfo_find_all(int segno, int offset, loc_t& loc)
 {
@@ -445,6 +460,20 @@ int seginfo_find_all(int segno, int offset, where_t *wherep)
 
 // ============================================================================
 
+void seginfo_find_line(int segno, int offset, const char**line, int *lineno)
+{
+    loc_t loc;
+    if (seginfo_find_all(segno, offset, loc) == 0 && loc.line != NULL) {
+        *lineno = loc.line->line_no;
+        *line = loc.line->text.c_str();
+    } else  {
+        *line = NULL;
+        *lineno = -1;
+    }
+}
+
+// ============================================================================
+
 int seginfo_automatic_count(int segno, int offset)
 {
     const seginfo& seg = segments(segno);
@@ -469,3 +498,5 @@ int seginfo_automatic_list(int segno, int offset, int *count, automatic_t *list)
 {
     return -1;
 }
+
+// ============================================================================

@@ -14,7 +14,6 @@ extern FILE *sim_deb, *sim_log;
 
 static void msg(enum log_level level, const char *who, const char* format, va_list ap);
 static int _scan_seg(uint segno, int msgs);
-static int seginfo_show_all(int seg, int first);
 uint ignore_IC = 0;
 uint last_IC;
 uint last_IC_seg;
@@ -886,28 +885,6 @@ int cmd_symtab_parse(int32 arg, char *buf)
         } else
             fprintf(stderr, "procs: cannot parse '%s'\n", buf);
     }
-    return 0;
-}
-
-// ============================================================================
-
-static int seginfo_show_all(int seg, int first)
-{
-    where_t where;
-    if (seginfo_find_all(seg, first, &where) != 0) {
-        out_msg("Cannot find anything.\n");
-        return -1;
-    }
-    if (where.file_name)
-        out_msg("File name: %s\n", where.file_name);
-    else
-        out_msg("File name unknown.\n");
-    if (where.entry)
-        out_msg("Entry point: %s\n", where.entry);
-    else
-        out_msg("Entry point unknown.\n");
-    if (where.line_no >= 0)
-        out_msg("Line number %d: %s\n", where.line_no, where.line ? where.line : "<no text>");
     return 0;
 }
 

@@ -39,6 +39,7 @@ int seginfo_add_source_file(int seg, int first, int last, const char* fname);
 int seginfo_find_all(int seg, int offset, where_t *wherep);
 int seginfo_automatic_count(int segno, int offset);
 int seginfo_automatic_list(int segno, int offset, int *count, automatic_t *list);
+void seginfo_find_line(int segno, int offset, const char**line, int *lineno);
 
 #ifdef __cplusplus
 }
@@ -254,7 +255,7 @@ static inline std::ostream& simh_endl(std::ostream &os) { return os << simh_nl <
 // ============================================================================
 
 
-source_file& seginfo_add_source_file(int segno, const char *fname, int offset = -1);
+extern source_file& seginfo_add_source_file(int segno, const char *fname, int offset = -1);
 
 #endif //__cplusplus
 #endif // _SEGINFO_H

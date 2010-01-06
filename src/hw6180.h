@@ -636,6 +636,7 @@ extern int cmd_xdebug(int32 arg, char *buf);
 extern char *ir2text(const IR_t *irp);
 extern int cmd_stack_trace(int32 arg, char *buf);
 extern void show_variables(unsigned segno, int ic);
+extern int seginfo_show_all(int seg, int first);
 
 /* hw6180_cpu.c */
 extern void cancel_run(enum sim_stops reason);
@@ -724,6 +725,7 @@ extern int activate_timer();
 // extern int decode_ypair_addr(instr_t* ip, t_uint64* addrp);
 
 /* iom.c */
+extern void iom_init(void);
 extern void iom_interrupt(void);
 
 /* math.c */
