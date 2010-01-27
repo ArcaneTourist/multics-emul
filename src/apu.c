@@ -24,9 +24,9 @@ enum atag_tm { atag_r = 0, atag_ri = 1, atag_it = 2, atag_ir = 3 };
 // CPU allows [2^6 .. 2^12]; multics uses 2^10
 static const int page_size = 1024;
 
-typedef struct {    // BUG: having a temp CA is ugly
+typedef struct {    // TODO: having a temp CA is ugly and doesn't match HW
     int32 soffset;      // Signed copy of CA (15 or 18 bits if from instr;
-                        // 18 bits if from indir word)
+                        // 18 bits if from indirect word)
     uint32 tag;
     flag_t more;
     enum atag_tm special;
@@ -135,7 +135,7 @@ int is_priv_mode()
 {
     if (IR.abs_mode)
         return 1;
-    SDW_t *SDWp = get_sdw();    // Get SDW for TPR.TSR
+    SDW_t *SDWp = get_sdw();    // Get SDW for segment TPR.TSR
     if (SDWp == NULL) {
         if (cpu.apu_state.fhld) {
             // TODO: Do we need to check cu.word1flags.oosb and other flags to
@@ -610,6 +610,7 @@ int addr_mod(const instr_t *ip)
     ca_temp.tag = ip->mods.single.tag;
 
     if (cu.rpt) {
+        // Special handling for repeat instructions
         TPR.TBR = 0;
         cu.tag = ca_temp.tag;
         uint td = ca_temp.tag & 017;
@@ -1085,7 +1086,7 @@ static void chars_to_words(int n, uint nbits, uint *offp, uint *bitnop)
  * Perform "Td" register modification for 36-bit full words.
  * Results saved to TPR.{is_value, CA, value}.
  *
- * See register_mod() for partial word arguments.
+ * See register_mod() for the same functionality but with partial word arguments.
  *
  */
 
@@ -1504,6 +1505,7 @@ int addr_any_to_abs(uint *addrp, addr_modes_t mode, int segno, int offset)
  * Return the 24-bit absolute address for an offset in the specified segment
  * Optionally disables (but reports) faults.
  * Capability to disable faults is intended for use by debug/display code.
+ * Attempts to page-in the data.
  *
  */
 
@@ -1542,6 +1544,7 @@ int convert_address(uint* addrp, int seg, int offset, int fault)
  * get_seg_addr()
  *
  * Return the 24-bit absolute address for an offset in the current segment
+ * Attempts to page-in the data.
  *
  * BUG: causes faults, but see fault_gen_no_fault global.  Now that null
  * pointers (-1, -2, etc) are handled differently, the faulting is probably
@@ -1574,7 +1577,7 @@ int get_seg_addr(uint offset, uint perm_mode, uint *addrp)
  * Note that directed faults will occur if a SDW is so flagged (e.g. when the
  * segment is on disk).
  *
- * Caveats:
+ * BUGS/Caveats:
  *     perm_mode is currently not checked by page_in_page().
  *
  * Results:
@@ -1617,6 +1620,10 @@ static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uin
  * page_in_sdw()
  *
  * Implements half of page_in() -- AL39, figure 5-4
+ *
+ * Note that some manipulations of NULL or other illegal pointer values are
+ * allowed -- you can create such pointers but you can't later dereference
+ * through them.
  *
  * Returns NULL if a fault in groups 1-6 detected
  *
@@ -1678,9 +1685,10 @@ static SDWAM_t* page_in_sdw()
         // Descriptor table is unpaged
         // Do a NDSW cycle
         if (segno * 2 >= 16 * (cpup->DSBR.bound + 1)) {
-            // Note that this test gets triggered when "null" pointers are created or copied even though
-            // they're not being dereferenced.   We flag for a held fault and don't actually generate the
-            // fault unless the instruction attempts to dereference through the "bad" pointer.
+            // Note that this test gets triggered when "null" pointers are created
+            // or copied even though they're not being dereferenced.   We flag for
+            // a held fault and don't actually generate the fault unless the
+            // instruction attempts to dereference through the "bad" pointer.
             cu.word1flags.oosb = 1;         // BUG: nothing clears
             log_msg(INFO_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault now pending.\n", cpup->DSBR.bound, cpup->DSBR.bound);
             cpu.apu_state.fhld = 1;
@@ -1692,7 +1700,8 @@ static SDWAM_t* page_in_sdw()
     } else {
         // Descriptor table is paged
         if (segno * 2 >= 16 * (cpup->DSBR.bound + 1)) {
-            // BUG 12/05/2008 -- bootload_1.alm, instr 17 triggers this
+            // See comments just above re legal usage of "bad" pointers
+            // BUG 12/05/2008 -- bootload_1.alm, instr 17 triggers this (FIXED)
             log_msg(INFO_MSG, "APU::append", "Initial check: Segno outside paged DSBR bound of 0%o(%u) -- OOSB fault now pending.\n", cpup->DSBR.bound, cpup->DSBR.bound);
             cu.word1flags.oosb = 1;         // ERROR: nothing clears
             // fault_gen(acc_viol_fault);

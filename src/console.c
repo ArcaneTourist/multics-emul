@@ -1,6 +1,10 @@
 /*
     console.c -- operator's console
 
+    CAVEAT
+        This code has not been updated to use the generalized async handling
+        that was added to the IOM code.  Instead it blocks.
+
     See manual AN87.  See also mtb628.
 
 */
@@ -123,7 +127,7 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             log_msg(NOTIFY_MSG, "CON::iom_cmd", "Read ASCII command received\n");
             if (con_statep->tailp != con_statep->buf)
                 log_msg(WARN_MSG, "CON::iom_cmd", "Discarding previously buffered input.\n");
-            // TODO: discard any buffered chars from SIMH
+            // TODO: discard any buffered chars from SIMH?
             con_statep->tailp = con_statep->buf;
             con_statep->readp = con_statep->buf;
             con_statep->have_eol = 0;
@@ -156,7 +160,7 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             *subp = 0;
             return 0;
         case 057:               // Read ID (according to AN70-1)
-            // BUG: No support for Read ID
+            // BUG: No support for Read ID; appropriate values are not known
             log_msg(ERR_MSG, "CON::iom_cmd", "Read ID unimplemented\n");
             *majorp = 05;
             *subp = 1;
@@ -319,6 +323,9 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
  *
  * BUG: We allow input even when the console is not in input mode (but we're
  * not really connected via a half-duplex channel either).
+ *
+ * TODO: Schedule this to run even when no console I/O is pending -- this
+ * will allow the user to see type-ahead feedback.
  */
 
 static void check_keyboard(int chan)
