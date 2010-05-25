@@ -400,7 +400,7 @@ static void check_keyboard(int chan)
             sim_putchar('\r');
             sim_putchar('\n');
             con_statep->have_eol = 1;
-            log_msg(NOTIFY_MSG, moi, "Got EOL for channel %d (%#o); con_statep is %p\n", chan, chan, con_statep);
+            log_msg(NOTIFY_MSG, moi, "Got EOL for channel %d (%#o)\n", chan, chan);
             return;
         } else {
             *con_statep->tailp++ = c;

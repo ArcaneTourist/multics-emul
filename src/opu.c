@@ -55,6 +55,9 @@ static int op_ufa(const instr_t* ip, flag_t subtract);
 static int op_ufm(const instr_t* ip);
 static void long_right_shift(t_uint64 *hip, t_uint64 *lop, int n, int is_logical);
 static void rsw_get_port_config(int low_port);
+static void equalize_mantissas(const char* op, t_uint64 *a_mant, uint8 a_exp, t_uint64 *b_mant, uint8 b_exp, int* new_exp);
+static void equalize_mantissas72(const char* op, t_uint64* a_mant_hip, t_uint64* a_mant_lop, uint8 a_exp, t_uint64* b_mant_hip, t_uint64* b_mant_lop, uint8 b_exp, int* new_exp);
+// static int cmp_fract(t_uint64 x, t_uint64 y);
 
 static uint saved_tro;
 
@@ -1168,13 +1171,23 @@ static int do_an_op(instr_t *ip)
                     IR.zero = 1;
                 } else {
                     IR.zero = 0;
+                    IR.overflow = reg_A == ((t_uint64)1<<35);
                     reg_A = negate36(reg_A);
                     IR.neg = bit36_is_neg(reg_A);
-                    IR.overflow = reg_A == ((t_uint64)1<<35);
                     // BUG: Should we fault?  Maximum negative number can't be negated, but AL39 doesn't say to fault
                 }
                 return 0;
-            // opcode0_negl unimplemented
+            case opcode0_negl:
+                if (reg_A == 0 && reg_Q == 0) {
+                    IR.zero = 1;
+                } else {
+                    IR.zero = 0;
+                    IR.overflow = reg_A == ((t_uint64)1<<35) && reg_Q == 0;
+                    negate72(&reg_A, &reg_Q);
+                    IR.neg = bit36_is_neg(reg_A);
+                }
+                return 0;
+
             // opcode0_cmg unimplemented
             
             case opcode0_cmk: {
@@ -1622,7 +1635,25 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
-            // opcode0_erx0 .. erx7 unimplemented
+
+            case opcode0_erx0:
+            case opcode0_erx1:
+            case opcode0_erx2:
+            case opcode0_erx3:
+            case opcode0_erx4:
+            case opcode0_erx5:
+            case opcode0_erx6:
+            case opcode0_erx7: {
+                int n = op & 07;
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    reg_X[n] ^= getbits36(word, 0, 18);
+                    IR.zero = reg_X[n] == 0;
+                    IR.neg = bit18_is_neg(reg_X[n]);
+                }
+                return ret;
+            }
 
             case opcode0_cana: {    // Comparative AND with A reg
                 t_uint64 word;
@@ -1745,7 +1776,90 @@ static int do_an_op(instr_t *ip)
             // dfdi unimplemented -- double precision floating divide inverted
             // dfdv unimplemented -- double precision floating divide
             // fdi unimplemented -- floating divide inverted
-            // fdv unimplemented -- floating divide
+
+            case opcode0_fdv: {     // floating divide
+                t_uint64 word;
+                int ret;
+                if (fetch_op(ip, &word) != 0)
+                    return 1;
+                uint8 op_exp = getbits36(word, 0, 8);
+                t_uint64 op_mant = getbits36(word, 8, 28);  // 36-8=28 bits
+                op_mant <<= 8;  // fractions are left aligned & we have 28 bits
+                t_uint64 reg_a = getbits36(reg_A, 0, 28);
+                reg_a <<= 8;    // fractions are left aligned & we have 28 bits
+                log_msg(INFO_MSG, "OPU::fdv", "A =  %012llo => mantissa %012llo, E = %d\n", reg_A, reg_a, reg_E);
+                log_msg(INFO_MSG, "OPU::fdv", "op:  %12s    mantissa %012llo, exp %d\n", "", op_mant, op_exp);
+                double op_val = multics_to_double(op_mant, 0, 0, 1);
+                double a_val = multics_to_double(reg_a, 0, 0, 1);
+                log_msg(INFO_MSG, "OPU::fdv", "Dividing %.4f*2^%d by %.4f*2^%d\n", a_val, reg_E, op_val, op_exp);
+                log_msg(INFO_MSG, "OPU::fdv", "E.g., dividing %.6f / %.6f\n",
+                    a_val * (1 << reg_E), op_val * (1 << op_exp));
+                if (a_val * (1 << reg_E) < op_val * (1 << op_exp)) {
+                    log_msg(WARN_MSG, "OPU::fdiv", "Auto breakpoint for small dividend.\n");
+                    cancel_run(STOP_IBKPT);
+                }
+                reg_Q = 0;
+                int a_is_neg = bit36_is_neg(reg_a);
+                int op_is_neg = bit36_is_neg(op_mant);
+                int exp = (int8) reg_E;
+                if (op_mant == 0) {
+                    // AL39 says to check after aligment, but the
+                    // alignment loop would never end for zero divsior
+                    reg_A = getbits36(reg_A, 0, 28);
+                    reg_A <<= 8;    // Put the MSB bits back into place
+                    IR.zero = op_mant == 0; // BUG, makes no sense
+                    IR.neg = bit36_is_neg(reg_A);
+                    if (IR.neg)
+                        reg_A = negate36(reg_A);
+                    fault_gen(div_fault);
+                    return 1;
+                } else {
+                    // treat fractions as sign-magnitude for shifting
+                    if (op_is_neg)
+                        op_mant = negate36(op_mant);
+                    if (a_is_neg)
+                        reg_a = negate36(reg_a);
+                    // Align mantissas as per AL39
+                    for (;;) {
+                        if (reg_a < op_mant)
+                            break;
+                        reg_a >>= 1;
+                        ++ exp;
+                    }
+                    // Restore signs
+                    if (op_is_neg)
+                        op_mant = negate36(op_mant);
+                    if (a_is_neg)
+                        reg_a = negate36(reg_a);
+                    a_val = multics_to_double(reg_a, 0, 0, 1);
+                    log_msg(INFO_MSG, "OPU::fdv", "Aligned divisor mantissa is %012llo\n", reg_a);
+                    log_msg(INFO_MSG, "OPU::fdv", "Aligned divisor is %.4f*2^%d aka %.6f\n", a_val, exp, a_val * (1 << exp));
+
+                    exp -= op_exp;
+                    if (exp < -128)
+                        IR.exp_underflow = 1;
+                    else if (exp > 127)
+                        IR.exp_overflow = 1;
+                    reg_E = exp;
+
+                    // 72bit right shift of a in order to scale
+                    t_uint64 low = setbits36(0, 0, 1, reg_a & 1);
+                    reg_a >>= 1;
+                    t_uint64 quot, rem;
+                    div72(reg_a, low, op_mant, &quot, &rem);
+                    reg_A = quot;
+                    a_val = multics_to_double(reg_A, 0, 0, 1);
+                    log_msg(INFO_MSG, "OPU::fdv", "Result is %.4f*2^%d aka %.6f\n", a_val, reg_E, a_val * (1 << reg_E));
+                    IR.zero = reg_A == 0;
+                    IR.neg = bit36_is_neg(reg_A);
+                }
+                if (op_is_neg || a_is_neg) {
+                    log_msg(WARN_MSG, "OPU::fdiv", "Auto breakpoint for negative for negatives.\n");
+                    cancel_run(STOP_IBKPT);
+                }
+                return 0;
+            }
+
             // fneg unimplemented -- floating negate
 
             case opcode0_fno:       // floating normalize
@@ -1779,6 +1893,13 @@ static int do_an_op(instr_t *ip)
                 double aq_val64 = multics_to_double(reg_a, reg_q, 0, 1);
                 log_msg(INFO_MSG, "OPU::dfcmp", "Comparing %.4f*2^%d to %.4f*2^%d\n", aq_val64, reg_E, op_val, op_exp);
 
+#if 1
+                int exp;    // debug
+                int op_neg = bit36_is_neg(op_mant_hi);
+                int aq_neg = bit36_is_neg(reg_a);
+                equalize_mantissas72("OPU::dfcmp", &reg_a, &reg_q, reg_E, &op_mant_hi, &op_mant_lo, op_exp, &exp);
+#else
+
                 // treat fractions as sign-magnitude for shifting
                 int op_neg = bit36_is_neg(op_mant_hi);
                 if (op_neg)
@@ -1800,6 +1921,7 @@ static int do_an_op(instr_t *ip)
                     int n = (int8) op_exp - (int8) reg_E;
                     long_right_shift(&reg_a, &reg_q, n, 1);
                 }
+#endif
                 if (op_mant_hi == 0 && op_mant_lo == 0)
                     op_neg = 0;
                 if (reg_a == 0 && reg_q == 0)
@@ -1842,6 +1964,12 @@ static int do_an_op(instr_t *ip)
                 double op_val = multics_to_double(op_mant << 8, 0, 0, 1);
                 double a_val = multics_to_double(reg_a << 8, 0, 0, 1);
                 log_msg(INFO_MSG, "OPU::fcmp", "Comparing %.4f*2^%d to %.4f*2^%d\n", a_val, reg_E, op_val, op_exp);
+#if 1
+                int exp;    // debug
+                int op_neg = bit36_is_neg(op_mant);
+                int a_neg = bit36_is_neg(reg_a);
+                equalize_mantissas("OPU::fcmp", &reg_a, reg_E, &op_mant, op_exp, &exp);
+#else
 
                 // treat fractions as sign-magnitude for shifting
                 int op_neg = bit36_is_neg(op_mant);
@@ -1870,6 +1998,7 @@ static int do_an_op(instr_t *ip)
                     else
                         reg_a >>= n;
                 }
+#endif
                 if (op_mant == 0)
                     op_neg = 0;
                 if (reg_a == 0)
@@ -3219,6 +3348,7 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
             // cmp0 .. cmp7 unimplemented -- compare numeric
+
             // mvn unimplemented -- move numeric
 
             case opcode1_mvne:      // EIS: move numeric edited
@@ -3977,3 +4107,174 @@ static void rsw_get_port_config(int low_port)
         reg_A = (reg_A << 9) | byte;
     }
 }
+
+// ============================================================================
+
+// Returns -1, 0, or 1
+
+#if 0
+static int cmp_fract(t_uint64 x, t_uint64 y)
+{
+    if (x == y)
+        return 0;
+
+    flag_t x_neg = bit36_is_neg(x);
+    flag_t y_neg = bit36_is_neg(y);
+
+    if (x_neg)  {
+        if (y_neg) {
+            // The larger absolute value is the more negative fraction
+            return (x > y) ? -1 : 1;
+        } else
+            return -1;
+    } else {
+        if (y_neg)
+            return 1;
+        return (x > y) ? 1 : -1;
+    }
+}
+#endif
+
+// ============================================================================
+
+static void equalize_mantissas(
+    const char* op,
+    t_uint64 *a_mantp, uint8 a_exp,
+    t_uint64 *b_mantp, uint8 b_exp,
+    int* new_exp)
+{
+    t_uint64 a_mant = *a_mantp;
+    t_uint64 b_mant = *b_mantp;
+
+    log_msg(INFO_MSG, op, "1st mantissa %012llo, E = %d\n", a_mant, a_exp);
+    log_msg(INFO_MSG, op, "2nd mantissa %012llo, E = %d\n", b_mant, b_exp);
+
+    double a_val = multics_to_double(a_mant << 8, 0, 0, 1);
+    double b_val = multics_to_double(b_mant << 8, 0, 0, 1);
+    log_msg(INFO_MSG, op, "1st arg: %.4f*2^%d, 2nd arg: %.4f*2^%d\n", a_val, a_exp, b_val, b_exp);
+    
+    // treat fractions as sign-magnitude for shifting
+    int b_neg = bit36_is_neg(b_mant);
+    if (b_neg)
+        b_mant = negate36(b_mant);
+    int a_neg = bit36_is_neg(a_mant);
+    if (a_neg)
+        a_mant = negate36(a_mant);
+
+    // right shift
+    int exp;    // debug
+    if ((int8) b_exp < (int8) a_exp) {
+        // b has the smaller exponent
+        exp = (int8) a_exp;
+        int n = (int8) a_exp - (int8) b_exp;
+        if (n >= 36)
+            b_mant = 0;
+        else
+            b_mant >>= n;
+    } else {
+        // a has the smaller exponent
+        exp = (int8) b_exp;
+        int n = (int8) b_exp - (int8) a_exp;
+        if (n >= 36)
+            a_mant = 0;
+        else
+            a_mant >>= n;
+    }
+    if (b_mant == 0)
+        b_neg = 0;
+    if (a_mant == 0)
+        a_neg = 0;
+
+#if 0
+    // fcmp
+    IR.zero = a_neg == b_neg && a_mant == b_mant;
+    if (IR.zero)
+        IR.neg = 0;
+    else if (a_neg && ! b_neg)
+        IR.neg = 1;
+    else if (!a_neg && b_neg)
+        IR.neg = 0;
+    else if (!a_neg && ! b_neg)
+        IR.neg = a_mant < b_mant;
+    else
+        IR.neg = a_mant > b_mant;
+#endif
+    
+    b_val = multics_to_double(b_mant << 8, 0, 0, 1);
+    a_val = multics_to_double(a_mant << 8, 0, 0, 1);
+
+    *new_exp = exp;
+    *a_mantp = a_mant;
+    *b_mantp = b_mant;
+
+    if (a_neg == b_neg && a_mant == b_mant)
+        log_msg(INFO_MSG, op, "Align: Exp is %d; both mantissas %f\n", exp, a_val);
+    else
+        log_msg(INFO_MSG, op, "Align: Exp is %d; 1st mantissa %f, 2nd mantissa %f\n", exp, a_val, b_val);
+
+}
+
+// ============================================================================
+
+static void equalize_mantissas72(
+    const char* op,
+    t_uint64* a_mant_hip, t_uint64* a_mant_lop, uint8 a_exp,
+    t_uint64* b_mant_hip, t_uint64* b_mant_lop, uint8 b_exp,
+    int* new_exp)
+{
+    t_uint64 a_mant_hi = *a_mant_hip;
+    t_uint64 a_mant_lo = *a_mant_lop;
+    t_uint64 b_mant_hi = *b_mant_hip;
+    t_uint64 b_mant_lo = *b_mant_lop;
+
+    log_msg(INFO_MSG, op, "1st mantissa { %012llo, %012llo }, exp = %d\n", a_mant_hi, a_mant_lo, a_exp);
+    log_msg(INFO_MSG, op, "2nd mantissa { %012llo, %012llo }, exp = %d\n", b_mant_hi, b_mant_lo, b_exp);
+
+    double a_val = multics_to_double(a_mant_hi << 8, 0, 0, 1);
+    double b_val = multics_to_double(b_mant_hi << 8, 0, 0, 1);
+    log_msg(INFO_MSG, op, "1st arg: %.4f*2^%d, 2nd arg: %.4f*2^%d\n", a_val, a_exp, b_val, b_exp);
+    
+    // treat fractions as sign-magnitude for shifting
+    int b_neg = bit36_is_neg(b_mant_hi);
+    if (b_neg)
+        b_mant_hi = negate36(b_mant_hi);
+    int a_neg = bit36_is_neg(a_mant_hi);
+    if (a_neg)
+        a_mant_hi = negate36(a_mant_hi);
+
+    // 72-bit right shift
+    int exp;    // debug
+    if ((int8) b_exp < (int8) a_exp) {
+        // b has the smaller exponent
+        exp = (int8) a_exp;
+        int n = (int8) a_exp - (int8) b_exp;
+        long_right_shift(&b_mant_hi, &b_mant_lo, n, 1);
+    } else {
+        // a has the smaller exponent
+        exp = (int8) b_exp;
+        int n = (int8) b_exp - (int8) a_exp;
+        long_right_shift(&a_mant_hi, &a_mant_lo, n, 1);
+    }
+
+    if (b_mant_hi == 0 && b_mant_lo == 0)
+        b_neg = 0;
+    if (a_mant_hi == 0 && a_mant_lo == 0)
+        a_neg = 0;
+
+    b_val = multics_to_double(b_mant_hi, b_mant_lo, 0, 1);
+    a_val = multics_to_double(a_mant_hi, a_mant_lo, 0, 1);
+
+    *new_exp = exp;
+    *a_mant_hip = a_mant_hi;
+    *a_mant_lop = a_mant_lo;
+    *b_mant_hip = b_mant_hi;
+    *b_mant_lop = b_mant_lo;
+
+    if (a_neg == b_neg && a_mant_hi == b_mant_hi && a_mant_lo == b_mant_lo)
+        log_msg(INFO_MSG, op, "Align: Exp is %d; both mantissas %f\n", exp, a_val);
+    else
+        log_msg(INFO_MSG, op, "Align: Exp is %d; 1st mantissa %f, 2nd mantissa %f\n", exp, a_val, b_val);
+
+}
+
+// ============================================================================

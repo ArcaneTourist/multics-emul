@@ -14,6 +14,14 @@
 
 // ============================================================================
 
+#if 0
+static int divide_fraction(t_uint64* ahip, t_uint64 *alowp, t_uint64* bp)
+{
+}
+#endif
+
+// ============================================================================
+
 int instr_dvf(t_uint64 word)
 {
     // dvf -- divide fraction; 71-bit signed fractional dividend is
