@@ -524,7 +524,7 @@ int listing_parse(FILE *f, source_file &src)
             // stack frame because the simulator can just look at changes to pr6 and assume that
             // if pr6 hasn't changed then whoever is running is sharing that frame.
             const char *pat;
-            char *p;
+            const char *p;
             if ((p = strstr(s, pat = "shares stack frame of external procedure")) == NULL)
                 p = strstr(s, pat = "shares stack frame of internal procedure");
             if (p != NULL) {

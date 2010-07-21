@@ -137,11 +137,12 @@ ostream& entry_point::print(ostream& out, int indent) const
             out << " with own stack frame";
             out << " (which has " << stack()->automatics.size() << " automatics)";
         }
-        else if (stack()->owner)
+        else if (stack()->owner) {
             if (stack()->owner->name == name)
                 out << " using own stack frame";
             else
                 out << " using stack frame of " << stack()->owner->name;
+        }
         // else no known owner...
     }
     out << simh_nl;

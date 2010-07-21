@@ -12,6 +12,7 @@ using namespace std;
 #include <ostream>
 #include <stdexcept>
 #include <sstream>
+#include <algorithm>
 
 //#include <unistd.h>
 //#include <sys/types.h>

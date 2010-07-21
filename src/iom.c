@@ -1389,7 +1389,7 @@ static void decode_idcw(pcw_t *p, flag_t is_pcw, t_uint64 word0, t_uint64 word1)
 static char* pcw2text(const pcw_t *p)
 {
     // WARNING: returns single static buffer
-    static char buf[80];
+    static char buf[200];
     sprintf(buf, "[dev-cmd=0%o, dev-code=0%o, ext=0%o, mask=%d, ctrl=0%o, chan-cmd=0%o, chan-data=0%o, chan=0%o]",
         p->dev_cmd, p->dev_code, p->ext, p->mask, p->control, p->chan_cmd, p->chan_data, p->chan);
     return buf;
@@ -1456,7 +1456,7 @@ static void parse_dcw(dcw_t *p, int addr)
 static char* dcw2text(const dcw_t *p)
 {
     // WARNING: returns single static buffer
-    static char buf[80];
+    static char buf[200];
     if (p->type == ddcw) {
         int dtype = p->fields.ddcw.type;
         const char* type =

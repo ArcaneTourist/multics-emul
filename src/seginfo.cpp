@@ -23,6 +23,7 @@ using namespace std;
 // #include <list>
 // #include <map>
 // #include <vector>
+#include <stdlib.h>
 
 extern "C" void log_msg(int, const char*, ...); // BUG
 
@@ -356,7 +357,7 @@ int seginfo_find_all(int segno, int offset, loc_t& loc)
         } else if (src_it == -- seg.source_map.end()) {
             // Found last entry in list, so sanity check
             source_file* last_src = (*src_it).second;
-            if (last_src->lo() != offset)
+            if (last_src->lo() != offset) {
                 // Given offset is higher than anything in the list
                 if (last_src->hi() > 0) {
                     // User has specified the highest (last) known offset used by this source file
@@ -374,6 +375,7 @@ int seginfo_find_all(int segno, int offset, loc_t& loc)
                         }
                     }
                 }
+            }
         } else {
             // Found one...
         }
