@@ -14,6 +14,7 @@
 #include "hw6180.h"
 
 extern iom_t iom;
+extern DEVICE *sim_devices[];
 
 typedef struct s_console_state {
     // Hangs off the device structure
@@ -24,6 +25,8 @@ typedef struct s_console_state {
     char *tailp;
     char *readp;
     flag_t have_eol;
+    char *auto_input;
+    char *autop;
 } con_state_t;
 
 static void check_keyboard(int chan);
@@ -34,6 +37,100 @@ void console_init()
 {
 }
 
+// ============================================================================
+
+static DEVICE* find_opcon()
+{
+    const char* moi = "opcon";
+
+    DEVICE *devp = NULL;
+    for (DEVICE **devpp = sim_devices; *devpp != NULL; ++devpp) {
+        if (strcmp((*devpp)->name, "OPCON") == 0) {
+            if (devp == NULL)
+                devp = *devpp;
+            else {
+                log_msg(ERR_MSG, moi, "Multiple OPCON devices found.\n");
+                return NULL;
+            }
+        }
+    }
+
+    if (devp == NULL) {
+        log_msg(ERR_MSG, moi, "No OPCON devices found.\n");
+        return NULL;
+    }
+    chan_devinfo* devinfop = devp->ctxt;
+    if (devinfop == NULL) {
+        // log_msg(ERR_MSG, moi, "Internal error, no context info for OPCON.\n");
+        // return NULL;
+        log_msg(INFO_MSG, moi, "Creating OPCON devinfo.\n");
+        devinfop = malloc(sizeof(*devinfop));
+        if (devinfop == NULL)
+            return NULL;
+        devinfop->chan = -1;
+        devinfop->statep = NULL;
+        devp->ctxt = devinfop;
+    }
+    struct s_console_state *con_statep = devinfop->statep;
+    if (con_statep == NULL) {
+        if ((con_statep = malloc(sizeof(struct s_console_state))) == NULL) {
+            log_msg(ERR_MSG, moi, "Internal error, malloc failed.\n");
+            return NULL;
+        }
+        devinfop->statep = con_statep;
+        con_statep->io_mode = no_mode;
+        con_statep->tailp = con_statep->buf;
+        con_statep->readp = con_statep->buf;
+        con_statep->have_eol = 0;
+        con_statep->auto_input = NULL;
+        con_statep->autop = NULL;
+    }
+    return devp;
+}
+
+// ============================================================================
+
+int opcon_autoinput_set(UNIT *uptr, int32 val, char *cptr, void *desc)
+{
+    DEVICE *devp = find_opcon();
+    if (devp == NULL)
+        return 1;
+    chan_devinfo* devinfop = devp->ctxt;
+    struct s_console_state *con_statep = devinfop->statep;
+    if (con_statep->auto_input) {
+        log_msg(NOTIFY_MSG, "opcon", "Discarding prior auto-input.\n");
+        free(con_statep->auto_input);
+    }
+    if (cptr) {
+        con_statep->auto_input = strdup(cptr);
+        log_msg(NOTIFY_MSG, "opcon", "Auto-input now: %s\n", cptr);
+    } else {
+        con_statep->auto_input = NULL;
+        log_msg(NOTIFY_MSG, "opcon", "Auto-input disabled.\n");
+    }
+    con_statep->autop = con_statep->auto_input;
+    return 0;
+}
+
+// ============================================================================
+
+int opcon_autoinput_show(FILE *st, UNIT *uptr, int val, void *desc)
+{
+    log_msg(NOTIFY_MSG, "opcon_autoinput_show", "FILE=%p, uptr=%p, val=%d,desc=%p\n",
+        st, uptr, val, desc);
+
+    DEVICE *devp = find_opcon();
+    if (devp == NULL)
+        return 1;
+    chan_devinfo* devinfop = devp->ctxt;
+    struct s_console_state *con_statep = devinfop->statep;
+    if (con_statep->auto_input == NULL)
+        log_msg(NOTIFY_MSG, "opcon", "No auto-input exists.\n");
+    else
+        log_msg(NOTIFY_MSG, "opcon", "Auto-input is/was: %s\n", con_statep->auto_input);
+
+    return 0;
+}
 
 // ============================================================================
 
@@ -86,6 +183,8 @@ static int con_check_args(const char* moi, int chan, int dev_code, int* majorp, 
         con_statep->tailp = con_statep->buf;
         con_statep->readp = con_statep->buf;
         con_statep->have_eol = 0;
+        con_statep->auto_input = NULL;
+        con_statep->autop = NULL;
     }
     *statepp = con_statep;
     return 0;
@@ -352,6 +451,7 @@ static void check_keyboard(int chan)
         return;
     }
 
+    int announce = 1;
     for (;;) {
         if (con_statep->tailp >= con_statep->buf + sizeof(con_statep->buf)) {
             log_msg(WARN_MSG, moi, "Buffer full; ignoring keyboard.\n");
@@ -359,31 +459,56 @@ static void check_keyboard(int chan)
         }
         if (con_statep->have_eol)
             return;
-        int c = sim_poll_kbd();
-        if (c == SCPE_OK)
-            return; // no input
-        if (c == SCPE_STOP) {
-            log_msg(NOTIFY_MSG, moi, "Got <sim stop>\n");
-            return; // User typed ^E to stop simulation
-        }
-        if (c < SCPE_KFLAG) {
-            log_msg(NOTIFY_MSG, moi, "Bad char\n");
-            return; // Should be impossible
-        }
-
-        c -= SCPE_KFLAG;    // translate to ascii
-        if (isprint(c))
-            log_msg(NOTIFY_MSG, moi, "Got char '%c'\n", c);
-        else
-            log_msg(NOTIFY_MSG, moi, "Got char '\\%03o'\n", c);
-
-        // BUG: We don't allow user to set editing characters
-        if (c == '\177' || c == '\010') {
-            if (con_statep->tailp > con_statep->buf) {
-                -- con_statep->tailp;
-                sim_putchar(c);
+        int c;
+        if (con_statep->io_mode == read_mode && con_statep->autop != NULL) {
+            if (announce) {
+                const char *msg = "[auto-input] ";
+                for (const char *s = msg; *s != 0; ++s)
+                    sim_putchar(*s);
+                announce = 0;
             }
-        } else if (c == '\014') {   // Form Feed, \f, ^L
+            c = *(con_statep->autop);
+            if (c == 0) {
+                con_statep->have_eol = 1;
+                free(con_statep->auto_input);
+                con_statep->auto_input = NULL;
+                con_statep->autop = NULL;
+                log_msg(NOTIFY_MSG, moi, "Got auto-input EOL for channel %d (%#o)\n", chan, chan);
+                return;
+            }
+            ++ con_statep->autop;
+            if (isprint(c))
+                log_msg(NOTIFY_MSG, moi, "Used auto-input char '%c'\n", c);
+            else
+                log_msg(NOTIFY_MSG, moi, "Used auto-input char '\\%03o'\n", c);
+        } else {
+            c = sim_poll_kbd();
+            if (c == SCPE_OK)
+                return; // no input
+            if (c == SCPE_STOP) {
+                log_msg(NOTIFY_MSG, moi, "Got <sim stop>\n");
+                return; // User typed ^E to stop simulation
+            }
+            if (c < SCPE_KFLAG) {
+                log_msg(NOTIFY_MSG, moi, "Bad char\n");
+                return; // Should be impossible
+            }
+            c -= SCPE_KFLAG;    // translate to ascii
+
+            if (isprint(c))
+                log_msg(NOTIFY_MSG, moi, "Got char '%c'\n", c);
+            else
+                log_msg(NOTIFY_MSG, moi, "Got char '\\%03o'\n", c);
+
+            // BUG: We don't allow user to set editing characters
+            if (c == '\177' || c == '\010') {
+                if (con_statep->tailp > con_statep->buf) {
+                    -- con_statep->tailp;
+                    sim_putchar(c);
+                }
+            }
+        }
+        if (c == '\014') {  // Form Feed, \f, ^L
             sim_putchar('\r');
             sim_putchar('\n');
             for (const char *p = con_statep->buf; p < con_statep->tailp; ++p)

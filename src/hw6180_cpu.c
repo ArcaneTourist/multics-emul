@@ -231,8 +231,16 @@ DEVICE tape_dev = {
     NULL, DEV_DEBUG
 };
 
+MTAB opcon_mod[] = {
+    { MTAB_XTD | MTAB_VDV | MTAB_VAL | MTAB_NC,
+        0, NULL, "AUTOINPUT",
+        opcon_autoinput_set, opcon_autoinput_show, NULL },
+    { 0 }
+};
+
+
 DEVICE opcon_dev = {
-    "Operator's console", NULL, NULL, NULL,
+    "OPCON", NULL, NULL, opcon_mod,
     0, 10, 8, 1, 8, 8,
     NULL, NULL, NULL,
     NULL, NULL, NULL,
@@ -575,6 +583,8 @@ t_stat sim_instr(void)
 
     // opt_debug = (cpu_dev.dctrl != 0);    // todo: should CPU control all debug settings?
 
+    state_invalidate_cache();   // todo: only need to do when changing debug settings
+
     // Setup clocks
     (void) sim_rtcn_init(CLK_TR_HZ, TR_CLK);
     
@@ -592,6 +602,7 @@ ninstr = 0;
     }
 
     int prev_seg = PPR.PSR;
+    int prev_debug = opt_debug;
     // Loop until it's time to bounce back to SIMH
     while (reason == 0) {
         if (PPR.PSR != prev_seg) {
@@ -613,6 +624,12 @@ ninstr = 0;
                 log_msg(DEBUG_MSG, "MAIN::clock", "TR is running with %d time units left.\n", t);
         }
 #endif
+
+        if (prev_debug != opt_debug) {
+            // stack tracking depends on being called after every instr
+            state_invalidate_cache();
+            prev_debug = opt_debug;
+        }
 
         //
         // Log a message about where we're at -- if debugging, or if we want
@@ -641,9 +658,9 @@ ninstr = 0;
             if (!known_loc)
                 known_loc = cpu.trgo;
             if (/*known_loc && */ (opt_debug || show_source_lines)) {
-                log_ignore_ic_change();
+                // log_ignore_ic_change();
                 show_variables(saved_seg, saved_IC);
-                log_notice_ic_change();
+                // log_notice_ic_change();
             }
         }
 
@@ -1422,9 +1439,15 @@ static t_stat control_unit(void)
                         events.xed = 0;
                         cpu.cycle = FETCH_cycle;
                     } else {
-                        if (cu.xdo) // xec is very common
+                        if (cu.IR.is_eis_multiword) {
+                            log_msg(WARN_MSG, "CU", "XEC/XED may mishandle EIS MW instructions; IC changed from %#o to %#o\n", IC_temp, PPR.IC);
+                            (void) cancel_run(STOP_BUG);
+                            -- PPR.IC;
+                        }
+                        if (cu.xdo)
                             log_msg(INFO_MSG, "CU", "Resetting XED even flag\n");
                         else {
+                            // xec is very common, so use level debug
                             log_msg(DEBUG_MSG, "CU", "Resetting XED even flag\n");
                             ++ PPR.IC;
                         }
@@ -1446,9 +1469,13 @@ static t_stat control_unit(void)
                     }
                     cpu.cycle = FETCH_cycle;
                     if (!cpu.trgo) {
-                        if (PPR.IC != IC_temp)
-                            log_msg(NOTIFY_MSG, "CU", "No transfer instruction in XED, but IC changed from %#o to %#o\n", IC_temp, PPR.IC);
-                        ++ PPR.IC;
+                        if (PPR.IC == IC_temp)
+                            ++ PPR.IC;
+                        else
+                            if (cu.IR.is_eis_multiword)
+                                log_msg(INFO_MSG, "CU", "Not updating IC after XED because EIS MW instruction updated the IC from %#o to %#o\n", IC_temp, PPR.IC);
+                            else
+                                log_msg(WARN_MSG, "CU", "No transfer instruction in XED, but IC changed from %#o to %#o\n", IC_temp, PPR.IC);
                     }
                 } else if (! cpu.ic_odd) {
                     // Performed non-repeat instr at even loc (or finished the
@@ -1643,10 +1670,14 @@ int fault_check(enum faults f)
 
     if (! events.any)
         return 0;
-    int group = fault2group[f];
+    int group = fault2group[f]; // result is 0..7
     if (group == 7)
         return events.group7 & (1 << f);
-    else
+    else if (group < 1 || group > 6) {
+        log_msg(ERR_MSG, "CU::fault-check", "Fault # %d has bad group %d\n", f, group);
+        cancel_run(STOP_BUG);
+        return 1;
+    } else
         return events.fault[group] == f;
 }
 
@@ -2299,7 +2330,7 @@ static void init_opcodes()
     is_eis[(opcode1_sztl<<1)|1] = 1;
     is_eis[(opcode1_sztr<<1)|1] = 1;
     is_eis[(opcode1_btd<<1)|1] = 1;
-    is_eis[(opcode1_mvne<<1)|1] = 1;
+    is_eis[(opcode1_dtb<<1)|1] = 1;
 }
 
 // ============================================================================

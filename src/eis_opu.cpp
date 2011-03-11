@@ -355,9 +355,7 @@ int op_btd(const instr_t* ip)
 
     cpu.irodd_invalid = 1;
 
-    num_desc_t desc1(ip->mods.mf1, word1, 1);
-    uint tn = getbits36(word1, 21, 1);
-    word2 = setbits36(word2, 21, 1, tn);    // force (ignored) type of desc 2 to match desc 1
+    num_desc_t desc1(ip->mods.mf1, word1, 1);   // will be 9bit
     num_desc_t desc2(mf2, word2, 1);
     char msg_buf[100];
     log_msg(INFO_MSG, moi, "desc1: %s\n", desc1.to_text(msg_buf));
@@ -409,8 +407,9 @@ int op_btd(const instr_t* ip)
             log_msg(INFO_MSG, moi, "source binary is negative, negating yields { %#llo, %012llo}\n", src_hi, src_lo);
         }
         
-    // We'll initially compute the results into rhi and rlo via 4bit nibbles.  We only need just over 72 bits;
-    // note that we'll use all 64 bits of rlo, not use 36 of them.
+    // We'll initially compute the results into rhi and rlo via 4bit nibbles.
+    // We only need just over 72 bits; note that we'll use all 64 bits of rlo,
+    // not just 36 of them.
     t_uint64 rlo = 0;
     uint rhi = 0;
 
@@ -486,7 +485,7 @@ int op_btd(const instr_t* ip)
     while (n < desc2.n()) {
         results[n] = rlo & 0xf;
         if (desc2.width() == 9)
-            results[n] |= 060;
+            results[n] |= 060;      // 9-bit unpacked BCD is ASCII
         ++n;
         rlo >>= 4;
         rlo |= (t_uint64) ((rhi >> 4) & 0xf) << 60;
@@ -522,7 +521,7 @@ int op_btd(const instr_t* ip)
     else {
         log_msg(DEBUG_MSG, moi, "Storing %d (aka %d) bytes\n", desc2.n(), n);
         while (desc2.n() > 0) {
-            // log_msg(DEBUG_MSG, moi, "Storing byte %d from results[%d]\n", desc2.n(), desc2.n()-1);
+            // log_msg(DEBUG_MSG, moi, "Storing byte %d from results[%d]==%#o\n", desc2.n(), desc2.n()-1, results[desc2.n()-1]);
             if (desc2.put(results[desc2.n()-1]) != 0) {
                 ret = 1;
                 break;
@@ -538,6 +537,169 @@ int op_btd(const instr_t* ip)
     PPR.IC += 3;        // BUG: when should we bump IC?  probably not for faults, but probably yes for conditions
     return ret;
 }
+
+// ============================================================================
+
+
+#if 0
+static int _op_dtb(const instr_t* ip);
+int op_dtb(const instr_t* ip)
+{
+    extern DEVICE cpu_dev;
+    int saved_debug = opt_debug;
+    int saved_dctrl = cpu_dev.dctrl;
+    ++ opt_debug; ++ cpu_dev.dctrl;
+    int ret = _op_dtb(ip);
+    opt_debug = saved_debug;
+    cpu_dev.dctrl = saved_dctrl;
+    return ret;
+}
+#endif
+int op_dtb(const instr_t* ip)
+{
+    const char* moi = "OPU::dtb";
+
+    uint mf2bits = ip->addr & MASKBITS(7);
+    eis_mf_t mf2;
+    (void) parse_mf(mf2bits, &mf2);
+    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+
+    t_uint64 word1, word2;
+    if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
+        return 1;
+
+    cpu.irodd_invalid = 1;
+
+    num_desc_t desc1(ip->mods.mf1, word1, 1);
+    num_desc_t desc2(mf2, word2, 1);
+    char msg_buf[100];
+    log_msg(INFO_MSG, moi, "desc1: %s\n", desc1.to_text(msg_buf)); // 4 or 9-bit
+    log_msg(INFO_MSG, moi, "desc2: %s\n", desc2.to_text(msg_buf));  // 9 bit
+
+    if (desc1.scaling_factor != 0) {
+        log_msg(ERR_MSG, moi, "Descriptor 1 scaling factor must be zero\n");
+        fault_gen(illproc_fault);
+        return 1;
+    }
+    if (desc1.s == 0) {
+        log_msg(ERR_MSG, moi, "Descriptor 1 sign/decimal-type type must not be zero\n");
+        fault_gen(illproc_fault);
+        return 1;
+    }
+    if (desc2.n() == 0 || desc2.n() > 8) {
+        log_msg(ERR_MSG, moi, "Descriptor 2 length must in range 1..8\n");
+        fault_gen(illproc_fault);
+        return 1;
+    }
+
+    // First op is bcd with either 4bit or 9bit nibbles.
+    // Second op is a binary number between 9bits and 72bits.
+    // The maximum value is nine digit string consisting of all nines.  The
+    // corresponding unsigned binary value only requires 32 bits.
+    
+    // Calculate binary value
+    unsigned val = 0;
+    int negate = 0;
+    int first = 1;
+    int is_zero = 1;
+    while (desc1.n() > 0) {
+        uint nib;
+        if (desc1.get(&nib) != 0) { // must fetch when needed
+            return 1;
+            break;
+        }
+        if ((first && desc1.s == 1) || (desc1.n() == 0 && desc1.s == 2)) {
+            // leading sign or trailing sign
+            if ((nib & 0xf) < 012) {
+                log_msg(ERR_MSG, moi, "Bad sign byte, %#0.\n", nib);
+                fault_gen(illproc_fault);
+                return 1;
+            }
+            if ((nib & 0xf) == 015)
+                negate = 1;
+            log_msg(INFO_MSG, moi, "BCD sign byte is %#0 -- %s\n",
+                nib, (negate) ? "negative" : "positive");
+            first = 0;
+            continue;
+        }
+        log_msg(INFO_MSG, moi, "source BCD nibble is %03o -> %d aka %d\n", nib, nib, nib & 0xf);
+        if (desc1.width() == 9) {
+            // convert from unpacked ASCII BCD to binary
+            // nib -= 060;
+            nib &= 0xf;
+        }
+        val = val * 10 + nib;
+        if (nib != 0)
+            is_zero = 0;
+        first = 0;
+    }
+    if (negate)
+        val = (~ val) + 1;  // val will not be max positive or max neg
+    log_msg(INFO_MSG, moi, "source BCD value is %d -> %#o.\n", val, val);
+
+    // We have a source value of at most 32 bits.  Dest is 9 to 72 bits;
+    // see if it fits.
+
+#if 0
+    unsigned v = val;
+    int nquads = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (negate) {
+            if ((v & 0x1ff) != 0x1ff)
+                nquads = i + 1;
+            v >>= 9;
+            v |= 0x1ff << 27;
+        } else {
+            if ((v & 0x1ff) != 0)
+                nquads = i + 1;
+            v >> = 9;
+        }
+    }
+    ...
+#else
+    int is_overflow;
+    if (negate) {
+        unsigned mask = MASKBITS(desc2.n() * 9);
+        is_overflow = (mask | val) != MASKBITS(sizeof(val) * 8);
+    } else
+        is_overflow = (val >> (desc2.n() * 9)) != 0;
+#endif
+
+    int ret = 0;
+    if (is_overflow) {
+        log_msg(INFO_MSG, moi, "Overflow\n");
+        IR.overflow = 1;
+        fault_gen(illproc_fault);
+    } else {
+        IR.zero = is_zero;
+
+        log_msg(DEBUG_MSG, moi, "Storing %d bytes\n", desc2.n());
+        // put_eis_an_rev doesn't exist...
+        for (int n = desc2.n(); n != 0; --n) {
+            uint nib;
+            if (n > 4)
+                nib = 0;
+            else 
+                nib = val >> ((n - 1) * 9) & 0x1ff;
+            if (desc2.put(nib) != 0) {
+                ret = 1;
+                break;
+            }
+        }
+    }
+
+    // write unsaved data (if any)
+    if (ret == 0)
+        if (desc2.flush() != 0)
+            return 1;
+
+    log_msg(WARN_MSG, moi, "Untested; IR may be wrong; auto breakpoint\n");
+    cancel_run(STOP_IBKPT);
+
+    PPR.IC += 3;        // BUG: when should we bump IC?  probably not for faults, but probably yes for conditions
+    return ret;
+}
+
 
 // ============================================================================
 
@@ -1209,3 +1371,402 @@ int op_mvne(const instr_t* ip)
 }
 
 // ============================================================================
+
+#if 1
+static int _op_mvn(const instr_t* ip);
+int op_mvn(const instr_t* ip)
+{
+    extern DEVICE cpu_dev;
+    int saved_debug = opt_debug;
+    int saved_dctrl = cpu_dev.dctrl;
+    ++ opt_debug; ++ cpu_dev.dctrl;
+    int ret = _op_mvn(ip);
+    opt_debug = saved_debug;
+    cpu_dev.dctrl = saved_dctrl;
+    return ret;
+}
+#endif
+
+/*
+    mvn
+
+    Move decimal data.
+    Note that the 4-bit encoding is essentially BCD and the 9-bit encoding
+    is essentially ASCII.
+
+    Decimal data comes in four formats:
+        Unsigned scaled integer 
+        Signed scaled integer (two formats -- leading or trailing sign)
+        Floating point
+    The scaled integers have the scale encoded in the instruction, it's
+    not part of the data format.
+
+    Decimal floating point doesn't use a fractional mantissa as per AL-39...
+    So, there's no essential difference between the so-call floating
+    numbers and the scaled numbers except that one has the exponent in
+    the data and the other has the exponent (scale factor) as an implied
+    value specified by the instruction.
+
+    AL-39 says that the scale factor is ignored by the hardware.  That
+    can't be completely true...
+*/
+
+int _op_mvn(const instr_t* ip)
+{
+    const char* moi = "OPU::mvn";
+
+    uint mf2bits = ip->addr & MASKBITS(7);
+    flag_t sign_ctl = (ip->addr >> 17) & 1;
+    flag_t trunc_fe = (ip->addr >> 8) & 1;
+    flag_t rounding = (ip->addr >> 7) & 1;
+
+    eis_mf_t mf2;
+    (void) parse_mf(mf2bits, &mf2);
+    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+
+    t_uint64 word1, word2;
+    if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
+        return 1;
+
+    cpu.irodd_invalid = 1;
+
+    log_msg(INFO_MSG, moi, "sign-ctl=%d, trunc-fault=%d, rounding=%d\n",
+        sign_ctl, trunc_fe, rounding);
+    num_desc_t desc1(ip->mods.mf1, word1, 1);
+    char msg_buf[100];
+    log_msg(INFO_MSG, moi, "desc1: %s\n", desc1.to_text(msg_buf));
+    num_desc_t desc2(mf2, word2, 1);
+    log_msg(INFO_MSG, moi, "desc2: %s\n", desc2.to_text(msg_buf));
+
+
+/*
+
+integer -> integer
+    right justify
+    shift according to scale diff
+        nshift = SF2 - SF1 // negative <<; positive >>
+    0->-1 ==(-1)==> 0019 -> 0190*10^-1
+    0->-1 ==(-1)==> 1234 -> ????*10^-1 <overflow>
+    0->+1 ==(+1)==> 0080 -> 0008*10^1
+    0->+1 ==(+1)==> 0082 -> 0008*10^1 <w/o rounding, loss of digit 2>
+    0->+1 ==(+1)==> 0085 -> 0009*10^1 <with rounding>
+    0->+1 ==(+1)==> 9998 -> 1000*10^1 <with rounding>
+    -1->0 ==(+1)==> 9310 -> 0931
+    -1->0 ==(+1)==> 0045 -> 0004 <w/o rounding, loss of digit 5>
+    -1->0 ==(+1)==> 0045 -> 0005 <with rounding>
+    +1->0 ==(-1)==> 0201 -> 2010
+    +1->0 ==(-1)==> 9000 -> <overflow>
+integer -> float
+    right justify
+    set exp to scale (scale is smaller range than exp)
+    maybe normalize?
+float -> integer
+    right justify
+    shift according to scale & exp
+*/
+
+    // Determine how many byte positions are in the source and the
+    // destination, not counting the sign bytes and exponent bytes
+
+    int n_src = desc1.n();      // digit bytes, excluding signs and exponents
+    if (desc1.s != 3)
+        n_src -= 1;             // sign byte
+    if (desc1.s == 0)
+        n_src -= (desc1.width() == 4) ? 2 : 1;  // exponent byte(s)
+
+    int n_dest = desc2.n();     // digit bytes, excluding signs and exponents
+    if (desc2.s != 3)
+        -- n_dest;  // byte for sign
+    if (desc2.s == 0)
+        n_dest -= (desc2.width() == 4) ? 2 : 1; // exponent byte(s)
+
+    log_msg(DEBUG_MSG, moi, "Src is type %d with %d digits with %d total bytes.\n",
+        desc1.s, n_src, desc1.n());
+    log_msg(DEBUG_MSG, moi, "Dst is type %d with %d digits with %d total bytes.\n",
+        desc2.s, n_dest, desc2.n());
+
+    // Read in the source
+    uint in_ybuf[64];           // ops can be up to 63 4-bit or 9-bit nibbles
+    for (int i = 0; desc1.n() != 0; ++i) {
+        int ret = desc1.get(in_ybuf + i);
+        if (ret != 0) {
+            log_msg(ERR_MSG, moi, "Error reading input.\n");
+            return 1;
+        }
+    }
+
+    int src_sign;
+    if (desc1.s == 3)
+        src_sign = 0;
+    else {
+        src_sign = (desc1.s == 00 || desc2.s == 1) ? in_ybuf[0]
+            : in_ybuf[n_src - 1];
+        if ((src_sign & 0xf) < 012) {
+            fault_gen(illproc_fault);
+            return 1;
+        }
+    }
+    int src_neg = (src_sign & 0xf) == 015;
+#if 0
+    int dst_sign = (src_neg) ? 015
+        : (desc2.width() == 9) ? 013
+        : (src_sign) ? 013 : 014;
+#else
+    int dst_sign = (desc2.width() == 4)
+        ? (src_neg)
+            ? 015
+            : ((src_sign) ? 013 : 014)
+        : src_sign;
+#endif
+    int fill, sign_fill;
+    if (desc1.width() >= desc2.width())
+        fill = sign_fill = 0;
+    else {
+        fill = 0x30;    // ascii zero
+        sign_fill = 0x20;   // ascii space
+    }
+    int zero_char = (desc2.width() == 4) ? 0 : 0x30;    // asci zero
+
+    /*
+        If the scaling factors don't match, we'll either right shift
+        or left shift the source.  Vacated or created positions will
+        be filled with zeros.
+
+        We'll also right shift the source (e.g. pad the source with
+        leading zeros) if the destination has more bytes than the source.
+
+        When we copy digits to the destination, we do the following:
+            1) Send a leading sign byte if needed.
+            2) Send any leading zeros implied by a right shift.
+            3) Send as many of the source digits as will fit.  The
+               number of digits that will fit is defined as the size
+               of the destinaton minus bytes required by the other
+               four criteria here.
+            4) Send any trailing zeros implied by a left shift.
+            5) Send any trailing sign or exponent.
+
+        When not all of the source digits will fit in the destination:
+            Digits lost due to right shifting because of differing
+            scales represent loss of low order digits and result
+            in setting the truncation flag unless rounding.  AL39
+            doesn't mention whether truncating zeros should count
+            as truncation.
+            Other source digits that won't fit in the destinaton
+            represent an overflow.  Note that leading zeros in the
+            source are not counted in the source length for purposes
+            of the overflow check.
+    */
+
+    int inp = (desc1.s == 00 || desc1.s == 1) ? 1 : 0; // first non-sign byte
+    int n_src_lz = 0;   // number of leading zeros in source
+    for (int i = 0; i < n_src; ++i)
+        if ((in_ybuf[inp + i] & 0xf) == 0)
+            ++ n_src_lz;
+        else
+            break;
+    int n_src_val = n_src - n_src_lz;
+    inp += n_src_lz;
+
+    int sf1;
+    if (desc1.s == 0) {
+        if (desc1.width() == 4)
+            sf1 = (in_ybuf[n_src + 1] << 4) | in_ybuf[n_src + 2];
+        else
+            sf1 = in_ybuf[n_src + 1];
+    } else
+        sf1 = desc1.scaling_factor;
+    int sf2 = (desc2.s == 0) ? 0 : desc2.scaling_factor;
+    log_msg(DEBUG_MSG, moi, "Src has %s %d.\n",
+        (desc1.s == 0) ? "exponent" : "scaling factor", sf1);
+    log_msg(DEBUG_MSG, moi, "Dest has %s %d.\n",
+        (desc2.s == 0) ? "exponent" : "scaling factor", sf2);
+    int sf_diff = sf2 - sf1;
+    int n_rshift, n_lshift;
+    if (desc2.s == 0) {
+        // dest is float, so copy sf to exp
+        n_rshift = 0;
+        n_lshift = 0;
+        // exp has more bits than scale factor does, so no overflow on
+        // the exp here (but see below)
+        sf2 = sf1;
+        log_msg(DEBUG_MSG, moi, "Dest will have exponent %d.\n", sf2);
+    } else {
+        // dest is fixed scale, so shift
+        n_rshift = (sf_diff > 0) ? sf_diff : 0;
+        n_lshift = (sf_diff < 0) ? - sf_diff : 0;
+    }
+    log_msg(DEBUG_MSG, moi, "Left shift is %d; Right shift is %d\n",
+        n_lshift, n_rshift);
+
+    int n_dest_avail = n_dest - n_rshift;   // can't count leading must-be-zero
+    n_dest_avail -= n_lshift;   // can't count low zeros shifted in
+    log_msg(DEBUG_MSG, moi, "Src has %d significant digits.\n", n_src_val);
+    log_msg(DEBUG_MSG, moi, "Dst has %d digit bytes available.\n", n_dest_avail);
+    if (n_src_val < n_dest_avail) {
+        n_rshift += n_dest_avail - n_src_val;
+        n_dest_avail = n_src_val;
+        log_msg(DEBUG_MSG, moi, "Right shift (left lz pad) changed to %d\n", n_rshift);
+        log_msg(DEBUG_MSG, moi, "Dst now has %d digit bytes available.\n", n_dest_avail);
+    } else if (n_src_val > n_dest_avail) {
+        if (sf_diff < 0 || n_src_val - sf_diff > n_dest_avail) {
+            if (desc2.s == 0) {
+                // floating point -- drop least significant digits and bump exp
+                sf2 = sf1 + (n_src_val - n_dest_avail);
+                log_msg(DEBUG_MSG, moi, "Dest will have exponent %d.\n", sf2);
+            } else {
+                // fixed point and it doesn't fit
+                IR.overflow = 1;
+                fault_gen(overflow_fault);
+                return 1;
+            }
+        } // else will round or truncate below
+    }
+
+    // TODO: read/access dest chars here to avoid instr restart and
+    // resulting possibly incorrect overlapping string behavior
+    // actually, we should preserve input or rather output -- the
+    // interrupt handler could re-write our input
+
+    uint out_ybuf[64];          // ops can be up to 63 4-bit or 9-bit nibbles
+    int outp = 0;
+    if (desc2.s == 00 || desc2.s == 1) {
+        out_ybuf[outp++] = dst_sign | sign_fill;
+        log_msg(DEBUG_MSG, moi, "Send leading sign.\n");
+    }
+    for (int i = 0; i < n_dest; ++i) {
+        if (n_rshift > 0) {
+            -- n_rshift;
+            out_ybuf[outp] = zero_char;
+            log_msg(DEBUG_MSG, moi, "Send leading zero to position %d.\n", outp);
+            ++ outp;
+        } else if (n_dest_avail > 0) {
+            out_ybuf[outp++] = in_ybuf[inp ++] | fill;
+            log_msg(DEBUG_MSG, moi, "Send data byte %d from src position %d to dest pos %d\n",
+                out_ybuf[outp] & 0xf, inp - 1, outp - 1);
+        } else if (n_lshift > 0) {
+            -- n_lshift;
+            out_ybuf[outp++] = zero_char;
+            log_msg(DEBUG_MSG, moi, "Send trailing zero to positon %d.\n", outp - 1);
+        } else {
+            log_msg(ERR_MSG, moi, "Internal error, no work, outp=%d, n_dest=%d.\n", outp, n_dest);
+            cancel_run(STOP_BUG);
+        }
+    }
+
+    // Check for rounding or truncation
+    int head = (desc1.s == 00 || desc1.s == 1) ? 1 : 0;
+    int tail = head + n_src - 1;
+    if (inp > tail) {
+        if (inp != tail + 1) {
+            log_msg(ERR_MSG, moi, "Internal error, inp = %d, tail = %d\n", inp, tail);
+            cancel_run(STOP_BUG);
+        }
+        IR.truncation = 0;  // inp == tail + 1, consumed all source
+    } else {
+        // Unused source digits (we tested for overflow earlier, these
+        // are lost low digits).
+        log_msg(DEBUG_MSG, moi, "Checking src bytes %d .. %d for rounding or trunc.\n", head, tail);
+        if (rounding) {
+            if ((in_ybuf[inp] & 0xf) >= 5) {
+                int out_head = (desc2.s == 00 || desc1.s == 1) ? 1 : 0;
+                int p;
+                for (p = outp - 1; p >= out_head; --p) {
+                    if ((out_ybuf[p] & 0xf) == 9) {
+                        out_ybuf[p] = 0;
+                    } else {
+                        ++ out_ybuf[p];     // works even if filled.
+                        break;
+                    }
+                }
+                if (p < out_head) {
+                    // Found, for example, 99.5 => 100
+                    if (desc2.s == 0) {
+                        // Change, for example, 100*10^(x) ==> 10*10^(x+1)
+                        ++ out_ybuf[out_head];  // increment 0->1, preserve fill
+                        ++ sf2;
+                        log_msg(INFO_MSG, moi, "Floating point round yields one significant digit.\n");
+                    } else {
+                        IR.overflow = 1;
+                        fault_gen(overflow_fault);
+                        return 1;
+                    }
+                }
+            }
+            IR.truncation = 0;
+        } else {
+            int all_zero = 1;
+            for (int i = inp; inp <= tail; ++i) {
+                if ((in_ybuf[i] & 0xf) != 0) {
+                    all_zero = 0;
+                    break;
+                }
+            }
+            IR.truncation = ! all_zero;
+            if (IR.truncation && trunc_fe) {
+                fault_gen(overflow_fault);  // truncation
+                return 1;
+            }
+        }
+    }
+    if (desc2.s == 0) {
+        if (desc2.s == 0) {
+            if (sf2 < -128)
+                IR.exp_underflow = 1;
+            else if (sf2 > 127)
+                IR.exp_overflow = 1;
+            if (desc2.width() == 4) {
+                out_ybuf[outp++] = (sf2 >> 4) & 0xff;
+                out_ybuf[outp++] = sf2 & 0xff;
+                log_msg(DEBUG_MSG, moi, "Send two exponent nibbles.\n");
+            } else {
+                out_ybuf[outp++] = sf2 & 0x1ff;
+                log_msg(DEBUG_MSG, moi, "Send exponent byte.\n");
+            }
+        }
+    } else if (desc2.s == 2) {
+        out_ybuf[outp++] = dst_sign | sign_fill;
+        log_msg(DEBUG_MSG, moi, "Send trailing sign.\n");
+    }
+
+
+    // write output
+    outp = 0;
+    int first = 0;
+    int zero = 1;
+    int n_exp = (desc2.width() == 9) ? 1 : 2;
+    int ret = 0;
+    while (desc2.n() > 0) {
+        if (first && (desc2.s == 0 || desc2.s == 1)) {
+            // sign byte
+        } else if (desc2.s == 0 && desc2.n() <= n_exp) {
+            // exp byte(s)
+        } else {
+            if ((out_ybuf[outp] & 0xf) != 0)
+                zero = 0;
+        }
+        ret = desc2.put(out_ybuf[outp++]);
+        if (ret != 0)
+            break;
+        first = 0;
+    }
+    // write unsaved data (if any)
+    if (ret == 0)
+        if (desc2.flush() != 0)
+            return 1;
+
+    log_msg(DEBUG_MSG, moi, "Wrote %d bytes.\n", outp);
+
+    log_msg(INFO_MSG, moi, "After copy finishes: desc1: %s\n", desc1.to_text(msg_buf));
+    log_msg(INFO_MSG, moi, "After copy finishes: desc2: %s\n", desc2.to_text(msg_buf));
+
+#if 0
+    log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
+#else
+    ret = 1;
+    log_msg(WARN_MSG, moi, "Untested; auto breakpoint\n");
+#endif
+    cancel_run(STOP_IBKPT);
+
+    PPR.IC += 3;
+    return ret;
+}

@@ -163,9 +163,9 @@ ostream& stack_frame::print(ostream& out, int indent) const
     else {
         out << string(indent, ' ') << "Automatics:" << simh_nl;
         indent += 2;
-        for (map<int,string>::const_iterator it = automatics.begin(); it != automatics.end(); it++) {
+        for (map<int,var_info>::const_iterator it = automatics.begin(); it != automatics.end(); it++) {
             int offset = (*it).first;
-            const string& name = (*it).second;
+            const string& name = (*it).second.name;
             out << string(indent, ' ') << seg_offset_t(offset) << " " << name << simh_nl;
         }
     }

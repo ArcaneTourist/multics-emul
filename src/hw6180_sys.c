@@ -602,7 +602,7 @@ t_stat clk_svc(UNIT *up)
     // only valid for TR
     (void) sim_rtcn_calb (CLK_TR_HZ, TR_CLK);   // calibrate clock
     uint32 t = sim_is_active(&TR_clk_unit);
-    log_msg(INFO_MSG, "SYS::clock::service", "TR has %d time units left\n");
+    log_msg(INFO_MSG, "SYS::clock::service", "TR has %d time units left\n", t);
     return 0;
 }
 

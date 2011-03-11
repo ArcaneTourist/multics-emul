@@ -210,7 +210,7 @@ typedef struct {
     flag_t int_pending;
     int low_group;          // Lowest group-number fault preset
     uint32 group7;          // bitmask for multiple group 7 faults
-    int fault[6];           // only one fault in groups 1..6 can be pending
+    int fault[7];           // only one fault in groups 1..6 can be pending
     flag_t interrupts[32];
 } events_t;
 
@@ -623,6 +623,7 @@ extern void flush_logs(void);
 
 /* debug_run.cpp */
 extern void check_seg_debug(void);
+extern void state_invalidate_cache(void);
 extern void state_save(void);
 extern void state_dump_changes(void);
 extern void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic);
@@ -676,8 +677,10 @@ extern int op_cmpc(const instr_t* ip);
 extern int op_cmpb(const instr_t* ip);
 extern int op_csl(const instr_t* ip);
 extern int op_btd(const instr_t* ip);
+extern int op_dtb(const instr_t* ip);
 extern int op_scm(const instr_t* ip, int fwd);
 extern int op_mvne(const instr_t* ip);
+extern int op_mvn(const instr_t* ip);
 
 /* scu.c */
 extern int scu_cioc(t_uint64 addr);
@@ -755,6 +758,8 @@ extern void mt_init(void);
 
 /* console.c */
 extern void console_init(void);
+extern int opcon_autoinput_set(UNIT *uptr, int32 val, char *cptr, void *desc);
+extern int opcon_autoinput_show(FILE *st, UNIT *uptr, int val, void *desc);
 extern int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp);
 extern int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 

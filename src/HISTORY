@@ -454,7 +454,7 @@ History of pre-release versions
         Handle a DDCW tally of zero as 010000.  Updates to status returns.
     mt.c
         Add BSR (back space record).  No longer return an error when out of data.  Instead
-        return a 4000 all-clear which ootload_tape_label.alm seems to assume, but also
+        return a 4000 all-clear which bootload_tape_label.alm seems to assume, but also
         return an out-of-band non-zero status to the IOM to make it stop.
 
 === Pre-Version 45, Nov 16, 2008
@@ -680,15 +680,55 @@ History of pre-release versions
     opu.c
         Cleanup code for handling generation of bad its pointers
         Update to rsw, absa, long_right_shift()
-        
+=== Pre-Version 78, Nov 8, 2009
+=== Pre-Version 79, Nov 8, 2009
+=== Pre-Version 80, Nov 9, 2009
+=== Pre-Version 81, Nov 11, 2009
+=== Pre-Version 82, Nov 14, 2009
+=== Pre-Version 83, Nov 15, 2009
+=== Pre-Version 84, Nov 16, 2009
+=== Pre-Version 85, Nov 21, 2009
+=== Pre-Version 86, Nov 22, 2009
+=== Pre-Version 87, Nov 23, 2009
+=== Pre-Version 88, Nov 23, 2009
+=== Pre-Version 89, Dev 7, 2009
+=== Pre-Version 90, Dev 7, 2009
+=== Pre-Version 91, Dev 7, 2009
+=== Pre-Version 92, Dev 8, 2009
+=== Pre-Version 93, Dev 9, 2009
+=== Pre-Version 94, Dev 9, 2009
+=== Pre-Version 95, Dev 11, 2009
+=== Pre-Version 96, Dev 13, 2009
+=== Pre-Version 97, Dev 17, 2009
+=== Pre-Version 98, Dev 17, 2009
+=== Pre-Version 99, Dev 20, 2009
+=== Pre-Version 100, Dev 21, 2009
+=== Pre-Version 101, Dev 30, 2009
+=== Pre-Version 102, Dev 30, 2009
+=== Pre-Version 103, Jan 5, 2010
+=== Pre-Version 104, Jan 27, 2010
+=== Pre-Version 105, Feb 22, 2010
+    General
+        Fix to overflow indication on negation of max neg
+        Add opcodes negl, erx*
+        Floating point work: Add fdv and equalize mantissas in opcodes
+        dfcmp and fcmp
+=== Pre-Version 106, Jul 20, 2010
+    General
+        Cosmetic tweaks for new warnings from new compiler version
+=== Pre-Version 107, Mar 8, 2011
+    General
+        Verified that no extra symbol table info, e.g., for
+        automatics is loaded from tape.
+    General
+        Added auto-input capability for operator's console, to
+        allow ini file to specify interactive boot parms.  This
+        included an update to handling of device specific data
+        in the IOM.
+        Revamped tracking of the stack and its automative variables.
+        Added opcode mvn.  Fix to opcode btd.  Added opcode dtb.
+        Fix for IC handling after XED of EIS multi-word instruction.
+        Updated listing parser to do some type parsing of automatics.
+        Implemented opcodes ade, fszn, ste
 
-...
-    Was crashing with the following error
-        bootload_0: Booting system MR12.5 generated 01/11/93 0832.3 mst Mon.
-        0533>2  scas_init: Size too large on config card for MEM
-        0534>7  Multics not in operation; control process: Initializer.SysDaemon.z.
-    The computed size of main memory was 256.
-    The synthetic config deck has a card for 512. 
-    Turns out that rsw switches (but not rscr) *may* need to be set at b010 for 4MW memory size.  A setting of b111 means 256?
-    
 

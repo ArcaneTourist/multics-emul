@@ -1689,9 +1689,11 @@ static SDWAM_t* page_in_sdw()
             // or copied even though they're not being dereferenced.   We flag for
             // a held fault and don't actually generate the fault unless the
             // instruction attempts to dereference through the "bad" pointer.
-            cu.word1flags.oosb = 1;         // BUG: nothing clears
+            if (! fault_gen_no_fault)
+                cu.word1flags.oosb = 1;         // BUG: nothing clears
             log_msg(INFO_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault now pending.\n", cpup->DSBR.bound, cpup->DSBR.bound);
-            cpu.apu_state.fhld = 1;
+            if (! fault_gen_no_fault)
+                cpu.apu_state.fhld = 1;
             return NULL;
         }
         if(1) log_msg(DEBUG_MSG, "APU::append", "Fetching SDW for unpaged descriptor table from 0%o\n", cpup->DSBR.addr + 2 * segno);
@@ -1703,9 +1705,11 @@ static SDWAM_t* page_in_sdw()
             // See comments just above re legal usage of "bad" pointers
             // BUG 12/05/2008 -- bootload_1.alm, instr 17 triggers this (FIXED)
             log_msg(INFO_MSG, "APU::append", "Initial check: Segno outside paged DSBR bound of 0%o(%u) -- OOSB fault now pending.\n", cpup->DSBR.bound, cpup->DSBR.bound);
-            cu.word1flags.oosb = 1;         // ERROR: nothing clears
+            if (! fault_gen_no_fault)
+                cu.word1flags.oosb = 1;         // ERROR: nothing clears
             // fault_gen(acc_viol_fault);
-            cpu.apu_state.fhld = 1;
+            if (! fault_gen_no_fault)
+                cpu.apu_state.fhld = 1;
             // cancel_run(STOP_WARN);
             return NULL;
         }
@@ -1781,7 +1785,8 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp,
     }
     uint bound = 16 * (SDWp->sdw.bound + 1);
     if (offset >= bound) {
-        cu.word1flags.oosb = 1;         // ERROR: nothing clears
+        if (! fault_gen_no_fault)
+            cu.word1flags.oosb = 1;         // ERROR: nothing clears
         log_msg(NOTIFY_MSG, "APU::append", "SDW: Offset=0%o(%u), bound = 0%o(%u) -- OOSB fault\n", offset, offset, SDWp->sdw.bound, SDWp->sdw.bound);
         fault_gen(acc_viol_fault);
         return 1;
@@ -1944,7 +1949,7 @@ char* print_sdw(t_uint64 word0, t_uint64 word1)
 
 char *sdw2text(const SDW_t *sdwp)
 {
-    static char buf[100];
+    static char buf[500];
 #if 1
     uint bound = 16 * (sdwp->bound + 1);
     sprintf(buf, "[addr=0%o, r(123)=(0%o,0%o,0%o), f=%d, fc=%o; bound=0%o(%d)->%#o(%d), r=%d,e=%d,w=%d,p=%d,u=%d,g=%d,c=%d, cl=0%o]",

@@ -170,11 +170,15 @@ t_stat channel_svc(UNIT *up)
     channel_t *chanp = get_chan(chan);
     if (chanp == NULL)
         return SCPE_ARG;
-    chanp->have_status = 1;
-    chanp->status.major = chanp->devinfo.major;
-    chanp->status.substatus = chanp->devinfo.substatus;
-    chanp->status.rcount = chanp->devinfo.chan_data;
-    chanp->status.read = chanp->devinfo.is_read;
+    if (chanp->devinfop == NULL) {
+        log_msg(WARN_MSG, "IOM::channel-svc", "No context info for channel %d.\n", chan);
+    } else {
+        chanp->status.major = chanp->devinfop->major;
+        chanp->status.substatus = chanp->devinfop->substatus;
+        chanp->status.rcount = chanp->devinfop->chan_data;
+        chanp->status.read = chanp->devinfop->is_read;
+        chanp->have_status = 1;
+    }
     do_channel(chanp);
     return 0;
 }
@@ -206,9 +210,16 @@ void iom_init()
             chanp->status.chan = chan;  // BUG/TODO: remove this member
             chanp->unitp = NULL;
             chanp->state = chn_idle;
-            // DEVICEs ctxt pointers point at chanp->devinfo
-            chanp->devinfo.chan = chan;
-            chanp->devinfo.statep = NULL;
+            // DEVICEs ctxt pointers used to point at chanp->devinfo,
+            // but now both are ptrs to the same object so that either
+            // may do the allocation
+            if (chanp->devinfop == NULL) {
+                // chanp->devinfop = malloc(sizeof(*(chanp->devinfop)));
+            }
+            if (chanp->devinfop != NULL) {
+                chanp->devinfop->chan = chan;
+                chanp->devinfop->statep = NULL;
+            }
         }
     }
 }
@@ -445,13 +456,29 @@ static int activate_chan(int chan, pcw_t* pcwp)
         return 1;
     }
 
-    // Devices used by the IOM must have a ctxt with devinfo
+    // Devices used by the IOM must have a ctxt with devinfo.
     DEVICE* devp = iom.channels[chan].dev;
     if (devp != NULL) {
         chan_devinfo* devinfop = devp->ctxt;
         if (devinfop == NULL) {
-            devinfop = &chanp->devinfo;
+            // devinfop = &chanp->devinfo;
+            if (chanp->devinfop == NULL) {
+                devinfop = malloc(sizeof(*devinfop));
+                devinfop->chan = chan;
+                devinfop->statep = NULL;
+                chanp->devinfop = devinfop;
+            } else
+                if (chanp->devinfop->chan == -1) {
+                    chanp->devinfop->chan = chan;
+                    log_msg(NOTIFY_MSG, moi, "OPCON found on channel %#o\n", chan);
+                }
+            devinfop = chanp->devinfop;
             devp->ctxt = devinfop;
+        } else if (chanp->devinfop == NULL) {
+            chanp->devinfop = devinfop;
+        } else if (devinfop != chanp->devinfop) {
+            log_msg(ERR_MSG, moi, "Channel %u and device mismatch with %d and %d\n", chan, devinfop->chan, chanp->devinfop->chan);
+            cancel_run(STOP_BUG);
         }
     }
 
@@ -1140,7 +1167,13 @@ static int dev_send_idcw(int chan, pcw_t *p)
             return 1;
         case DEV_TAPE: {
             chan_devinfo* devinfop = devp->ctxt;
-            if (devinfop == NULL || devinfop->chan != p->chan) {
+            if (devinfop == NULL) {
+                devinfop = malloc(sizeof(*devinfop));
+                devp->ctxt = devinfop;
+                devinfop->chan = p->chan;
+                devinfop->statep = NULL;
+            }
+            if (devinfop->chan != p->chan) {
                 log_msg(ERR_MSG, moi, "Device on channel %#o (%d) has missing or bad context.\n", chan, chan);
                 cancel_run(STOP_BUG);
                 return 1;

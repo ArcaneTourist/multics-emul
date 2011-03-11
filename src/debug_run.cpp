@@ -50,10 +50,15 @@ static hist_t hist;
 static int seg_debug[n_segments];
 static int seg_debug_init_done = 0;
 
-static int stack_trace(void);
 static void print_src_loc(const char *prefix, addr_modes_t addr_mode, int segno, int ic, const instr_t* instrp);
 static void check_autos(int segno, int ic);
 static void dump_autos(void);
+static void out_auto(ostringstream& obuf, const var_info& v, int addr, int is_initialized);
+static void frame_trace(void);
+static int walk_stack(int output, list<seg_addr_t>* frame_listp);
+// static int push_frame(const seg_addr_t& framep, const linkage_info* lip);
+static int is_stack_frame(int segno, int offset);
+static int have_stack(void);
 
 //=============================================================================
 
@@ -63,6 +68,8 @@ static void init_seg_debug()
     seg_debug_init_done = 1;
 }
 
+
+//=============================================================================
 
 void check_seg_debug()
 {
@@ -102,6 +109,9 @@ void state_save()
     histp->cu.PT_ON = cu.PT_ON;
     memcpy(histp->cpu.SDWAM, cpup->SDWAM, sizeof(histp->cpu.SDWAM));
     memcpy(histp->cpu.PTWAM, cpup->PTWAM, sizeof(histp->cpu.PTWAM));
+
+    if (memcmp(hist.AR_PR + 6, AR_PR + 6, sizeof(*hist.AR_PR)) != 0 || ! have_stack())
+        state_invalidate_cache();
 }
 
 //=============================================================================
@@ -565,6 +575,7 @@ static int stack_to_entry(unsigned abs_addr, AR_PR_t* prp)
     return words2its(M[abs_addr+026], M[abs_addr+027], prp);
 }
 
+#if 0
 static int stack_to_entry(int segno, unsigned offset, AR_PR_t* prp)
 {
     // See description above
@@ -576,11 +587,24 @@ static int stack_to_entry(int segno, unsigned offset, AR_PR_t* prp)
     }
     return stack_to_entry(framep, prp);
 }
+#endif
 
-
-static void print_frame(int seg, int offset, int addr)
+#if 0
+static int stack_to_entry(const seg_addr_t& addr, AR_PR_t* prp)
 {
-    // Print a single stack frame for stack_trace()
+    return stack_to_entry(addr.segno, addr.offset, prp);
+}
+#endif
+
+//=============================================================================
+
+static void print_frame(
+    int seg,        // Segment portion of frame pointer address.
+    int offset,     // Offset portion of frame pointer address.
+    int addr)       // 24-bit address corresponding to above seg|offset
+{
+    // Print a single stack frame for walk_stack()
+    // Frame pointers can be found in PR[6] or by walking a process's stack segment
 
     AR_PR_t entry_pr;
     out_msg("stack trace: ");
@@ -609,7 +633,8 @@ static void print_frame(int seg, int offset, int addr)
 
 int cmd_stack_trace(int32 arg, char *buf)
 {
-    stack_trace();
+    walk_stack(1, NULL);
+    frame_trace();
     out_msg("stack trace:\n");
     dump_autos();
     out_msg("\n");
@@ -623,17 +648,25 @@ int cmd_stack_trace(int32 arg, char *buf)
 
 //=============================================================================
 
-static int stack_trace(void)
+static int walk_stack(int output, list<seg_addr_t>* frame_listp)
     // Trace through the Multics stack frames
     // See stack_header.incl.pl1 and http://www.multicians.org/exec-env.html
 {
+    const char* moi = "STACK::walk";
+
+    if (AR_PR[6].PR.snr == 077777 || (AR_PR[6].PR.snr == 0 && AR_PR[6].wordno == 0)) {
+        log_msg(INFO_MSG, moi, "Null PR[6]\n");
+        return 1;
+    }
+
     // PR6 should point to the current stack frame.  That stack frame
     // should be within the stack segment.
     int seg = AR_PR[6].PR.snr;
 
     uint curr_frame;
     if (convert_address(&curr_frame, seg, AR_PR[6].wordno, 0) != 0) {
-        out_msg("STACK: Cannot convert pr6 to absolute memory address.\n");
+        log_msg(INFO_MSG, moi, "Cannot convert PR[6] == %#o|%#o to absolute memory address.\n",
+            AR_PR[6].PR.snr, AR_PR[6].wordno);
         return 1;
     }
 
@@ -641,31 +674,37 @@ static int stack_trace(void)
     int offset = 0;
     uint hdr_addr;  // 24bit main memory address
     if (convert_address(&hdr_addr, seg, offset, 0) != 0) {
-        out_msg("Stack Trace: Cannot convert %03o|0 to absolute memory address.\n", seg);
+        log_msg(INFO_MSG, moi, "Cannot convert %03o|0 to absolute memory address.\n", seg);
         return 1;
     }
     AR_PR_t stack_begin_pr;
     if (words2its(M[hdr_addr+022], M[hdr_addr+023], &stack_begin_pr) != 0) {
-        out_msg("Stack Trace: Stack header seems invalid; no stack_begin_ptr at %03o|22\n", seg);
+        log_msg(INFO_MSG, moi, "Stack header seems invalid; no stack_begin_ptr at %03o|22\n", seg);
+        if (output)
+            out_msg("Stack Trace: Stack header seems invalid; no stack_begin_ptr at %03o|22\n", seg);
         return 1;
     }
     AR_PR_t stack_end_pr;
     if (words2its(M[hdr_addr+024], M[hdr_addr+025], &stack_end_pr) != 0) {
-        out_msg("Stack Trace: Stack header seems invalid; no stack_end_ptr at %03o|24\n", seg);
+        //if (output)
+            out_msg("Stack Trace: Stack header seems invalid; no stack_end_ptr at %03o|24\n", seg);
         return 1;
     }
     if (stack_begin_pr.PR.snr != seg || stack_end_pr.PR.snr != seg) {
-        out_msg("Stack Trace: Stack header seems invalid; stack frames are in another segment.\n");
+        //if (output)
+            out_msg("Stack Trace: Stack header seems invalid; stack frames are in another segment.\n");
         return 1;
     }
     AR_PR_t lot_pr;
     if (words2its(M[hdr_addr+026], M[hdr_addr+027], &lot_pr) != 0) {
-        out_msg("Stack Trace: Stack header seems invalid; no LOT ptr at %03o|26\n", seg);
+        //if (output)
+            out_msg("Stack Trace: Stack header seems invalid; no LOT ptr at %03o|26\n", seg);
         return 1;
     }
     // TODO: sanity check LOT ptr
 
-    out_msg("Stack Trace:\n");
+    if (output)
+        out_msg("Stack Trace:\n");
     int framep = stack_begin_pr.wordno;
     int prev = 0;
     int finished = 0;
@@ -680,7 +719,8 @@ static int stack_trace(void)
         if (convert_address(&addr, seg, framep, 0) != 0) {
             if (finished)
                 break;  
-            out_msg("STACK Trace: Cannot convert address of frame %03o|%06o to absolute memory address.\n", seg, framep);
+            //if (output)
+                out_msg("STACK Trace: Cannot convert address of frame %03o|%06o to absolute memory address.\n", seg, framep);
             return 1;
         }
         // Sanity check
@@ -688,7 +728,8 @@ static int stack_trace(void)
             AR_PR_t prev_pr;
             if (words2its(M[addr+020], M[addr+021], &prev_pr) == 0) {
                 if (prev_pr.wordno != prev) {
-                    out_msg("STACK Trace: Stack frame's prior ptr, %03o|%o is bad.\n", seg, prev_pr.wordno);
+                    if (output)
+                        out_msg("STACK Trace: Stack frame's prior ptr, %03o|%o is bad.\n", seg, prev_pr.wordno);
                 }
             }
         }
@@ -703,16 +744,21 @@ static int stack_trace(void)
             out_msg("Recently popped frames (aka where we recently returned from):\n");
         }
 #endif
-        print_frame(seg, framep, addr);
+        if (output)
+            print_frame(seg, framep, addr);
+        if (frame_listp)
+            (*frame_listp).push_back(seg_addr_t(seg, framep));
         // Get the next one
         AR_PR_t next;
         if (words2its(M[addr+022], M[addr+023], &next) != 0) {
             if (!finished)
-                out_msg("STACK Trace: no next frame.\n");
+                if (output)
+                    out_msg("STACK Trace: no next frame.\n");
             break;
         }
         if (next.PR.snr != seg) {
-            out_msg("STACK Trace: next frame is in a different segment (next is in %03o not %03o.\n", next.PR.snr, seg);
+            if (output)
+                out_msg("STACK Trace: next frame is in a different segment (next is in %03o not %03o.\n", next.PR.snr, seg);
             break;
         }
         if (next.wordno == stack_end_pr.wordno) {
@@ -727,11 +773,14 @@ static int stack_trace(void)
         }
         if (next.wordno < stack_begin_pr.wordno || next.wordno > stack_end_pr.wordno) {
             if (!finished)
-                out_msg("STACK Trace: DEBUG: next frame is outside the expected range for stack frames.\n");
+                //if (output)
+                    out_msg("STACK Trace: DEBUG: next frame at %#o is outside the expected range of %#o .. %#o for stack frames.\n", next.wordno, stack_begin_pr.wordno, stack_end_pr.wordno);
+            if (! output)
+                return 1;
         }
 
         // Use the return ptr in the current frame to print the source line.
-        if (! finished) {
+        if (! finished && output) {
             AR_PR_t return_pr;
             if (words2its(M[addr+024], M[addr+025], &return_pr) == 0) {
                 where_t where;
@@ -766,85 +815,386 @@ static int stack_trace(void)
         framep = next.wordno;
     }
 
-    out_msg("stack trace: ");
-    out_msg("Current Location:\n");
-    out_msg("stack trace: ");
-    print_src_loc("\t", get_addr_mode(), PPR.PSR, PPR.IC, &cu.IR);
+    if (output) {
+        out_msg("stack trace: ");
+        out_msg("Current Location:\n");
+        out_msg("stack trace: ");
+        print_src_loc("\t", get_addr_mode(), PPR.PSR, PPR.IC, &cu.IR);
 
-    log_any_io(0);      // Output of source/location info doesn't count towards requiring re-display of source
+        log_any_io(0);      // Output of source/location info doesn't count towards requiring re-display of source
+    }
 
     return 0;
 }
 
 //=============================================================================
 
+// option: instead of doing change detection, register breakpoint/callback
+
 class multics_stack_frame {
 public:
-    enum change_t { uninitialized, unchanged, initial_change, changed };
+    typedef enum { uninitialized, unchanged, initial_change, changed } change_t;
     class val_t {
+        // Values of automatics in this frame; see the entry() for names and offsets
         private:
             int _initialized;   // constructor sets _initialized to false, but
             t_uint64 _val;      // also sets _val to a copy of what's in memory
         public:
             val_t(t_uint64 v) { _val = v; _initialized = 0; }
             int is_initialized() const { return _initialized; }
-            t_uint64 val() { if (!_initialized) throw logic_error("unitialized"); return _val; }
+            t_uint64 val() { if (!_initialized) throw logic_error("uninitialized"); return _val; }
             change_t change(t_uint64 currval);
     };
 private:
-    seg_addr_t ptr;
-    int _addr;                  // 24-bit absolute address corresponding to ptr
-    const entry_point& _owner;
+    int _segno;                 // Segno of stack segment (from PR[6])
+    int _offset;                // offset of this frame within segno (from PR[6])
+    int _addr;                  // 24-bit absolute address corresponding to above SP|offset
+    const linkage_info* _linkage;   // Needed for entry_point with names of automatic variables, etc
+    map <int, val_t> vals;      // Values of automatics w/o names; Key is stack offset
     int _all_initialized;
-    map <int, val_t> vals;  // Key is stack offset
     int _refresh_all(int first);
 public:
+    // Iterators for values of automatics
     map<int, val_t>::iterator begin() { return vals.begin(); }
     map<int, val_t>::iterator end() { return vals.end(); }
 public:
-    multics_stack_frame(int segno, int offset, entry_point& e);
+    multics_stack_frame(int segno, int offset);
+    void set_linkage(const linkage_info* lip);
+    int offset() const { return _offset; }
     int addr();
     int addr() const;
-    const int size() const { return vals.size(); }
-    int operator == (const seg_addr_t& x) const  { return x == ptr; }
-    const entry_point& owner() const { return _owner; }
+    const int size() const
+        { return vals.size(); }
+    const linkage_info* linkage() const
+        { return _linkage; }
+    const entry_point* entry() const
+        { return (_linkage) ? _linkage->entry : NULL; }
+public:
+    void update_autos(int segno, int ic);   // checks & records changes to automatics in this frame
+    void dump_autos() const;
+#if 1
+    void show(int all=1) const {};
+#else
+    void show(int all=1);   // debugging
+private:
+    class debug_t {
+        public:
+        seg_addr_t prev_sp; // at 020
+        seg_addr_t next_sp; // at 022
+        seg_addr_t returnp; // at 024
+        seg_addr_t entry;   // at 026
+        debug_t()
+            : prev_sp(0,0), next_sp(0,0), returnp(0,0), entry(0,0) {}
+    };
+    debug_t debug;
+#endif
 };
 
-static list<multics_stack_frame> multics_stack;
-static multics_stack_frame* find_frame(int segno, int ic);
-static void update_autos(int segno, int ic,  multics_stack_frame& msf);
-static void dump_autos(multics_stack_frame& msf);
+
+class multics_stack {
+private:
+    int _segno;             // stack frame segno (from PR[6])
+    list<multics_stack_frame> _frames;
+    class partial {
+        public:
+        // Info about the latest partially discovered frame
+        int finished;       // Have we finished finding out about the new frame yet?
+        seg_addr_t bumper;  // PTR to instruction that bumped PR[6]
+        seg_addr_t entryp;  // Value of entryp in frame at time of stack bump
+        partial()
+            : finished(0), bumper(0,0), entryp(0,0) {}
+    } partial;
+public:
+    multics_stack(int segno);
+    int segno() const { return _segno; }
+public:
+    // Frames
+    int size() const { return _frames.size(); }
+    int push(); // push(int offset, const linkage_info* lip);
+    int pop();
+    const list<multics_stack_frame>& frames() const
+        { return _frames; }
+    list<multics_stack_frame>::iterator begin()
+        { return _frames.begin(); }
+    list<multics_stack_frame>::iterator end()
+        { return _frames.end(); }
+    multics_stack_frame& back()
+        { return _frames.back(); }
+public:
+    int change();           // adjust stack to match observed PR[6]
+    void check_frame();     // see if a new under-construction frame has info we need
+    int is_in_frame(int segno, int offset); // returns true if given IC is within top frame's entry
+    int unfinished() const { return ! partial.finished; }
+};
+
+
+static multics_stack* m_stackp = NULL;
 
 //=============================================================================
 
-// option: instead of doing change detection, register breakpoint/callback
-
-multics_stack_frame::multics_stack_frame(int segno, int offset, entry_point& e)
-    : ptr(segno,offset), _owner(e)
+multics_stack::multics_stack(int segno)
+    : _segno(segno)
 {
+    log_msg(NOTIFY_MSG, "STACK", "Multics procedure stack now live.\n");
+}
+
+//=============================================================================
+
+// TODO: rename
+void state_invalidate_cache()
+{
+    if (AR_PR[6].PR.snr == 077777 || AR_PR[6].wordno == 0)
+        return;
+
+    if (m_stackp == NULL) {
+        // log_msg(INFO_MSG, "STACK::invalidate", "Checking frame %#o|%#o.\n", AR_PR[6].PR.snr, AR_PR[6].wordno);
+        if (is_stack_frame(AR_PR[6].PR.snr, AR_PR[6].wordno)) {
+            log_msg(NOTIFY_MSG, "STACK::invalidate", "Initializing stack with %#o|%#o.\n",
+                AR_PR[6].PR.snr, AR_PR[6].wordno);
+            m_stackp = new multics_stack(AR_PR[6].PR.snr);
+            m_stackp->change();
+            // cancel_run(STOP_IBKPT);
+        } else {
+            // log_msg(NOTIFY_MSG, "STACK::invalidate", "No stack and PR[6] does not appear to point to a frame.\n");
+        }
+    } else {
+        m_stackp->change();
+    }
+}
+
+//=============================================================================
+
+static int have_stack()
+{
+    return m_stackp != NULL && m_stackp->size() != 0;
+}
+
+//=============================================================================
+
+#if 0
+static int its2pr(uint addr, seg_addr_t& a)
+{
+    AR_PR_t pr;
+    if (words2its(M[addr], M[addr+1], &pr) == 0) {
+        a = seg_addr_t(pr.PR.snr, pr.wordno);
+        return 0;
+    } else
+        return 1;
+}
+#endif
+
+static char* its2text(uint addr)
+{
+    AR_PR_t pr;
+    static char buf[80];
+    if (words2its(M[addr], M[addr+1], &pr) == 0) {
+        sprintf(buf, "%#o|%#o", pr.PR.snr, pr.wordno);
+    } else {
+        sprintf(buf, "{ %#llo, %#llo }", M[addr], M[addr+1]);
+    }
+    return buf;
+}
+
+
+static int is_stack_frame(int segno, int offset)
+{
+    const char* moi = "STACK::is_stack";
+
+    if (segno == 077777)
+        return 0;
+    if (offset == 0)
+        return 0;   // stack header starts at zero; frames are after that
+
+    uint hdr_addr;
+    if (convert_address(&hdr_addr, segno, 0, 0) != 0)
+        return 0;
+
+    AR_PR_t pr;
+    if (words2its(M[hdr_addr+026], M[hdr_addr+027], &pr) != 0) {
+        // log_msg(INFO_MSG, moi, "Segment %#o does not have a valid header; no LOT ptr at offset 26.\n", segno);
+        return 0;
+    }
+    if (pr.PR.snr != 015) {
+        // log_msg(INFO_MSG, moi, "Segment %#o does not have a valid header; LOT ptr is not in segment 015.\n");
+        return 0;
+    }
+    if (words2its(M[hdr_addr+022], M[hdr_addr+023], &pr) != 0) {
+        // log_msg(INFO_MSG, moi, "Segment %#o does not have a valid header; no frame ptr at offset 22.\n", segno);
+        return 0;
+    }
+    if (pr.PR.snr != segno) {
+        log_msg(INFO_MSG, moi, "Segment %#o does not have a valid header; first frame ptr is outside the segment.\n", segno);
+        return 0;
+    }
+    log_msg(INFO_MSG, moi, "Offset(020): null ptr %s\n", its2text(hdr_addr+020));
+    log_msg(INFO_MSG, moi, "Offset(022): stack begin %s\n", its2text(hdr_addr+022));
+    log_msg(INFO_MSG, moi, "Offset(024): stack end %s\n", its2text(hdr_addr+024));
+    log_msg(INFO_MSG, moi, "Offset(026): lot ptr %s\n", its2text(hdr_addr+026));
+
+    uint addr;
+    if (convert_address(&addr, segno, offset, 0) != 0)
+        return 0;
+
+    return 1;
+}
+
+//=============================================================================
+
+static void frame_trace()
+{
+    if (m_stackp == NULL) {
+        out_msg("No stack.\n");
+        return;
+    }
+    out_msg("trace of PR[6] stack history (%d entries):\n", m_stackp->size());
+
+    list<multics_stack_frame>::const_iterator stackp;
+    for (stackp = m_stackp->begin(); stackp != m_stackp->end(); ++ stackp) {
+        const multics_stack_frame& msf = (*stackp);
+        out_msg("\t%06o:  ", msf.offset());
+        if (msf.linkage()) {
+            if (msf.entry())
+                if (msf.linkage()->name != msf.entry()->name) {
+                    // should be impossible
+                    out_msg("%s -> ", msf.linkage()->name.c_str(), msf.entry()->name.c_str());
+                } else
+                    out_msg("%s", msf.linkage()->name.c_str());
+            else
+                out_msg("%s", msf.linkage()->name.c_str());
+        } else
+            out_msg("unknown procedure");
+        if (msf.entry() != NULL && msf.entry()->stack_owner != NULL)
+            out_msg(" (stack owner %s)", (msf.entry()->stack_owner->name).c_str());
+        out_msg("\n");
+    }
+
+}
+
+//=============================================================================
+
+multics_stack_frame::multics_stack_frame(int segno, int offset)
+        : _segno(segno), _offset(offset), _linkage(NULL)
+{
+
+    // log_msg(INFO_MSG, "STACK::frame::init", "Creating frame for offset = %#o\n", offset);
+
     // WARNING -- we assume our stack never gets relocated to a different absolute address
     _addr = -1;
     _all_initialized = 0;
 
-    const stack_frame* sfp = _owner.stack();
-    if (sfp == NULL)
-        throw logic_error("multics_stack_frame: entry has no stack info\n");
     if (addr() == -1)
         return;
-    map<int,val_t>::iterator it = vals.end();
-    for (map<int,string>::const_iterator autos_it = sfp->automatics.begin(); autos_it != sfp->automatics.end(); ++ autos_it) {
-        int soffset = (*autos_it).first;
-        t_uint64 curr = M[_addr+soffset];
-        it = vals.insert(it, pair<int,val_t>(soffset, val_t(curr)));
+#if 0
+    memset(&debug, 0, sizeof(debug));
+    (void) its2pr(_addr + 020, debug.prev_sp);
+    (void) its2pr(_addr + 022, debug.next_sp);
+    (void) its2pr(_addr + 024, debug.returnp);
+    (void) its2pr(_addr + 026, debug.entry);
+#endif
+    show(1);
+}
+
+//=============================================================================
+
+void multics_stack_frame::set_linkage(const linkage_info* lip)
+{
+    const char* moi = "STACK::frame::set";
+    vals.clear();
+    _all_initialized = 0;
+
+    if (lip == NULL)
+        return;
+    _linkage = lip;
+
+    log_msg(INFO_MSG, moi, "Frame %#o: li owner is %s\n", _offset, _linkage->name.c_str());
+
+    if (entry() == NULL)
+        return;
+
+    // We loaded a source listing for this entry point
+
+    if (_linkage->name != entry()->name)
+        log_msg(WARN_MSG, moi, "Linkage %s name does not match entry name %s\n",
+            _linkage->name.c_str(), entry()->name.c_str());
+
+    const stack_frame* sfp = entry()->stack();
+    if (sfp) {
+        map<int,val_t>::iterator it = vals.end();
+        for (map<int,var_info>::const_iterator autos_it = sfp->automatics.begin(); autos_it != sfp->automatics.end(); ++ autos_it) {
+            int soffset = (*autos_it).first;
+            t_uint64 curr = M[_addr+soffset];
+            it = vals.insert(it, pair<int,val_t>(soffset, val_t(curr)));
+        }
+    } else {
+        // We loaded entry point info from a source listing, but
+        // didn't get any info re automatics in the stack
     }
 }
+
+//=============================================================================
+
+#if 0
+void multics_stack_frame::show(int all)
+{
+    (void) addr();
+
+    seg_addr_t prev_sp(0,0);
+    seg_addr_t next_sp(0,0);
+    seg_addr_t returnp(0,0);
+    seg_addr_t entry(0,0);
+    (void) its2pr(_addr + 020, prev_sp);
+    (void) its2pr(_addr + 022, next_sp);
+    (void) its2pr(_addr + 024, returnp);
+    (void) its2pr(_addr + 026, entry);
+
+    int hdr = 0;
+    if (all) {
+        if (!hdr) log_msg(INFO_MSG, "STACK::frame", "Frame at SP offset %06o (%08o absolute):\n", _offset, _addr);
+        hdr = 1;
+    }
+
+    if (all || prev_sp != debug.prev_sp) {
+        if (!hdr) log_msg(INFO_MSG, "STACK::frame", "Frame at SP offset %06o (%08o absolute):\n", _offset, _addr);
+        if (!hdr) cancel_run(STOP_IBKPT);
+        hdr = 1;
+        log_msg(INFO_MSG, "STACK::frame", "offset 020: prev_sp: %s\n",    its2text(_addr+020));
+        debug.prev_sp = prev_sp;
+    }
+
+    if (all || next_sp != debug.next_sp) {
+        if (!hdr) log_msg(INFO_MSG, "STACK::frame", "Frame at SP offset %06o (%08o absolute):\n", _offset, _addr);
+        if (!hdr) cancel_run(STOP_IBKPT);
+        hdr = 1;
+        log_msg(INFO_MSG, "STACK::frame", "offset 022: next_sp: %s\n",    its2text(_addr+022));
+        debug.next_sp = next_sp;
+    }
+
+    if (all || returnp != debug.returnp) {
+        if (!hdr) log_msg(INFO_MSG, "STACK::frame", "Frame at SP offset %06o (%08o absolute):\n", _offset, _addr);
+        if (!hdr) cancel_run(STOP_IBKPT);
+        hdr = 1;
+        log_msg(INFO_MSG, "STACK::frame", "offset 024: return_ptr: %s\n", its2text(_addr+024));
+        debug.returnp = returnp;
+    }
+
+    if (all || entry != debug.entry) {
+        if (!hdr) log_msg(INFO_MSG, "STACK::frame", "Frame at SP offset %06o (%08o absolute):\n", _offset, _addr);
+        if (!hdr) cancel_run(STOP_IBKPT);
+        hdr = 1;
+        log_msg(INFO_MSG, "STACK::frame", "offset 026: entry_ptr: %s\n",  its2text(_addr+026));
+        debug.entry = entry;
+    }
+}
+#endif
+
+//=============================================================================
 
 int multics_stack_frame::addr() const
 {
     if (_addr != -1)
         return _addr;
     uint a;
-    if (convert_address(&a, ptr.segno, ptr.offset, 0) == 0)
+    if (convert_address(&a, _segno, _offset, 0) == 0)
         return a;
     return -1;
 }
@@ -853,12 +1203,180 @@ int multics_stack_frame::addr()
 {
     if (_addr == -1) {
         uint a;
-        if (convert_address(&a, ptr.segno, ptr.offset, 0) == 0)
+        if (convert_address(&a, _segno, _offset, 0) == 0)
             _addr = a;
     }
     return _addr;
 }
 
+//=============================================================================
+
+int multics_stack::change()
+{
+    // adjust stack to match observed PR[6]
+
+    if (AR_PR[6].PR.snr != _segno) {
+        log_msg(NOTIFY_MSG, "STACK::change", "Internal error, PR[6] is seg %#o, but stack seg is %#o.\n", AR_PR[6].PR.snr, _segno);
+        return 1;
+    }
+    int offset = AR_PR[6].wordno;
+
+    int npop;
+    for (npop = 0; size() > 0 && back().offset() > offset; ++npop)
+        pop();
+    if (npop > 1)
+        log_msg(WARN_MSG, "STACK::change", "Popped %d frames.\n", npop);
+    else
+        if (npop == 1)
+            log_msg(INFO_MSG, "STACK::change", "Popped a frame.\n");
+
+    // if (npop > 0) cancel_run(STOP_IBKPT);
+    if (size() == 0) {
+        log_msg(INFO_MSG, "STACK::change", "Pushing inital frame.\n");
+        return push();
+    }
+    if (back().offset() == offset) {
+        if (! partial.finished)
+            check_frame();
+        back().show(0);
+        return 0;
+    }
+    log_msg(INFO_MSG, "STACK::change", "Pushing new frame.\n");
+    return push();
+}
+
+//=============================================================================
+
+int multics_stack::pop()
+{
+    _frames.pop_back();
+    return 0;
+}
+
+//=============================================================================
+
+int multics_stack::push()
+{
+    if (AR_PR[6].PR.snr != _segno) {
+        log_msg(INFO_MSG, "STACK", "Internal error, line %d\n", __LINE__);
+        return 1;
+    }
+    int sp_offset = AR_PR[6].wordno;
+
+    // Find linkage
+    // Problem:
+    // When the SP is bumped, we're probably executing in pl1_operators_$entry_operators, not
+    // in the caller or the callee.  Also, the entry_ptr probably hasn't been written into the
+    // frame yet.  Our choices are to "know" that the entry pointer is in PR[2] or to wait
+    // for later instructions to either update entry_ptr or to move well past the location
+    // where the SP was bumped.  We'll do the later.
+
+    // const linkage_info *lip = NULL;
+    _frames.push_back(multics_stack_frame(_segno, sp_offset));
+    partial.finished = 0;
+    partial.bumper = seg_addr_t(PPR.PSR, PPR.IC);
+    AR_PR_t ep;
+    if (stack_to_entry(back().addr(), &ep) == 0)
+        partial.entryp = seg_addr_t(ep.PR.snr, ep.wordno);
+    // cancel_run(STOP_IBKPT);
+    return 0;
+}
+
+//=============================================================================
+
+// Check to see if entrypoint info has been added to what was last seen to be
+// a partially constructed frame 
+
+void multics_stack::check_frame()
+{
+    const char* moi = "STACK::check_frame";
+
+    if (size() == 0)
+        return;
+    if (partial.finished)
+        return;
+
+    // Get runtime entry-point offset from stack frame
+    multics_stack_frame &msf = back();
+    int addr = msf.addr();
+    if (addr < 0) {
+        log_msg(INFO_MSG, "STACK::push", "Cannot convert frame %#o|%#o to absolute memory location.\n", _segno, msf.offset());
+        return;
+    }
+    AR_PR_t entryp;
+    if (stack_to_entry(addr, &entryp) != 0) {
+        log_msg(INFO_MSG, "STACK::push", "Frame %#o|%#o seems bad -- no entry point.\n", _segno, msf.offset());
+        return;
+    }
+    seg_addr_t entry_pr(entryp.PR.snr, entryp.wordno);
+
+    int ic_diff = ((unsigned) partial.bumper.segno != PPR.PSR);
+    if (! ic_diff) {
+        int delta = (partial.bumper.offset > PPR.IC) ? PPR.IC - partial.bumper.offset
+            : partial.bumper.offset - PPR.IC;
+        ic_diff = delta > 20;
+    }
+    if (entry_pr != partial.entryp) {
+        if (ic_diff)
+            log_msg(INFO_MSG, moi, "Entryp changed and IC jump seen.\n");
+        else
+            log_msg(INFO_MSG, moi, "Entryp changed.\n");
+    } else
+        if (ic_diff)
+            log_msg(INFO_MSG, moi, "IC jump seen, prior entryp must have still been good.\n");
+        else {
+            // nothing interesting has happened
+            return;
+        }
+
+    // Find linkage, if available
+
+    partial.finished = 1;
+
+    // Lookup entry-point's offset in symbol table
+    const seginfo& seg = segments(entry_pr.segno);
+    map<int,linkage_info>::const_iterator li_it = seg.find_entry(entry_pr.offset);
+    if (li_it != seg.linkage.end()) {
+        const linkage_info* lip = &(*li_it).second;
+        log_msg(INFO_MSG, moi, "Frame discovered to have entry ptr %s to %s.\n",
+            string(entry_pr).c_str(), lip->name.c_str());
+        msf.set_linkage(lip);
+    } else
+        log_msg(INFO_MSG, moi, "Frame discovered to have entry ptr %s to unknown procedure.\n",
+            string(entry_pr).c_str());
+
+    // cancel_run(STOP_IBKPT);
+}
+
+//=============================================================================
+
+int multics_stack::is_in_frame(int segno, int offset)
+    // Returns true if given IC is within top frame's entry
+    // Given IC should be current or prior instruction
+{
+    if (size() == 0)
+        return 0;
+
+    if (! partial.finished)
+        check_frame();
+
+    const multics_stack_frame& msf = back();
+    const entry_point* epp = msf.entry();
+    if (epp == NULL)
+        return 0;
+    const linkage_info *lip;
+    if (epp->last > 0) {
+        const linkage_info* lip = msf.linkage();
+        return lip->offset <= offset && offset <= lip->offset + epp->last;
+    } else {
+        // Lookup current IC in symbol table
+        const seginfo& seg = segments(segno);
+        map<int,linkage_info>::const_iterator li_it = seg.find_entry(offset);
+        return (li_it != seg.linkage.end());
+    }
+}
+
+//=============================================================================
 
 multics_stack_frame::change_t multics_stack_frame::val_t::change(t_uint64 curr_val)
     // Update the current value (if changed) and report status
@@ -866,7 +1384,6 @@ multics_stack_frame::change_t multics_stack_frame::val_t::change(t_uint64 curr_v
     // Note that the constructor sets _initialized to false, but also sets _val
     // to a copy of what's in memory.
 
-    
     if (_val == curr_val)
         return (_initialized) ? unchanged : uninitialized;
     else {
@@ -879,179 +1396,140 @@ multics_stack_frame::change_t multics_stack_frame::val_t::change(t_uint64 curr_v
 
 //=============================================================================
 
-static int push_frame(int segno, int ic, const seginfo& seg)
-{
-    const char* moi = "STACK::push";
-    // BUG/TODO: Caller should know the entry and pass it to us (and not call us if the segment
-    // doesn't have stack info).
-
-    if (seg.empty()) {
-        cerr << "Impossible at line " << dec << __LINE__ << ": given segment is empty." << simh_endl;
-        return -1;
-    }
-
-    // Find entry point corresponding to IC
-    map<int,linkage_info>::const_iterator li_it = seg.find_entry(ic);
-    if (li_it == seg.linkage.end())
-        return -1;
-    const linkage_info& li = (*li_it).second;
-    if (li.entry == NULL) {
-        // Nothing loaded via "xlist" command
-        return -1;
-    }
-
-    // Find our stack description
-    stack_frame *sfp = li.entry->stack();
-    if (sfp == NULL) {
-        // We didn't get a source listing that provided stack info
-        // BUG: temp msg
-            int stack_segno = AR_PR[6].PR.snr;  // TODO: add a constructor for AR_PR_t?
-            int stack_offset = AR_PR[6].wordno;
-        log_msg(INFO_MSG, moi, "Cannot push frame for SP %o|%o -- Address %03o|%06o is for linkage entry %s; No stack info.\n",
-            stack_segno, stack_offset,
-            segno, ic, li.name.c_str());
-        // BUG: example: "bce_error$com_err" entry uses frame for "bce_error"
-        return -1;
-    }
-
-    // Check to see that entry point listed in the frame matches our expectation
-
-    int stack_segno = AR_PR[6].PR.snr;  // TODO: add a constructor for AR_PR_t?
-    int stack_offset = AR_PR[6].wordno;
-
-    if (stack_segno == 077777)
-        return -1;          // Multics probably hasn't setup any stack frames yet
-
-    AR_PR_t entry_pr;
-    if (stack_to_entry(stack_segno, stack_offset, &entry_pr) != 0) {
-        out_msg("Automatics: Stack frame at %03o|%06o does not contain a valid entry ptr.\n", stack_segno, stack_offset);
-        return -1;
-    }
-
-    // create stack_frame
-ostringstream s;
-s << "Pushing new frame at depth ";
-s << multics_stack.size() << " for " << li.name << " with PR6 == " << seg_addr_t(stack_segno,stack_offset);
-    log_msg(INFO_MSG, moi, "%s\n", s.str().c_str());
-    multics_stack.push_back(multics_stack_frame(stack_segno, stack_offset, *li.entry));
-
-    return 0;
-}
-
-//=============================================================================
-
 extern "C" void show_variables(unsigned segno, int ic);
 
+// Called by the CPU after every instruction
+    
 void show_variables(unsigned segno, int ic)
 {
+    if (! opt_debug)
+        state_invalidate_cache();
+    else
+        if (m_stackp && m_stackp->size() != 0)
+            m_stackp->back().show(0);
     addr_modes_t amode = get_addr_mode();
-    //int segno = (amode == APPEND_mode) ? PPR.PSR : -1;
-    // check_autos(segno, ic);
     check_autos((amode == APPEND_mode) ? (int) segno : -1, ic);
 }
 
 //=============================================================================
 
-static void check_autos(int segno, int ic)
+static void check_autos(
+    int segno,              // Execution segment or -1 if in appending mode
+    int ic)                 // Recent IC
 {
-    multics_stack_frame* msfp = find_frame(segno, ic);
-    if (msfp)
-        update_autos(segno, ic, *msfp);
-}
+    if (m_stackp == NULL)
+        return;
 
-//=============================================================================
-
-/*
- *
- * Find or create the stack frame for the entrypoint corresponding
- * to the given execution segment and offset.
- *
- */
-
-static multics_stack_frame* find_frame(int segno, int ic)
-{
-    // segno and ic should be last executed instruction
-    // TODO: improve efficiency -- Maybe only check when about to display source change.  Maybe use memory-write range breakpoints.
-    const char *moi = "check_autos";
-
-    const seginfo& seg = segments(segno);
-    if (seg.empty()) {
-        if (segno != -1)
-            cerr << "check_autos: Odd, segment " << oct << segno << " is empty." << simh_endl;
-        return NULL;
+    if (! m_stackp->is_in_frame(segno, ic)) {
+        // log_msg(INFO_MSG, "STACK::check_autos", "No stack frame found for IC %#o|%#o.\n", segno, ic);
+        return;
     }
 
-    // TODO: check source_changed re checking for frame change
-
-    seg_addr_t ptr(AR_PR[6].PR.snr, AR_PR[6].wordno);   // TODO: add a constructor for AR_PR_t?
-    // Search backwards from the top of the stack
-    list<multics_stack_frame>::reverse_iterator rstackp = find(multics_stack.rbegin(), multics_stack.rend(), ptr);
-    if (rstackp == multics_stack.rend()) {
-        push_frame(segno, ic, seg);
-        return NULL;
-    }
-    list<multics_stack_frame>::iterator stackp = rstackp.base();
-    -- stackp;          // Convert the reverse iterator into a forward iterator
-
-    if (stackp != -- multics_stack.end()) {
-        // Pop one or more frames
-        if (0) {
-            multics_stack_frame& curr = *stackp;
-            multics_stack_frame& last = (*-- multics_stack.end());
-            log_msg(INFO_MSG, "STACK", "Popping frames.  Curr is %s; popping through %s\n",
-                curr.owner().name.c_str(), last.owner().name.c_str());
-        }
-        multics_stack.erase(++stackp, multics_stack.end());
-        stackp = -- multics_stack.end();
-    }
-    return &(*stackp);
+    m_stackp->back().update_autos(segno, ic);
 }
 
 //=============================================================================
 
 static void dump_autos()
 {
-    seg_addr_t ptr(AR_PR[6].PR.snr, AR_PR[6].wordno);   // TODO: add a constructor for AR_PR_t?
-    // Search backwards from the top of the stack
-    list<multics_stack_frame>::reverse_iterator rstackp = find(multics_stack.rbegin(), multics_stack.rend(), ptr);
-    out_msg("stack trace: Automatics:\n");
-    if (rstackp != multics_stack.rend())
-        dump_autos(*rstackp);
-    else if (multics_stack.size() == 0)
-        out_msg("stack trace:\tNo stack frames have been recorded yet.\n");
-    else {
-        out_msg("stack trace:\tNo stack frame found for PR[6]==%#o|%#o; Dumping automatics for last known stack frame.\n", AR_PR[6].PR.snr, AR_PR[6].wordno);
-        multics_stack_frame& msf = multics_stack.back();
-        out_msg("stack trace:\t%s\n", msf.owner().name.c_str());
-        dump_autos(msf);
+    if (m_stackp == NULL)
+        return;
+
+    addr_modes_t amode = get_addr_mode();
+    int segno = (amode == APPEND_mode) ? PPR.PSR : -1;
+    int ic = PPR.IC;
+
+    if (! m_stackp->is_in_frame(segno, ic)) {
+        out_msg("stack trace:\tNo stack frame found for IC %#o|%#o.\n", segno, ic);
+        return;
+    }
+
+    m_stackp->back().show(0);
+    out_msg("stack trace: Automatics for stack frame belonging to IC %#o|%#o:\n",
+        segno, ic);
+    m_stackp->back().dump_autos();
+}
+
+//=============================================================================
+
+void multics_stack_frame::dump_autos() const
+{
+    int sp_addr = addr();
+    if (sp_addr == -1) {
+        log_msg(INFO_MSG, "STACK", "Internal error, line %d\n", __LINE__);
+        return;
+    }
+    if (entry() == NULL)
+        return;
+
+    const entry_point& ep = *entry();
+    const stack_frame* sfp = ep.stack();
+    if (sfp == NULL) {
+        log_msg(NOTIFY_MSG, "check_autos", "sanity check fails -- no stack\n");
+        cancel_run(STOP_WARN);
+        return;
+    }
+
+    int segno = AR_PR[6].PR.snr;
+    out_msg("stack trace:\t%d Automatics in frame at %#o|%#o (%08o) for %s (%s):\n",
+        size(), segno, offset(), sp_addr, ep.name.c_str(), ep.source->fname.c_str());
+    // Loop through all the val_t automatic values for this frame
+    for (map<int, val_t>::const_iterator autos_it = vals.begin(); autos_it != vals.end(); ++ autos_it) {
+        int soffset = (*autos_it).first;
+        const val_t& autov = (*autos_it).second;
+        // We have the values for this frame, find the names in the entry_point
+        map<int,var_info>::const_iterator ni = sfp->automatics.find(soffset);
+        const var_info& v = (*ni).second;
+        out_msg("stack trace:\t\tAuto at offset %04o, %s: %s: ",
+            soffset,
+            ((string) seg_addr_t(segno, _offset + soffset)).c_str(),
+            v.name.c_str());
+        ostringstream obuf;
+        out_auto(obuf, v, sp_addr + soffset, autov.is_initialized());
+        out_msg("%s\n", obuf.str().c_str());
     }
 }
 
-static void dump_autos(multics_stack_frame& msf)
+//=============================================================================
+
+static void out_auto(ostringstream& obuf, const var_info& v, int addr, int is_initialized)
 {
-    int sp_addr = msf.addr();
-    if (sp_addr == -1)
-        log_msg(INFO_MSG, "STACK", "Internal error, line %d\n", __LINE__);
-    else {
-        const entry_point& ep = msf.owner();
-        const stack_frame* sfp = ep.stack();
-        if (sfp == NULL) {
-            log_msg(NOTIFY_MSG, "check_autos", "sanity check fails -- no stack\n");
-            cancel_run(STOP_WARN);
-            return;
+    ostringstream buf;
+    if (v.type == var_info::ptr && v.size == 72) {
+        t_uint64 curr1 = M[addr];
+        t_uint64 curr2 = M[addr + 1];
+        buf << setw(12) << setfill('0') << oct;
+        buf << curr1 << " " <<  setw(12) << curr2;
+        buf << setw(0);
+        AR_PR_t pr;
+        if (words2its(curr1, curr2, &pr) == 0) {
+            buf << showbase
+                << " [ring " << pr.PR.rnr << ", "
+                << "address " << pr.PR.snr << "|" << pr.wordno << ", "
+                << "bitno " << dec << pr.PR.bitno << "]";
+            if (!is_initialized)
+                buf << " (uninitialized)";
+        } else {
+            if (is_initialized) {
+                buf << " <invalid ptr>";
+                // temp
+                log_msg(NOTIFY_MSG, "automatic vars", "Autobreakpoint on bad ptr val.\n");
+                cancel_run(STOP_IBKPT);
+            } else {
+                buf << " <uninitialized invalid ptr>";
+            }
         }
-        out_msg("stack trace:\t%d Automatics:\n", msf.size());
-        for (map<int, multics_stack_frame::val_t>::const_iterator autos_it = msf.begin(); autos_it != msf.end(); ++ autos_it) {
-            int soffset = (*autos_it).first;
-            const multics_stack_frame::val_t& autov = (*autos_it).second;
-            t_uint64 curr = M[sp_addr + soffset];
-            map<int,string>::const_iterator ni = sfp->automatics.find(soffset);
-            const string& name = (*ni).second;
-            out_msg("stack trace:\t\tAuto %s: %lld (%012llo)%s\n",
-                name.c_str(), curr, curr, 
-                (autov.is_initialized()) ? "" : " (uninitialized)");
-        }
+    } else {
+        t_uint64 curr = M[addr];
+        // buf << dec << curr << setw(12) << setfill('0') << oct << "(" << curr << ")";
+        buf << dec << setw(0) << curr
+            << " ("
+            << oct << setw(12) << setfill('0') << curr << setw(0) << setfill(' ')
+            << ")";
+        if (!is_initialized)
+            buf << " (uninitialized)";
     }
+    obuf << buf.str();
 }
 
 //=============================================================================
@@ -1059,40 +1537,63 @@ static void dump_autos(multics_stack_frame& msf)
 
 // Check values in saved frame versus the machine
 
-static void update_autos(int segno, int ic, multics_stack_frame& msf)
+void multics_stack_frame::update_autos(
+    int segno, int ic)      // Used for printing source line
 {
-    int sp_addr = msf.addr();
-    if (sp_addr == -1)
+    int sp_addr = addr();
+    if (sp_addr == -1) {
         log_msg(INFO_MSG, "STACK", "Internal error, line %d\n", __LINE__);
-    else {
-        const entry_point& ep = msf.owner();
-        const stack_frame* sfp = ep.stack();
-        if (sfp == NULL) {
-            log_msg(NOTIFY_MSG, "check_autos", "sanity check fails -- no stack for seg %o...\n", segno);
-            cancel_run(STOP_WARN);
-            return;
-        }
-        int changed = 0;
-        for (map<int, multics_stack_frame::val_t>::iterator autos_it = msf.begin(); autos_it != msf.end(); ++ autos_it) {
-            int soffset = (*autos_it).first;
-            multics_stack_frame::val_t& autov = (*autos_it).second;
-            t_uint64 curr = M[sp_addr + soffset];
-            enum multics_stack_frame::change_t chg = autov.change(curr);
-            if (chg == multics_stack_frame::initial_change || chg == multics_stack_frame::changed) {
-                if (!changed && msf.owner().source && log_any_io(0)) {
-                    log_msg(INFO_MSG, NULL, "Source: %s\n", msf.owner().source->fname.c_str());
-                    const source_line* lnp = msf.owner().source->get_line(ic);
-                    if (lnp)
-                        log_msg(INFO_MSG, NULL, "Source:  %3o|%06o, line %5d: > %s\n", segno, ic, lnp->line_no, lnp->text.c_str());
-                }
-                changed = 1;
-                map<int,string>::const_iterator ni = sfp->automatics.find(soffset);
-                const string& name = (*ni).second;
-                log_msg(INFO_MSG, NULL, "Source:                            %s = %lld (%012llo)%s\n", name.c_str(), curr, curr, (chg == multics_stack_frame::initial_change) ? " -- initial value" : "");
-            }
-        }
-        log_any_io(0);      // Output of variables doesn't count towards requiring re-display of source
+        return;
     }
+
+    if (entry() == NULL) {
+        if (! m_stackp->unfinished())
+            log_msg(INFO_MSG, "update_autos", "sanity check fails -- no entry point for IC %#o|%#o\n", segno, ic);
+        return;
+    }
+    const entry_point& ep = *entry();
+    const stack_frame* sfp = ep.stack();        // holds variable names
+    if (sfp == NULL) {
+        if (! m_stackp->unfinished()) {
+            // BUG in listing.cpp -- PL/1 listings explicitly mention when procedures share
+            // another's stack frame, but don't mention this for non-procedure entry points,
+            // and listing.cpp doesn't record the stack_owner for us.
+            log_msg(INFO_MSG, "check_autos", "sanity check fails -- no stack description for %s.\n",
+                ep.name.c_str());
+            // cancel_run(STOP_WARN);
+        }
+        return;
+    }
+
+    log_ignore_ic_change();
+    int is_changed = 0;
+    for (map<int, val_t>::iterator autos_it = vals.begin(); autos_it != vals.end(); ++ autos_it) {
+        int soffset = (*autos_it).first;
+        val_t& autov = (*autos_it).second;
+        t_uint64 curr = M[sp_addr + soffset];
+        change_t chg = autov.change(curr);
+        if (chg == initial_change || chg == changed) {
+            if (!is_changed && entry() && entry()->source && log_any_io(0)) {
+                log_msg(INFO_MSG, NULL, "Source: %s\n", entry()->source->fname.c_str());
+                const source_line* lnp = entry()->source->get_line(ic);
+                if (lnp)
+                    log_msg(INFO_MSG, NULL, "Source:  %3o|%06o, line %5d: > %s\n",
+                        segno, ic, lnp->line_no, lnp->text.c_str());
+            }
+            is_changed = 1;
+            map<int,var_info>::const_iterator ni = sfp->automatics.find(soffset);
+            const var_info& v = (*ni).second;
+            ostringstream buf;
+            buf << "Source:                            " << v.name << " = ";
+            out_auto(buf, v, sp_addr + soffset, autov.is_initialized());
+            if (chg == initial_change)
+                buf << " -- initial value";
+            buf << "\n";
+            log_msg(INFO_MSG, NULL, buf.str().c_str());
+        }
+    }
+    log_any_io(0);      // Output of variables doesn't count towards requiring re-display of source
+    log_notice_ic_change();
 }
 
 //=============================================================================

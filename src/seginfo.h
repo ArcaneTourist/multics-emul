@@ -73,7 +73,10 @@ public:
     seg_addr_t(int s, int o) { segno = s; offset = o; }
     int segno;
     seg_offset_t offset;
-    int operator == (const seg_addr_t& x) const { return x.segno == segno && x.offset == offset; }
+    int operator == (const seg_addr_t& x) const
+        { return x.segno == segno && x.offset == offset; }
+    int operator != (const seg_addr_t& x) const
+        { return ! operator==(x); }
     friend ostream& operator<<(ostream& out, const seg_addr_t& sa);
     operator string(void) const;
 };
@@ -111,6 +114,20 @@ public:
 class entry_point;
 class source_file;
 
+class var_info {
+public:
+    enum vartype { unknown, fixedbin, bit, ptr, str, vchar };
+
+    var_info() { type = unknown; size = 0; size2 = 0; };
+    var_info(const char *nm, enum vartype v, unsigned sz, unsigned sz2 = 0)
+        { name = nm; type = v; size = sz; size2 = sz2; };
+
+    enum vartype type;
+    string name;
+    unsigned size;
+    unsigned size2;
+};
+
 class stack_frame {
 public:
     stack_frame() { owner = NULL; size = -1; }
@@ -119,7 +136,8 @@ public:
         { return sf.print(out, 0); }
     entry_point *owner;
     int size;
-    map <int, string> automatics;   // Key is stack offset
+    map <int, var_info> automatics; // Key is stack offset
+    // map <int, string> automatics;    // Key is stack offset
 };
 
 
@@ -225,6 +243,8 @@ public:
         return linkage.empty() && source_map.empty() && source_list.empty();
     }
     map<int,linkage_info>::const_iterator find_entry(int offset) const;
+        // search linkage for relocated entry_point corresponding to
+        // offset
     ostream& print(ostream& out, int indent = 0) const;
 };
 

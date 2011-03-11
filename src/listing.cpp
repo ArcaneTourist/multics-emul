@@ -133,11 +133,13 @@ int listing_parse(FILE *f, source_file &src)
 
     char lbuf[500];
     vector<string> lines;           // index is line_no
+    vector<unsigned> incl_files;    // index is incl file num, value is lines[] index
     unsigned nlines;
+    map<string,var_info> vars;
     
     int ret = 0;
 
-    lines.reserve(400);
+    lines.reserve(800);
 
     int seen_ll_hdr = 0;    // Seen the "LINE LOC LINE LOC ..." header ?
     int seen_line_locs = 0;     // Seen all of the actual line locations that follow the ll header
@@ -150,6 +152,7 @@ int listing_parse(FILE *f, source_file &src)
     int doing_storage_req = 0;  // Seen headers "STORAGE REQUIREMENTS" and "Object Text..."
     char auto_frame[sizeof(lbuf)] = {0};    // State for listing of automatics
     int auto_join_next = 0; // Stat flag for automatic varibles re line continuation
+    int doing_dcl_stmt = 0;     // Seen header "NAMES DECLARED BY DECLARE STATEMENT."
     int seen_explicit_dcl = 0;  // Seen header for names declared by explicit dcls
     // using strcmp and strspn is very portable, but not as pretty as other approaches...
     for (nlines = 0; fgets(lbuf, sizeof(lbuf), f) != NULL; ++ nlines) {
@@ -192,6 +195,7 @@ int listing_parse(FILE *f, source_file &src)
                     return -1;
                 }
                 lbufp[9] = 0;
+                unsigned fileno;
                 unsigned lineno;
                 char dummy;
                 if (sscanf(lbufp, "%u %c", &lineno, &c) == 1) {
@@ -208,9 +212,21 @@ int listing_parse(FILE *f, source_file &src)
                         return -1;
                     }
                     lines.push_back(line);
-                } else {
+                } else if (sscanf(lbufp, "%u %u %c", &fileno, &lineno, &c) == 2) {
                     // probably an included line with multiple line numbers
                     lbufp[9] = c;
+                    if (fileno == incl_files.size()) {
+                        // more lines from the previously seen include
+                    } else if (fileno == incl_files.size()+1) {
+                        incl_files.push_back(lines.size());
+                        // fprintf(stderr, "listing_parse: found include file # %u at line %u\n", fileno, lines.size() + 1);
+                    } else if (fileno < incl_files.size()+1) {
+                        // prior include file was nested
+                    } else
+                        fprintf(stderr, "listing_parse: found include file # %u; expecting # %u\n", fileno, incl_files.size()+1);
+                } else {
+                    lbufp[9] = c;
+                    fprintf(stderr, "listing_parse: unexpected source line near line %u: %s\n", lines.size()+1, lbufp + 9);
                 }
             }
             continue;
@@ -325,11 +341,11 @@ int listing_parse(FILE *f, source_file &src)
         // TODO: Use a single state variable
         // TODO: Generalize the line scanning code
 
-#if 0
+#if 1
         // Look for declarations -- unfinished code to pick up type info for automatics and/or handle based and external statics
-        int doing_dcl_stmt = alm_lineno == 5;
+        // int doing_dcl_stmt = alm_lineno == 5;
         if (!doing_dcl_stmt) {
-            doing_dcl_stmt = str_pmatch(lbufp, "NAMES DECLARED BY DECLARE STATEMENT") == 0;
+            doing_dcl_stmt = str_pmatch(lbufp, "NAMES DECLARED BY DECLARE STATEMENT.") == 0;
         } else {
             const char *section = "dcl stmt";
             seen_explicit_dcl = str_pmatch(lbufp, "NAMES DECLARED BY EXPLICIT CONTEXT") == 0 ||
@@ -353,13 +369,35 @@ int listing_parse(FILE *f, source_file &src)
             if (strspn(lbufp, " \t\f") > 80)
                 continue;   // continuation line
             // First pull off the name
-            const char *s = lbufp + strspn(lbufp, " \t");
+            // fprintf(stderr, "DEBUG: Parsing: %s\n", lbufp);
+            char *s = lbufp + strspn(lbufp, " \t");
             int l = strcspn(s, " \t");
             char dcl_name[sizeof(lbuf)];
             strncpy(dcl_name, s, l);
             dcl_name[l] = 0;
             s += l;
             s += strspn(s, " \t");
+            // Check next token to see if it's an optional offset
+            if (s - lbufp < 27) {
+#if 1
+                s += strspn(s, "()0123456789");
+                s += strspn(s, " \t");
+#else
+                l = strspn(s, "()0123456789");
+                if (l < 6) {
+                    char offset[sizeof(lbuf)];
+                    strncpy(offset, s, l);
+                    offset[l] = 0;
+                    fprintf(stderr, "\tfound %u char sym offset %s at %u.\n", l, offset, s - lbufp);
+                    s += l;
+                    s += strspn(s, " \t");
+                    fprintf(stderr, "\tParse string now: %s\n", s);
+                } else {
+                    fprintf(stderr, "\tfound odd %u char offset at %u: %s\n", l, s- lbufp, s);
+                }
+#endif
+            }
+
             // Check next token to see if it's an optional location
             int have_dcl_loc = 0;
             unsigned int dcl_loc;
@@ -378,8 +416,50 @@ int listing_parse(FILE *f, source_file &src)
             } else {
                 have_dcl_loc = 0;
             }
-            // next word is one of: parameter, automatic, constant, based, "external static"
-            // following tokens include: structure, pointer, fixed bin(#,#), char(#), bit(#)
+            // Next word is a storage class.  One of: automatic, based, builtin function,
+            // constant, external static, parameter, or stack reference
+            var_info::vartype t = var_info::unknown;
+            unsigned sz = 0;
+            unsigned sz2 = 0;
+            if (str_pmatch(s, "automatic") == 0) {
+                s += strlen("automatic");
+                s += strspn(s, " \t");
+                // possible next tokens include: bit(#), char(#), fixed bin(#,#),
+                // picture(#), pointer, structure, and varying char(#)
+                if (str_pmatch(s, "pointer") == 0) {
+                    t=var_info::ptr;
+                    sz = 72;    // could be 72 bits or 36 bits
+                } else if (str_pmatch(s, "char") == 0) {
+                    t=var_info::str;
+                } else if (str_pmatch(s, "bit") == 0) {
+                    t=var_info::bit;
+                } else if (str_pmatch(s, "varying char") == 0) {
+                    t=var_info::vchar;
+                } else if (str_pmatch(s, "fixed bin") == 0) {
+                    t=var_info::fixedbin;
+                } else {
+                    // ignoring
+                }
+                if (t != var_info::unknown && sz == 0) {
+                    s = strchr(s, '(');
+                    if (s) {
+                        char *s2 = strchr(s, ')');
+                        if (s2) {
+                            *s2 = 0;
+                            (void) sscanf(s+1, "%u,%u", &sz, &sz2);
+                        }
+                    }
+                    if (t == var_info::str)
+                        sz *= 9;
+                }
+            }
+            if (have_dcl_loc) {
+                // fprintf(stderr, "%s: Found name %s at loc %#o with info %s\n", 
+                    // section, dcl_name, dcl_loc, s);
+            } else {
+                 // fprintf(stderr, "%s: Found name %s at unspecified loc with info %s\n", section, dcl_name, s);
+            }
+            vars[dcl_name] = var_info(dcl_name, t, sz, sz2);
         }
 #endif
 
@@ -644,7 +724,12 @@ int listing_parse(FILE *f, source_file &src)
                     printf("stack frame %s not found...\n", auto_frame);
                 else {
                     stack_frame& sframe = (*it).second;
-                    sframe.automatics[auto_loc] = auto_id;
+                    // sframe.automatics[auto_loc] = auto_id;
+                    map<string,var_info>::iterator vit = vars.find(auto_id);
+                    if (vit != vars.end())
+                        sframe.automatics[auto_loc] = (*vit).second;
+                    else
+                        sframe.automatics[auto_loc] = var_info(auto_id, var_info::unknown, 0);
                 }
             }
         }
@@ -661,6 +746,20 @@ int listing_parse(FILE *f, source_file &src)
         fprintf(stderr, "Found dangling source line without corresponding assembly at EOF.\n");
         errno = EINVAL;
         return -1;
+    }
+
+    // Fixup pointer types -- some are one word and some are two workds
+    for (map<string,stack_frame>::iterator sit = src.stack_frames.begin(); sit != src.stack_frames.end(); ++sit) {
+        stack_frame& sframe = (*sit).second;
+        // map<string,var_info>& autos = sframe.automatics;
+        map<int,var_info>::iterator vit;
+        for (vit = sframe.automatics.begin(); vit != sframe.automatics.end(); ++ vit) {
+            int off = (*vit).first;
+            var_info& vi = (*vit).second;
+            if (vi.type == var_info::ptr && vi.size == 72)
+                if (sframe.automatics.find(off + 1) != sframe.automatics.end())
+                    vi.size = 36;
+        }
     }
 
     // Fixup entries that quietly share their parent's stack frame

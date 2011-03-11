@@ -77,6 +77,6 @@ typedef struct {
     dcw_t dcw;      // most recent (in progress) dcw
     int control;    // Indicates next action; mostly from PCW/IDCW ctrl fields
     int err;        // BUG: temporary hack to replace "ret" auto vars...
-    chan_devinfo devinfo;
+    chan_devinfo *devinfop;
 } channel_t;
 

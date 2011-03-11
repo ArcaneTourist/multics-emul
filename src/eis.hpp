@@ -11,12 +11,14 @@ extern "C" {
 // TODO: Does OPU need to force modulo 64 for register derived lengths (which might otherwise be over 6 bits) ?
 // Might be better to do via parse_eis_*_desc()
 
+// We probably need to get rid of this and use desc_t
 typedef struct {
     void *dummyp;
     void *objp;
     int n;
     int nbits;
 #if 1
+    // The following is also in num_desc_t...
     struct {
         int s;      // sign and type: 00b floating with leading sign; 01b-11b scaled fixed point, 01 leading sign, 10 trailing, 11 unsigned
         int scaling_factor;
@@ -201,6 +203,7 @@ public:
     num_desc_t(const eis_mf_t& mf, t_uint64 word, int is_fwd);
     // num_desc_t(const eis_mf_t& mf, int addr, int width, int cn, int bit_offset, int nchar, int is_read, int is_fwd, int stype, int sf);
     char* to_text(char *buf) const;
+
     int s;      // sign and type: 00b floating with leading sign; 01b-11b scaled fixed point, 01 leading sign, 10 trailing, 11 unsigned
     int scaling_factor;
 };

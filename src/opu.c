@@ -2027,8 +2027,31 @@ static int do_an_op(instr_t *ip)
                 return 0;
             }
             
-            // ade unimplemented
-            // fszn unimplemented
+            case opcode0_ade: {
+                t_uint64 word;
+                int ret;
+                if ((ret = fetch_op(ip, &word)) == 0) {
+                    int y = getbits36(word, 0, 8);
+                    IR.zero = 0;
+                    IR.neg = 0;
+                    if (reg_E + y > 127)
+                        IR.exp_overflow = 1;
+                    else if (reg_E +y < -128)
+                        IR.exp_underflow = 1;
+                    reg_E = (reg_E + y) & 0xff;
+                }
+                return ret;
+            }
+
+            case opcode0_fszn: {
+                t_uint64 word;
+                int ret;
+                if ((ret = fetch_op(ip, &word)) == 0) {
+                    IR.zero = getbits36(word, 8, 28) == 0;
+                    IR.neg = getbits36(word, 8, 1) == 1;
+                }
+                return ret;
+            }
 
             case opcode0_lde: {
                 t_uint64 word;
@@ -2041,8 +2064,16 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
 
-            // ste unimplemented
-            
+            case opcode0_ste: {
+                t_uint64 word;
+                int ret;
+                if ((ret = fetch_op(ip, &word)) == 0) {
+                    word = setbits36(word, 0, 18, reg_E << 10);
+                    ret = store_word(TPR.CA, word);
+                }
+                return ret;
+            }
+
             case opcode0_call6: {
                 if (get_addr_mode() == ABSOLUTE_mode) { 
                     log_msg(ERR_MSG, "OPU::call6", "Absolute mode not handled\n");
@@ -2730,11 +2761,11 @@ static int do_an_op(instr_t *ip)
                 }
                 return ret;
             }
-            // lptp unimplemented
-            // lptr unimplemented
+            // lptp unimplemented -- T&D Test & Diagnostic instruction
+            // lptr unimplemented -- T&D Instruction
             // lra unimplemented
-            // lsdp unimplemented
-            // lsdr unimplemented
+            // lsdp unimplemented -- T&D Instruction
+            // lsdr unimplemented -- T&D Instruction
             // rcu unimplemented -- restore control unit
             // scpr unimplemented -- store cp register
 
@@ -2770,10 +2801,10 @@ static int do_an_op(instr_t *ip)
                 word1 = setbits36(word1, 60-36, 12, cpup->DSBR.stack);
                 return store_pair(TPR.CA, word0, word1);
             }
-            // sptp unimplemented
-            // sptr unimplemented
-            // ssdp unimplemented
-            // ssdr unimplemented
+            // sptp unimplemented -- T&D Instruction
+            // sptr unimplemented -- T&D Instruction
+            // ssdp unimplemented -- T&D Instruction
+            // ssdr unimplemented -- T&D Instruction
 
             case opcode0_cams: {    // Clear Associative Memory Segments
                 int ret = 0;
@@ -3349,7 +3380,8 @@ static int do_an_op(instr_t *ip)
             }
             // cmp0 .. cmp7 unimplemented -- compare numeric
 
-            // mvn unimplemented -- move numeric
+            case opcode1_mvn:       // EIS: move numeric
+                return op_mvn(ip);
 
             case opcode1_mvne:      // EIS: move numeric edited
                 return op_mvne(ip);
@@ -3372,7 +3404,9 @@ static int do_an_op(instr_t *ip)
             case opcode1_btd:       // binary to decimal convert
                 return op_btd(ip);
 
-            // dtb unimplemented --  decimal to binary convert
+            case opcode1_dtb:   // decimal to binary convert
+                return op_dtb(ip);
+
             // ad2d unimplemented -- add using two decimal operands
             // ad3d unimplemented -- add using three decimal operands
 
