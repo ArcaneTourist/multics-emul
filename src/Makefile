@@ -6,7 +6,7 @@ multics.a: seginfo.o debug_run.o debug_io.o listing.o hw6180_cpu.o hw6180_sys.o 
 	ar cr $@ $?
 
 wc:
-	wc hw6180.h seginfo.h bit36.h bitstream.h eis.hpp \
+	wc hw6180.h seginfo.hpp bit36.h bitstream.h eis.hpp \
 	iom.hincl \
 	seginfo.cpp debug_run.cpp debug_io.cpp listing.cpp hw6180_cpu.c hw6180_sys.c misc.c opu.c eis_opu.cpp bitstream.c apu.c eis_desc.cpp scu.c iom.c mt.c math.c math_real.c console.c
 

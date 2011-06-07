@@ -18,7 +18,7 @@
 */
 
 using namespace std;
-#include "seginfo.h"
+#include "seginfo.hpp"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>

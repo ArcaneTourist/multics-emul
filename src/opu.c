@@ -3499,8 +3499,6 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
     uint sign1 = a >> 35;
     uint sign2 = b >> 35;
     t_uint64 result = a + b;
-    //uint wrong_s = result >> 35;
-    //t_uint64 wrong_r = result;
     if ((result >> 36) != 0) {
         // BUG: generates inappropriate? carry when adding a negative to a positive number
         IR.carry = 1;
@@ -3511,10 +3509,6 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
         IR.carry = 0;
     }
     uint signr = result >> 35;
-    //if (signr != wrong_s) {
-    //  log_msg(WARN_MSG, "OPU::add36", "Prior version had incorrect sign %#o instead of %o -- %012llo (%lld) + %012llo (%lld) ==> %012llo ==> %012llo (%lld => %lld)\n",
-    //      wrong_s, signr, a, sign36(a), b, sign36(b), wrong_r, result, sign36(result), sign36(result & MASK36));
-    //}
     IR.zero = result == 0;
     IR.neg = signr;
     if (sign1 == sign2 && signr != sign1) {
@@ -3576,9 +3570,13 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
  *    complement and then add one.
  *
  *  ************
- *  All the following in noise -- valid but unexpected behavior of carry bit...
+ *  All the following is noise -- valid but unexpected behavior of carry bit...
  *  ************
  *
+ * NOTE
+ *    Subtracting a number from itself will yield zero with an overflow for
+ *    either approach -- adding in the 1's complement then adding one or 
+ *    when directly adding in the two's complement
  *
  * HOWEVER:
  * Subtracting a small positive number from a larger positive number

@@ -16,7 +16,7 @@
 */
 
 using namespace std;
-#include "seginfo.h"
+#include "seginfo.hpp"
 #include <iostream>
 #include <iomanip>
 // #include <string.h>

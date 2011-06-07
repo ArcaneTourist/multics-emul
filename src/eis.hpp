@@ -65,7 +65,7 @@ private:
         // mf_y_addr_t() { ar = 0; reg = 0; width = 0; y = 0; }
         // mf_y_addr_t() {}
     } initial;
-    // BUG/TODO: Get rid of scheme with two seperate offsets but a
+    // FIXME: rid of scheme with two seperate offsets but a
     // single merged bitno.  Let caller copy out the base and/or
     // have two objects.
     struct pr_info_t {
@@ -73,7 +73,7 @@ private:
         bool _init;
         uint ringno;
         uint segno;
-        // BUG: we should make caller track original offset and bitno
+        // FIXME: we should make caller track original offset and bitno
         uint offset;
         uint bitno;
         pr_info_t() { _init = 0; }

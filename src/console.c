@@ -205,7 +205,7 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
 {
     log_msg(DEBUG_MSG, "CON::iom_cmd", "Chan 0%o, dev-cmd 0%o, dev-code 0%o\n", chan, dev_cmd, dev_code);
 
-    // BUG: Should Major be added to 040? and left shifted 6? Ans: it's 4 bits
+    // FIXME: Should Major be added to 040? and left shifted 6? Ans: it's 4 bits
 
     DEVICE* devp;
     con_state_t* con_statep;
@@ -259,7 +259,7 @@ int con_iom_cmd(int chan, int dev_cmd, int dev_code, int* majorp, int* subp)
             *subp = 0;
             return 0;
         case 057:               // Read ID (according to AN70-1)
-            // BUG: No support for Read ID; appropriate values are not known
+            // FIXME: No support for Read ID; appropriate values are not known
             log_msg(ERR_MSG, "CON::iom_cmd", "Read ID unimplemented\n");
             *majorp = 05;
             *subp = 1;
@@ -313,7 +313,7 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
                 time_t now = time(NULL);
                 while (time(NULL) < now + 30 && ! con_statep->have_eol) {
                     check_keyboard(chan);
-                    sleep(1);       // BUG: blocking
+                    sleep(1);       // FIXME: blocking
                 }
                 // Impossible to both have EOL and have buffer overflow
                 if (con_statep->tailp >= con_statep->buf + sizeof(con_statep->buf)) {
@@ -357,7 +357,7 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
                 con_statep->tailp = con_statep->buf;
                 // con_statep->have_eol = 0;
                 log_msg(WARN_MSG, moi, "Entire line now transferred.\n");
-                ret = 1;    // BUG: out of band request to return
+                ret = 1;    // FIXME: out of band request to return
             } else {
                 log_msg(WARN_MSG, moi, "%d chars remain to be transfered.\n", con_statep->tailp - con_statep->readp);
                 ret = 0;
@@ -420,7 +420,7 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
  *
  * Check simulated keyboard and transfer input to buffer.
  *
- * BUG: We allow input even when the console is not in input mode (but we're
+ * FIXME: We allow input even when the console is not in input mode (but we're
  * not really connected via a half-duplex channel either).
  *
  * TODO: Schedule this to run even when no console I/O is pending -- this
@@ -500,7 +500,7 @@ static void check_keyboard(int chan)
             else
                 log_msg(NOTIFY_MSG, moi, "Got char '\\%03o'\n", c);
 
-            // BUG: We don't allow user to set editing characters
+            // FIXME: We don't allow user to set editing characters
             if (c == '\177' || c == '\010') {
                 if (con_statep->tailp > con_statep->buf) {
                     -- con_statep->tailp;

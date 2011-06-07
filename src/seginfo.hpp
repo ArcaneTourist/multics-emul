@@ -15,7 +15,7 @@ extern "C" {
 #endif
 
 #ifndef _HW6180_H
-// BUG -- should require  h6180.h to be included...
+// FIXME -- should require  h6180.h to be included...
 typedef enum { ABSOLUTE_mode, APPEND_mode, BAR_mode } addr_modes_t;
 #endif
 
@@ -64,7 +64,7 @@ public:
     seg_offset_t(int o) { offset = o; }
     seg_offset_t() { offset = -1; }
     operator int() const { return offset; }
-    int offset; // BUG: rename to val
+    int offset; // FIXME: rename to val
     friend ostream& operator<<(ostream& out, const seg_offset_t& o);
 };
 
@@ -167,7 +167,7 @@ public:
     linkage_info() { offset = -1; entry = NULL; }
     linkage_info(const char *nm, int off)
         { name = nm; offset = off; entry = NULL; }
-    string name;                // DOC BUG: is name same as entry->name?  Is entry allowed to be NULL?
+    string name;                // DOC FIXME: is name same as entry->name?  Is entry allowed to be NULL?
     int offset;                 // Relocated value determined at runtime
     // int last;                // negative if unknown
     entry_point* entry;

@@ -258,7 +258,7 @@ typedef struct {
     uint TSR;   // Current effective segment number, 15 bits
     uint TBR;   // Current bit offset as calculated from ITS and ITP
     uint CA;    // Current computed addr relative to the segment in TPR.TSR, 18 bits
-    // BUG: CA value should probably be placed in ctl_unit_data_t
+    // FIXME: CA value should probably be placed in ctl_unit_data_t
     uint is_value;  // is offset a value or an address? (du or dl modifiers)
     t_uint64 value; // 36bit value from opcode constant via du/dl
 } TPR_t;
@@ -705,7 +705,7 @@ extern int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint 
 int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint*segp, uint *offsetp, uint *bitnop);
 int get_ptr_address(uint ringno, uint segno, uint offset, uint *addrp, uint *minaddrp, uint* maxaddrp);
 extern int addr_mod(const instr_t *ip);
-extern void reg_mod(uint td, int off);          // BUG: might be performance boost if inlined
+extern void reg_mod(uint td, int off);          // FIXME: might be performance boost if inlined
 extern int fetch_appended(uint addr, t_uint64 *wordp);
 extern int store_appended(uint offset, t_uint64 word);
 extern int cmd_dump_vm(int32 arg, char *buf);
@@ -730,6 +730,7 @@ extern int activate_timer();
 /* iom.c */
 extern void iom_init(void);
 extern void iom_interrupt(void);
+extern t_stat channel_svc(UNIT *up);
 
 /* math.c */
 extern void mpy(t_uint64 a, t_uint64 b, t_uint64* hip, t_uint64 *lowp);
@@ -777,7 +778,7 @@ extern int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 #endif
 
 #include "opcodes.h"
-#include "seginfo.h"
+// #include "seginfo.hpp"
 #include "bit36.h"
 
 #endif  // _HW6180_H

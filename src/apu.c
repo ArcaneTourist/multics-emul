@@ -70,7 +70,7 @@ void set_addr_mode(addr_modes_t mode)
 {
     if (mode == ABSOLUTE_mode) {
         IR.abs_mode = 1;
-        // BUG: T&D tape section 3 wants not-bar-mode true in absolute mode,
+        // FIXME: T&D tape section 3 wants not-bar-mode true in absolute mode,
         // but section 9 wants false?
         IR.not_bar_mode = 1;    
         PPR.P = 1;
@@ -340,7 +340,7 @@ char* print_instr(t_uint64 word)
  *     Caller must not advanced the returned address below the minimum or
  *     maximum page or segment offsets.
  *
- * BUG/TODO: This function should probably be replaced (or make use of)
+ * FIXME/TODO: This function should probably be replaced (or make use of)
  * the decode_eis_address() and get_ptr_address() functions that were
  * derived from it.
  */
@@ -360,7 +360,7 @@ int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp,
 
     addr_modes_t addr_mode = get_addr_mode();
     if (addr_mode != APPEND_mode) {
-        // BUG: handle BAR mode and abs mode as described in EIS indir doc
+        // FIXME: handle BAR mode and abs mode as described in EIS indir doc
         log_msg(WARN_MSG, moi, "Unexpected usage of non append mode.\n");
         cancel_run(STOP_WARN);
     }
@@ -415,7 +415,7 @@ int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp,
         //cancel_run(STOP_IBKPT);
     }
 
-    uint perm = 0;  // BUG: need to have caller specify
+    uint perm = 0;  // FIXME: need to have caller specify
     int ret = page_in(offset, perm, addrp, minaddrp, maxaddrp);
     if (ret != 0) {
         if (opt_debug>0) log_msg(DEBUG_MSG, moi, "page-in faulted\n");
@@ -445,7 +445,7 @@ int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint
 
     addr_modes_t addr_mode = get_addr_mode();
     if (addr_mode != APPEND_mode) {
-        // BUG: handle BAR mode and abs mode as described in EIS indir doc
+        // FIXME: handle BAR mode and abs mode as described in EIS indir doc
         log_msg(WARN_MSG, moi, "Unexpected usage of non append mode.\n");
         cancel_run(STOP_WARN);
     }
@@ -523,7 +523,7 @@ int get_ptr_address(uint ringno, uint segno, uint offset, uint *addrp, uint *min
 
     addr_modes_t addr_mode = get_addr_mode();
     if (addr_mode != APPEND_mode) {
-        // BUG: handle BAR mode and abs mode as described in EIS indir doc
+        // FIXME: handle BAR mode and abs mode as described in EIS indir doc
         log_msg(WARN_MSG, moi, "Unexpected usage of non append mode.\n");
         cancel_run(STOP_WARN);
     }
@@ -545,7 +545,7 @@ int get_ptr_address(uint ringno, uint segno, uint offset, uint *addrp, uint *min
 
     // TPR.CA = offset;
 
-    uint perm = 0;  // BUG: need to have caller specify
+    uint perm = 0;  // FIXME: need to have caller specify
     int ret = page_in(offset, perm, addrp, minaddrp, maxaddrp);
     if (ret != 0) {
         if (opt_debug>0) log_msg(DEBUG_MSG, moi, "page-in faulted\n");
@@ -589,9 +589,9 @@ int addr_mod(const instr_t *ip)
 
     char *moi = "APU::addr-mod";
 
-    // BUG: do reg and indir word stuff first?
+    // FIXME: do reg and indir word stuff first?
 
-    TPR.is_value = 0;   // BUG: Use "direct operand flag" instead
+    TPR.is_value = 0;   // FIXME: Use "direct operand flag" instead
     TPR.value = 0135701234567;  // arbitrary junk ala 0xdeadbeef
 
     // Addr appending below
@@ -599,9 +599,9 @@ int addr_mod(const instr_t *ip)
     addr_modes_t orig_mode = get_addr_mode();
     addr_modes_t addr_mode = orig_mode;
     int ptr_reg_flag = ip->mods.single.pr_bit;
-    ca_temp_t ca_temp;  // BUG: hack
+    ca_temp_t ca_temp;  // FIXME: hack
 
-    // BUG: The following check should only be done after a sequential
+    // FIXME: The following check should only be done after a sequential
     // instr fetch, not after a transfer!  We're only called by do_op(),
     // so this criteria is *almost* met.   Need to detect transfers.
     // Figure 6-10 claims we update the TPR.TSR segno as instructed by a "PR"
@@ -621,7 +621,7 @@ int addr_mod(const instr_t *ip)
                     "RPT: First repetition; incr will be 0%o(%d).\n",
                     ip->addr, ip->addr);
             TPR.CA = ip->addr;
-            // BUG: do we need to sign-extend to allow for negative "addresses"?
+            // FIXME: do we need to sign-extend to allow for negative "addresses"?
             ca_temp.soffset = ip->addr;
         } else {
             // Note that we don't add in a delta for X[n] here.   Instead the
@@ -655,7 +655,7 @@ int addr_mod(const instr_t *ip)
         int32 offset = ip->addr & MASKBITS(15);
         ca_temp.soffset = sign15(offset);
         uint pr = ip->addr >> 15;
-        TPR.TSR = AR_PR[pr].PR.snr;     // BUG: see comment above re figure 6-10
+        TPR.TSR = AR_PR[pr].PR.snr;     // FIXME: see comment above re figure 6-10
         TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
         TPR.CA = (AR_PR[pr].wordno + ca_temp.soffset) & MASK18;
         TPR.TBR = AR_PR[pr].PR.bitno;
@@ -672,7 +672,7 @@ int addr_mod(const instr_t *ip)
         }
         ca_temp.soffset = sign18(TPR.CA);
 
-        // BUG: Enter append mode & stay if execute a transfer -- fixed?
+        // FIXME: Enter append mode & stay if execute a transfer -- fixed?
     }
 
     if (cu.instr_fetch) {
@@ -741,7 +741,7 @@ int addr_mod(const instr_t *ip)
         if (addr_mode == BAR_mode && ptr_reg_flag == 0) {
             // Todo: Add CA to BAR.base; add in PR; check CA vs bound
         }
-        // BUG: Section 4 says make sure CA cycle handled AR reg mode and
+        // FIXME: Section 4 says make sure CA cycle handled AR reg mode and
         // constants
         if (TPR.is_value) {
             log_msg(WARN_MSG, moi, "BAR mode not fully implemented.\n");
@@ -785,7 +785,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
 {
     ca_tempp->more = 0;
 
-    // BUG: Need to do ESN special handling if loop is continued
+    // FIXME: Need to do ESN special handling if loop is continued
 
     // the and is a hint to the compiler for the following switch...
     enum atag_tm tm = (ca_tempp->tag >> 4) & 03;
@@ -874,12 +874,12 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
             }
             // break;   // Continue a new CA cycle
             ca_tempp->more = 1;     // Continue a new CA cycle
-            // BUG: flowchart says start CA, but we do ESN
+            // FIXME: flowchart says start CA, but we do ESN
             return 0;
         }
         case atag_it: {
         // Tm=2 -- indirect then tally (it)
-            // BUG: see "it" flowchart for looping (Td={15,17}
+            // FIXME: see "it" flowchart for looping (Td={15,17}
             switch(td) {
                 case 0:
                     log_msg(WARN_MSG, "APU", "IT with Td zero not valid in instr word.\n");
@@ -900,7 +900,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                         int tag = getbits36(iword, 30, 6);
                         ++tally;
                         tally &= MASKBITS(12);  // wrap from 4095 to zero
-                        // BUG: do we need to fault?
+                        // FIXME: do we need to fault?
                         IR.tally_runout = (tally == 0);
                         if (IR.tally_runout)
                             log_msg(NOTIFY_MSG, "APU", "IT(di): tally runout\n");
@@ -961,7 +961,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                     log_msg(NOTIFY_MSG, "APU::IR", "loop # %d\n", nloops);
                 if (tm == atag_ir)
                     cu.CT_HOLD = td;
-                // BUG: Maybe handle special tag (41 itp, 43 its).  Or post
+                // FIXME: Maybe handle special tag (41 itp, 43 its).  Or post
                 // handle?
                 if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR",
                     "pre-fetch: Td=0%o, TPR.CA=0%o\n", td, TPR.CA);
@@ -995,7 +995,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                         "post-fetch: TPR.CA=0%o, tag=0%o, new tm=0%o; td = %o\n",
                         TPR.CA, ca_tempp->tag, tm, td);
                     if (td == 0) {
-                        // BUG: Disallow a reg_mod() with td equal to
+                        // FIXME: Disallow a reg_mod() with td equal to
                         // NULL (AL39)
                         // Disallow always or maybe ok for ir?
                         log_msg(ERR_MSG, "APU::IR", "Found td==0 (for tm=0%o)\n", tm);
@@ -1029,7 +1029,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
         }
     }
 
-    // BUG: Need to do ESN special handling if loop is continued
+    // FIXME: Need to do ESN special handling if loop is continued
 
     return 0;
 }
@@ -1113,8 +1113,8 @@ void reg_mod(uint td, int off)
 
 static void register_mod(uint td, uint off, uint *bitnop, int nbits)
 {
-    // BUG/TODO: addr_mod() isn't our only caller...
-    // ; TPR.is_value = 0; // BUG: Use "direct operand flag" instead
+    // FIXME/TODO: addr_mod() isn't our only caller...
+    // ; TPR.is_value = 0; // FIXME: Use "direct operand flag" instead
 
     char *moi = "APU::reg-mod";
     switch(td) {
@@ -1131,12 +1131,12 @@ static void register_mod(uint td, uint off, uint *bitnop, int nbits)
             TPR.CA &= MASK18;
             break;
         case 3: // ,du
-            TPR.is_value = td;  // BUG: Use "direct operand flag" instead
+            TPR.is_value = td;  // FIXME: Use "direct operand flag" instead
             TPR.value = ((t_uint64) TPR.CA) << 18;
             if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Mod du: Value from offset 0%o is 0%llo\n", TPR.CA, TPR.value);
             break;
         case 4: // PPR.IC
-            TPR.CA = off + PPR.IC;  // BUG: IC assumed to be unsigned
+            TPR.CA = off + PPR.IC;  // FIXME: IC assumed to be unsigned
             TPR.CA &= MASK18;
             break;
         case 5:
@@ -1155,8 +1155,8 @@ static void register_mod(uint td, uint off, uint *bitnop, int nbits)
             TPR.CA &= MASK18;
             break;
         case 7: // ,dl
-            TPR.is_value = td;  // BUG: Use "direct operand flag" instead
-            TPR.value = TPR.CA; // BUG: Should we sign?
+            TPR.is_value = td;  // FIXME: Use "direct operand flag" instead
+            TPR.value = TPR.CA; // FIXME: Should we sign?
             if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "Mod dl: Value from offset 0%o is 0%llo\n", TPR.CA, TPR.value);
             break;
         case 010:
@@ -1194,7 +1194,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
     if (ca_tempp->tag == 041) {
         // itp
         t_uint64 word1, word2;
-        // BUG: are we supposed to fetch?
+        // FIXME: are we supposed to fetch?
         int ret = fetch_pair(TPR.CA, &word1, &word2);   // bug: refetching word1
         if (ret != 0)
             return ret;
@@ -1243,7 +1243,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
     } else if (ca_tempp->tag == 043) {
         // its
         t_uint64 word1, word2;
-        // BUG: are we supposed to fetch?
+        // FIXME: are we supposed to fetch?
         if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "ITS: CA initially 0%o\n", TPR.CA);
         int ret = fetch_pair(TPR.CA, &word1, &word2);   // bug: refetching word1
         if (ret != 0)
@@ -1263,7 +1263,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
                 ret = 1;
             } else
                 log_msg(INFO_MSG, "APU:ITS", "Segment %#o is missing.\n", TPR.TSR);
-            sdw_r1 = 7;     // BUG/TODO: what ring should we use when there is none?  Currently using worst case -- 7
+            sdw_r1 = 7;     // FIXME/TODO: what ring should we use when there is none?  Currently using worst case -- 7
         } else
             sdw_r1 = SDWp->r1;
         TPR.TRR = max3(its_rn, sdw_r1, TPR.TRR);
@@ -1315,7 +1315,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         log_msg(ERR_MSG, "APU", "Call6 and transfer operands not implemented.\n");
         cancel_run(STOP_BUG);
     } else {
-        // BUG: What does the question "Appending unit data movement?" mean?
+        // FIXME: What does the question "Appending unit data movement?" mean?
     }
 #endif
     return 0;
@@ -1342,7 +1342,7 @@ static int addr_append(t_uint64 *wordp)
  * Note that we allow an arbitrary offset not just TPR.CA.   This is to support
  * instruction fetches.
  *
- * BUG: Need to handle y-pairs -- fixed?
+ * FIXME: Need to handle y-pairs -- fixed?
  *
  * In BAR mode, caller is expected to have already added the BAR.base and
  * checked the BAR.bounds
@@ -1546,7 +1546,7 @@ int convert_address(uint* addrp, int seg, int offset, int fault)
  * Return the 24-bit absolute address for an offset in the current segment
  * Attempts to page-in the data.
  *
- * BUG: causes faults, but see fault_gen_no_fault global.  Now that null
+ * FIXME: causes faults, but see fault_gen_no_fault global.  Now that null
  * pointers (-1, -2, etc) are handled differently, the faulting is probably
  * no longer a bug...
  *
@@ -1577,7 +1577,7 @@ int get_seg_addr(uint offset, uint perm_mode, uint *addrp)
  * Note that directed faults will occur if a SDW is so flagged (e.g. when the
  * segment is on disk).
  *
- * BUGS/Caveats:
+ * FIXME/BUGS/Caveats:
  *     perm_mode is currently not checked by page_in_page().
  *
  * Results:
@@ -1632,7 +1632,7 @@ static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uin
 static SDWAM_t* page_in_sdw()
 {
 
-    // BUG/ERROR: Validate that all PTWAM & SDWAM entries are always "full" and
+    // FIXME/ERROR: Validate that all PTWAM & SDWAM entries are always "full" and
     // that use fields are always sane
 
     // TODO: Replace most of this with more efficient methods that match the
@@ -1640,12 +1640,12 @@ static SDWAM_t* page_in_sdw()
 
     uint segno = TPR.TSR;   // Should be been loaded with PPR.PSR if this is an instr fetch...
     
-    // BUG: Need bounds checking at all cycles below except PSDW cycle
+    // FIXME: Need bounds checking at all cycles below except PSDW cycle
 
     // Check to see if SDW for segno is in SDWAM
     // Save results across invocations so that locality of reference avoids search
     static SDWAM_t *SDWp = 0;
-    if (SDWp == 0) SDWp = cpup->SDWAM;  // BUG: expose to reset? // BUG won't work for multiple CPUs
+    if (SDWp == 0) SDWp = cpup->SDWAM;  // FIXME: expose to reset? // BUG won't work for multiple CPUs
     int oldest_sdwam = -1;
     if (SDWp == NULL || SDWp->assoc.ptr != segno || ! SDWp->assoc.is_full) {    // todo: validate NULL as impossible
         SDWp = NULL;
@@ -1690,7 +1690,7 @@ static SDWAM_t* page_in_sdw()
             // a held fault and don't actually generate the fault unless the
             // instruction attempts to dereference through the "bad" pointer.
             if (! fault_gen_no_fault)
-                cu.word1flags.oosb = 1;         // BUG: nothing clears
+                cu.word1flags.oosb = 1;         //FIXME? nothing clears
             log_msg(INFO_MSG, "APU::append", "Initial check: Segno outside DSBR bound of 0%o(%u) -- OOSB fault now pending.\n", cpup->DSBR.bound, cpup->DSBR.bound);
             if (! fault_gen_no_fault)
                 cpu.apu_state.fhld = 1;
@@ -1703,7 +1703,7 @@ static SDWAM_t* page_in_sdw()
         // Descriptor table is paged
         if (segno * 2 >= 16 * (cpup->DSBR.bound + 1)) {
             // See comments just above re legal usage of "bad" pointers
-            // BUG 12/05/2008 -- bootload_1.alm, instr 17 triggers this (FIXED)
+            //  12/05/2008 -- bootload_1.alm, instr 17 triggers this (FIXED)
             log_msg(INFO_MSG, "APU::append", "Initial check: Segno outside paged DSBR bound of 0%o(%u) -- OOSB fault now pending.\n", cpup->DSBR.bound, cpup->DSBR.bound);
             if (! fault_gen_no_fault)
                 cu.word1flags.oosb = 1;         // ERROR: nothing clears
@@ -1812,7 +1812,7 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp,
         uint y2 = offset % page_size;           // offset within page
         uint x2 = (offset - y2) / page_size;    // page number
         static PTWAM_t *PTWp = 0;
-        if (PTWp == 0) PTWp = cpup->PTWAM;  // BUG: expose to reset? // BUG: won't work for multiple CPUs
+        if (PTWp == 0) PTWp = cpup->PTWAM;  // FIXME expose to reset? // BUG: won't work for multiple CPUs
         int oldest_ptwam = -1;
         // TODO: performance: cache last index instead and start search from there
         if (PTWp == NULL || PTWp->assoc.ptr != segno || PTWp->assoc.pageno != x2 || ! PTWp->assoc.is_full) {    // todo: validate NULL as impossible

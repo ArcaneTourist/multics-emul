@@ -20,7 +20,7 @@ using namespace std;
 //#include <fcntl.h>
 
 #include "hw6180.h"
-#include "seginfo.h"
+#include "seginfo.hpp"
 
 // BUG: The following externs are hacks
 extern t_uint64 M[];    /* memory */    // BUG: hack

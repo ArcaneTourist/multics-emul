@@ -191,7 +191,7 @@ static inline int32 negate18(t_uint64 x)
 
 static inline void negate72(t_uint64* hip, t_uint64* lop)
 {
-    // BUG? -- overflow not detected/reported.
+    // FIXME? -- overflow not detected/reported.
     *hip = (~ *hip) & MASK36;
     *lop = (~ *lop) & MASK36;
     ++ *lop;
