@@ -355,7 +355,7 @@ int op_btd(const instr_t* ip)
 
     cpu.irodd_invalid = 1;
 
-    num_desc_t desc1(ip->mods.mf1, word1, 1);   // will be 9bit
+    alpha_desc_t desc1(ip->mods.mf1, word1, 1); // will be 9bit
     num_desc_t desc2(mf2, word2, 1);
     char msg_buf[100];
     log_msg(INFO_MSG, moi, "desc1: %s\n", desc1.to_text(msg_buf));
@@ -382,18 +382,20 @@ int op_btd(const instr_t* ip)
 
     // First, read out the nibbles into src_hi and src_lo -- we might need to negate
     t_uint64 src_hi = 0, src_lo = 0;
-    // int n = desc1.n;
-    for (int n_quads = 0; desc1.n() > 0; ++ n_quads) {
+    //int w = desc1.width();
+    //if (w != 9) log_msg(INFO_MSG, moi, "source is %d-bit.\n", w);
+    const int w = 9;
+    for (int nbits = 0; desc1.n() > 0; nbits += w) {
         uint nib;
         if (desc1.get(&nib) != 0) { // must fetch when needed
             return 1;
             break;
         }
-        if (n_quads >= 9) {
-            src_hi <<= 4;
-            src_hi |= getbits36(src_lo, 0, 4);
+        if (nbits >= 36) {
+            src_hi <<= w;
+            src_hi |= getbits36(src_lo, 0, w);
         }
-        src_lo <<= 4;
+        src_lo <<= w;
         src_lo |= nib;
     }
     src_lo &= MASK36;
@@ -594,7 +596,7 @@ int op_dtb(const instr_t* ip)
 
     // First op is bcd with either 4bit or 9bit nibbles.
     // Second op is a binary number between 9bits and 72bits.
-    // The maximum value is nine digit string consisting of all nines.  The
+    // The maximum value is a nine digit string consisting of all nines.  The
     // corresponding unsigned binary value only requires 32 bits.
     
     // Calculate binary value
@@ -1048,7 +1050,10 @@ static int mop_init(num_desc_t *descp, int is_decimal)
         }
     }
 
-    log_msg(INFO_MSG, moi, "N = %d, flags.sn = %d, sign=%#o, exp=%#o(%d)\n", mopinfo.n_src, mopinfo.flags.sn, mopinfo.sign, mopinfo.exp, mopinfo.exp);
+    log_msg(INFO_MSG, moi, "N = %d, flags: { es = %d, sn = %d, z = %d, bz = %d }, sign=%#o, exp=%#o(%d)\n",
+            mopinfo.n_src,
+            mopinfo.flags.es, mopinfo.flags.sn, mopinfo.flags.z, mopinfo.flags.bz,
+            mopinfo.sign, mopinfo.exp, mopinfo.exp);
     {
     char msg[4*64+1];
     for (int i = 0; i < mopinfo.n_src; ++i) 
@@ -1080,8 +1085,7 @@ static int mop_put(eis_desc_t *dest_descp, int is_decimal, unsigned byte)
         else if (dest_descp->nbits == 6)
             byte &= 0x3f;
         else if (dest_descp->nbits == 9) {
-            byte &= 0xf;
-            byte |= mopinfo.eit[8] & 0x1f0;
+            // Caller should fill digits or send specials such as blanks
         }
 
         if (040 <= byte && byte <= 0176)
@@ -1112,7 +1116,7 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
         fault_gen(illproc_fault);
         return 1;
     }
-    uint mop = (mop_byte >> 4) & 0177;
+    uint mop = (mop_byte >> 4) & 037;
     uint mop_if = mop_byte & 017;
 
     log_msg(INFO_MSG, moi, "Got MOP {%03o,%02o} %#o\n", mop, mop_if, mop_byte);
@@ -1125,6 +1129,7 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
                     if (mop_put(dest_descp, is_decimal, sign) != 0)
                         return 1;
                     mopinfo.flags.es = 1;
+                    log_msg(INFO_MSG, moi, "flags.es set on.\n");
                 } else {
                     // no action
                 }
@@ -1134,6 +1139,7 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
                     if (mop_put(dest_descp, is_decimal, sign) != 0)
                         return 1;
                     mopinfo.flags.es = 1;
+                    log_msg(INFO_MSG, moi, "flags.es set on.\n");
                 } else {
                     // no action
                 }
@@ -1182,15 +1188,26 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
                 if (src != 0)
                     mopinfo.flags.z = 0;
                 log_msg(DEBUG_MSG, moi, "Fetched src %#o\n", src);
-                if (! mopinfo.flags.es) {
-                    if (src == 0)
+                if (mopinfo.flags.es) {
+                    if (is_decimal && dest_descp->nbits == 9) {
+                        src &= 0xf;
+                        src |= mopinfo.eit[8] & 0x1f0;
+                    }
+                } else {
+                    if (src == 0) {
                         src = mopinfo.eit[1];   // normally " "
-                    else {
-                        unsigned sign = mopinfo.eit[(mopinfo.flags.sn) ? 4 : 3];
+                        log_msg(DEBUG_MSG, moi, "Using EIT[1] == %#o\n", src);
+                    } else {
+                        int which = (mopinfo.flags.sn) ? 4 : 3;
+                        unsigned sign = mopinfo.eit[which];
+                        log_msg(DEBUG_MSG, moi, "Using sign at EIT[%d] == %#o\n", which, sign);
                         if (mop_put(dest_descp, is_decimal, sign) != 0)
                             return 1;
                         // TODO: should we test for destination exhaustion here?
                         mopinfo.flags.es = 1;
+                        log_msg(INFO_MSG, moi, "flags.es set on.\n");
+                        src &= 0xf;
+                        src |= mopinfo.eit[8] & 0x1f0;
                     }
                 }
                 if (mop_put(dest_descp, is_decimal, src) != 0)
@@ -1213,6 +1230,10 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
                 --mopinfo.n_src;
                 if (src != 0)
                     mopinfo.flags.z = 0;
+                if (is_decimal && dest_descp->nbits == 9) {
+                    src &= 0xf;
+                    src |= mopinfo.eit[8] & 0x1f0;
+                }
                 if (mop_put(dest_descp, is_decimal, src) != 0)
                     return 1;
                 if (dest_descp->n == 0)
@@ -1220,10 +1241,15 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
             }
             break;
         case 003:   // ses -- Set End Suppression
+            {
+            int old_es = mopinfo.flags.es;
             mopinfo.flags.es =  (mop_if & 010) != 0;            // bit zero
+            if (old_es != mopinfo.flags.es)
+                log_msg(INFO_MSG, moi, "flags.es is now %s.\n", (mopinfo.flags.es) ? "on" : "off");
             if ((mop_if & 004) != 0)        // bit one
                 mopinfo.flags.bz = 1;
             break;
+            }
         case 010:   // insb -- Insert Blank On Suppression
             if (mop_if > 8) {
                 log_msg(NOTIFY_MSG, moi, "INSB with bad IF %d\n", mop_if);
@@ -1252,6 +1278,11 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
                         fault_gen(illproc_fault);
                         return 1;
                     }
+                    //if (is_decimal && dest_descp->nbits == 9) {
+                    //  -- unclear if we should high order fill when pulling from mop string...
+                    //  byte &= 0xf;
+                    //  byte |= mopinfo.eit[8] & 0x1f0;
+                    //}
                     log_msg(INFO_MSG, moi, "INSB: read next mop (%#o) and write it.\n", byte);
                 }
             }
@@ -1300,7 +1331,7 @@ static int mop_execute(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is_dec
 
 // ============================================================================
 
-#if 0
+#if 1
 static int _op_mvne(const instr_t* ip);
 int op_mvne(const instr_t* ip)
 {
@@ -1315,7 +1346,7 @@ int op_mvne(const instr_t* ip)
 }
 #endif
 
-int op_mvne(const instr_t* ip)
+int _op_mvne(const instr_t* ip)
 {
     const char* moi = "OPU::mvne";
 
@@ -1344,6 +1375,10 @@ int op_mvne(const instr_t* ip)
         cancel_run(STOP_BUG);
         return 1;
     }
+    // NOTE: AL-39 says that the only the lower 6 bits of the lengths
+    // may be non-zero, but also says that the lengths are treated
+    // as modulo 64.  The latter probably just means that the higher order
+    // bits are ignored and no fault is generated if they are set.
     eis_desc_mod64(&desc2);
     eis_desc_t desc3;
     if (decode_eis_alphanum_desc(&desc3, &mf3, word3, 0, 1) != 0) {
@@ -1770,3 +1805,133 @@ float -> integer
     PPR.IC += 3;
     return ret;
 }
+
+// ============================================================================
+
+#if 1
+static int _op_dv3d(const instr_t* ip);
+int op_dv3d(const instr_t* ip)
+{
+    extern DEVICE cpu_dev;
+    int saved_debug = opt_debug;
+    int saved_dctrl = cpu_dev.dctrl;
+    ++ opt_debug; ++ cpu_dev.dctrl;
+    int ret = _op_dv3d(ip);
+    opt_debug = saved_debug;
+    cpu_dev.dctrl = saved_dctrl;
+    return ret;
+}
+#endif
+
+static int _op_dv3d(const instr_t* ip)
+{
+    const char* moi = "OPU::dv3d";
+
+    flag_t sign_ctl = ip->addr >> 17;   // "P"
+    flag_t trunc = (ip->addr >> 8) & 1; // "T"
+    flag_t round = (ip->addr >> 7) & 1; // "R"
+
+    log_msg(DEBUG_MSG, moi, "P(4-bit sign ctl) = %c, T(trunc flt enable) = %c, R(rounding) = %c.\n",
+        sign_ctl ? 'Y' : 'N',
+        trunc ? 'Y' : 'N',
+        round ? 'Y' : 'N');
+
+    uint mf2bits = ip->addr & MASKBITS(7);
+    uint mf3bits = (ip->addr >> 9) & MASKBITS(7);
+
+    log_msg(DEBUG_MSG, moi, "mf1 = %s\n", mf2text(&ip->mods.mf1));
+
+    eis_mf_t mf2;
+    (void) parse_mf(mf2bits, &mf2);
+    log_msg(DEBUG_MSG, moi, "mf2 = %s\n", mf2text(&mf2));
+
+    eis_mf_t mf3;
+    (void) parse_mf(mf3bits, &mf3);
+    log_msg(DEBUG_MSG, moi, "mf3 = %s\n", mf2text(&mf3));
+
+    t_uint64 word1, word2, word3;
+    if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, &mf3, &word3) != 0)
+        return 1;
+
+    num_desc_t desc1(ip->mods.mf1, word1, 1);
+    char msg_buf[100];
+    log_msg(INFO_MSG, moi, "desc1: %s\n", desc1.to_text(msg_buf));
+    num_desc_t desc2(mf2, word2, 1);
+    log_msg(INFO_MSG, moi, "desc2: %s\n", desc2.to_text(msg_buf));
+    num_desc_t desc3(mf3, word3, 1);
+    log_msg(INFO_MSG, moi, "desc3: %s\n", desc3.to_text(msg_buf));
+
+    // Determine how many byte positions are in the source and the
+    // destination, not counting the sign bytes and exponent bytes
+
+    int n_divisor = desc1.n();      // digit bytes, excluding signs and exponents
+    if (desc1.s != 3)
+        -- n_divisor;   // byte for sign
+    if (desc1.s == 0)
+        n_divisor -= (desc1.width() == 4) ? 2 : 1;  // exponent byte(s)
+
+    int n_num = desc2.n();      // digit bytes, excluding signs and exponents
+    if (desc2.s != 3)
+        n_num -= 1;             // sign byte
+    if (desc2.s == 0)
+        n_num -= (desc2.width() == 4) ? 2 : 1;  // exponent byte(s)
+
+    int n_dest = desc3.n();     // digit bytes, excluding signs and exponents
+    if (desc3.s != 3)
+        n_dest -= 1;                // sign byte
+    if (desc3.s == 0)
+        n_dest -= (desc3.width() == 4) ? 2 : 1; // exponent byte(s)
+
+    log_msg(DEBUG_MSG, moi, "Dividend is type %d with %d digits with %d total bytes.\n",
+        desc2.s, n_num, desc2.n());
+    log_msg(DEBUG_MSG, moi, "Divisor is type %d with %d digits with %d total bytes.\n",
+        desc1.s, n_divisor, desc1.n());
+    log_msg(DEBUG_MSG, moi, "Quotient result is is type %d with %d digits with %d total bytes.\n",
+        desc3.s, n_dest, desc3.n());
+
+
+    // Read in the dividend
+    uint in_ybuf_num[64];           // ops can be up to 63 4-bit or 9-bit nibbles
+int temp_num = desc2.n();
+    for (int i = 0; desc2.n() != 0; ++i) {
+        int ret = desc2.get(in_ybuf_num + i);
+        if (ret != 0) {
+            log_msg(ERR_MSG, moi, "Error reading input.\n");
+            return 1;
+        }
+    }
+    {
+    char msg[5*64+1];
+    for (int i = 0; i < temp_num ; ++i) 
+        sprintf(msg + i * 5, " %03o,", in_ybuf_num[i]);
+    log_msg(DEBUG_MSG, moi, "DIVIDEND = {%s }\n", msg);
+    }
+
+
+    // Read in the divisor
+int temp_divisor = desc1.n();
+    uint in_ybuf_divisor[64];       // ops can be up to 63 4-bit or 9-bit nibbles
+    for (int i = 0; desc1.n() != 0; ++i) {
+        int ret = desc1.get(in_ybuf_divisor + i);
+        if (ret != 0) {
+            log_msg(ERR_MSG, moi, "Error reading input.\n");
+            return 1;
+        }
+    }
+    {
+    char msg[5*64+1];
+    for (int i = 0; i < temp_divisor ; ++i) 
+        sprintf(msg + i * 5, " %03o,", in_ybuf_divisor[i]);
+    log_msg(DEBUG_MSG, moi, "DIVISOR = {%s }\n", msg);
+    }
+
+
+    log_msg(ERR_MSG, moi, "Unimplemented\n");
+    cancel_run(STOP_BUG);
+
+    PPR.IC += 4;
+    return 1;
+}
+
+// ============================================================================
+

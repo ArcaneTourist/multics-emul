@@ -2331,6 +2331,7 @@ static void init_opcodes()
     is_eis[(opcode1_sztr<<1)|1] = 1;
     is_eis[(opcode1_btd<<1)|1] = 1;
     is_eis[(opcode1_dtb<<1)|1] = 1;
+    is_eis[(opcode1_dv3d<<1)|1] = 1;
 }
 
 // ============================================================================

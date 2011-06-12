@@ -11,7 +11,7 @@ extern "C" {
 // TODO: Does OPU need to force modulo 64 for register derived lengths (which might otherwise be over 6 bits) ?
 // Might be better to do via parse_eis_*_desc()
 
-// We probably need to get rid of this and use desc_t
+// We probably need to get rid of this and use desc_t's derived types (FIXME)
 typedef struct {
     void *dummyp;
     void *objp;

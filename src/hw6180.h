@@ -681,6 +681,7 @@ extern int op_dtb(const instr_t* ip);
 extern int op_scm(const instr_t* ip, int fwd);
 extern int op_mvne(const instr_t* ip);
 extern int op_mvn(const instr_t* ip);
+extern int op_dv3d(const instr_t* ip);
 
 /* scu.c */
 extern int scu_cioc(t_uint64 addr);

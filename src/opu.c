@@ -3427,7 +3427,9 @@ static int do_an_op(instr_t *ip)
             // mp2d unimplemented -- multiply using two decimal operands
             // mp2d unimplemented -- multiply using three decimal operands
             // dv2d unimplemented -- divide using two decimal operands; BUG: see comments by rmabee@comcast.net
-            // dv3d unimplemented -- divide using three decimal operands
+
+            case opcode1_dv3d:      // divide using three decimal operands
+                return op_dv3d(ip);
 
             default:
                 log_msg(ERR_MSG, "OPU", "Unimplemented opcode %03o(1)\n", op);
