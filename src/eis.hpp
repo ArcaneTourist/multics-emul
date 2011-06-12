@@ -97,7 +97,7 @@ public:
     void set(bool ar, unsigned reg, int nbits, unsigned y);
     int init();
     int valid() const { return page.valid(); }
-    void bit_advance(int nbits) { return _bit_advance(nbits,0); }
+    void bit_advance(int nbits) { _bit_advance(nbits,0); }
     void char_advance(int nchars);
     void word_advance(int nwords);  // positions to bit zero of requested word
     int addr() const { return page.valid() ? (int) page.addr : -1; }
@@ -158,14 +158,7 @@ private:
     int _get(unsigned* valp, bool want_advance);
     int _put(unsigned val, bool want_advance);
 public:
-#if 0
-    desc_t();
-    desc_t(const eis_mf_t& mf, int y_addr, int width, int cn, int bit_offset, int nchar, int is_read, int is_fwd) :
-        _curr(mf.ar, mf.reg, width, y_addr)
-    {
-        init(mf, y_addr, width, cn, bit_offset, nchar, is_fwd);
-    }
-#endif
+    // desc_t(); -- no constructor for abstract base class; use init()
     void init(const eis_mf_t& mf, int y_addr, int width, int cn, int bit_offset, int nchar, int is_fwd);
     void mod64() {      // adjust length to be modulo 64
         _n %= 64; /* _mod64 = 1 */; }

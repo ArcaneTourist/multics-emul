@@ -200,29 +200,16 @@ static int fetch_mf_op(uint opnum, const eis_mf_t* mfp, t_uint64* wordp)
     if (fetch_word(PPR.IC + opnum, wordp) != 0)
         return 1;
     if (mfp != NULL && mfp->id) {
-        // don't implement until we see an example
-        // Should probably use get_eis_indir_addr()
-        log_msg(ERR_MSG, "APU", "Fetch EIS multi-word op: MF with indir bit set is unsupported:\n");
-        uint addr = *wordp >> 18;
-        uint a = getbits36(*wordp, 29, 1);
-        uint td = *wordp & MASKBITS(4);
-        // addr_modes_t addr_mode = get_addr_mode();
-        if (a) {
-            // indir via pointer register
-            uint pr = addr >> 15;
-            int32 offset = addr & MASKBITS(15);
-            int32 soffset = sign15(offset);
-            // PR[pr]
-            // generalize once we have an example.  Call get_mf_an_addr()
-            log_msg(ERR_MSG, "APU", "Indir word %012llo: pr=%#o, offset=%#o(%d); REG(Td)=%#o\n", *wordp, pr, offset, soffset, td); 
-        } else {
-            // use 18 bit addr in all words -- fetch_word will handle
-            log_msg(ERR_MSG, "APU", "Indir word %012llo: offset=%#o(%d); REG(Td)=%#o\n", *wordp, addr, sign18(addr), td); 
-        }
-        // enum atag_tm tm = atag_r;
-        // TPR.CA = 0;
-        // reg_mod(td, 0);
-        cancel_run(STOP_BUG);
+        log_msg(WARN_MSG, "APU", "Fetch EIS multi-word op: MF with indir bit set found.  Untested...\n\n");
+        uint addr;
+        if (get_eis_indir_addr(*wordp, &addr) != 0)
+            return 1;
+        log_msg(WARN_MSG, "APU", "Indirect word points to descriptor word at abs addr %#o\n", addr);
+        if (fetch_abs_word(addr, wordp) != 0)
+            return 1;
+        log_msg(WARN_MSG, "APU", "Descriptor word fetched via indirection is %012llo.\n", *wordp);
+        // FIXME: Need to check for further indirection!
+        cancel_run(STOP_WARN);
     }
     return 0;
 }
@@ -353,24 +340,6 @@ const char* eis_desc_to_text(const eis_desc_t* descp)
 //=============================================================================
 
 /*
- * desc_t::desc_t() -- constructor
- *
- */
-
-#if 0
-desc_t::desc_t()
-{
-    dummyp = this + 1;
-    ptr_init = 0;
-    _addr = 0;
-    _width = 0;
-    _count = 0;
-}
-#endif
-
-//=============================================================================
-
-/*
  * desc_t::init()
  *
  */
@@ -385,6 +354,9 @@ void desc_t::init(const eis_mf_t& mf, int y_addr, int width, int cn, int bit_off
     _addr = y_addr;
     ptr_init = 0;       // BUG/TODO: call init() here.  Or wait for cn fixup...
     _width = width;
+
+    if (_width == 4)
+        log_msg(NOTIFY_MSG, "APU::EIS", "Initializing 4-bit descriptor.\n");
 
     _mf = mf;
     _count = nchar;     // TODO: rename to "rl" or similar
@@ -594,6 +566,8 @@ void ptr_t::set(bool ar, unsigned reg, int width, unsigned y)
     initial.reg = reg;
     initial.width = width;
     initial.y = y;
+    if (width == 4)
+        log_msg(NOTIFY_MSG, "APU::EIS", "Initializing 4-bit ptr.\n");
 }
 
 //=============================================================================
@@ -733,7 +707,16 @@ void ptr_t::word_advance(int nwords)
 void ptr_t::char_advance(int nchars)
 {
 
-    _bit_advance(nchars * initial.width, 1);
+    if (initial.width != 4)
+        _bit_advance(nchars * initial.width, 1);
+    else {
+        log_msg(NOTIFY_MSG, "ptr_t::char_advance", "4-bit advance untested.\n");
+        _bit_advance(9 * (nchars / 2), 0);
+        if (nchars % 2 == 1)
+            _bit_advance((_bitnum %9 == 0) ? 5 : 4, 0);
+        if (nchars % 2 == -1)
+            _bit_advance((_bitnum %9 == 0) ? -4 : -5, 0);
+    }
 }
 
 //=============================================================================
@@ -850,6 +833,14 @@ int desc_t::_get(unsigned* valp, bool want_advance)
         if (opt_debug)
             log_msg(DEBUG_MSG, moi, "Fetched word at %#o: %012llo\n",
                 _curr.addr(), buf.word);
+    }
+
+    if (_width == 4) {
+        if (_curr.bitno() % 9 == 0) {
+            if (opt_debug > 1)
+                log_msg(DEBUG_MSG, moi, "Skipping hi-bit of 9-bit nibble for 4-bit data.\n");
+            _curr.bit_advance(1);
+        }
     }
 
     *valp = getbits36(buf.word, _curr.bitno(), _width);
@@ -993,13 +984,26 @@ int desc_t::init_ptr()
     // calling get() ?
     if (first_char.cn != 0 || first_char.bitno != 0) {
         // Descriptor initially points to a non-zero bit offset
+        log_level msg_level = DEBUG_MSG;
         int curr_bit = _curr.bitno();   // save for debug msgs
-        _curr.bit_advance(first_char.cn * _width + first_char.bitno);
-        if (opt_debug>0) {
+        if (_width != 4)
+            _curr.bit_advance(first_char.cn * _width + first_char.bitno);
+        else {
+            msg_level = NOTIFY_MSG;
+            log_msg(NOTIFY_MSG, moi, "4-bit data with inital offset untested.\n");
+            if (first_char.cn != 0) {
+                _curr.bit_advance(9 * (first_char.cn / 2));
+                if (first_char.cn % 2 == 1)
+                    _curr.bit_advance(5);
+            }
+            if (first_char.bitno != 0)
+                _curr.bit_advance(first_char.bitno);
+        }
+        if (opt_debug>0 || msg_level != DEBUG_MSG) {
             if (_curr.bitno() == 0)
-                log_msg(DEBUG_MSG, moi, "Cn is %d, addr is bit %d, and bitno is zero, so initial bitpos becomes %d\n", first_char.cn, curr_bit, _curr.bitno());
+                log_msg(msg_level, moi, "Cn is %d, addr is bit %d, and bitno is zero, so initial bitpos becomes %d\n", first_char.cn, curr_bit, _curr.bitno());
             else
-                log_msg(DEBUG_MSG, moi, "Cn is %d, addr is bit %d, and bitno is %d, so initial bitpos becomes %d\n", first_char.cn, curr_bit, first_char.bitno, _curr.bitno());
+                log_msg(msg_level, moi, "Cn is %d, addr is bit %d, and bitno is %d, so initial bitpos becomes %d\n", first_char.cn, curr_bit, first_char.bitno, _curr.bitno());
         }
     }
 
@@ -1109,13 +1113,21 @@ int desc_t::_put(unsigned val, bool want_advance)
     }
 
     t_uint64 tmp = buf.word;
-    buf.word = setbits36(buf.word, _curr._bitno(), _width, val);
+    if (_width != 4)
+        buf.word = setbits36(buf.word, _curr._bitno(), _width, val);
+    else {
+        log_msg(NOTIFY_MSG, moi, "4-bit put untested; buf is %012llo; bitno = %d, val = %#o, buf is %012llo.\n", buf.word, _curr.bitno(), val, buf.word);
+        if (_curr.bitno() % 9 == 0)
+            buf.word = setbits36(buf.word, _curr._bitno(), 1, 0);
+        buf.word = setbits36(buf.word, _curr._bitno(), _width, val);
+        log_msg(NOTIFY_MSG, moi, "4-bit put results: buf now %012llo with bitno %d.\n", buf.word, _curr.bitno());
+    }
     // NOTE: We need to know the bitno whether or not the page is paged-in.
     if (buf.lo_write == -1 || buf.lo_write > _curr._bitno())
         buf.lo_write = _curr._bitno();
     if (buf.hi_write == -1 || buf.hi_write < _curr._bitno())
         buf.hi_write = _curr._bitno();
-    if (opt_debug > 1)
+    if (opt_debug > 1 || _width == 4)
         log_msg(DEBUG_MSG, moi, "Setting %d-bit char at position %2d of %012llo to %#o: %012llo\n",
             _width, _curr._bitno(), tmp, val, buf.word);
     if ((buf.word >> 36) != 0) {
@@ -1130,8 +1142,9 @@ int desc_t::_put(unsigned val, bool want_advance)
     // We won't flush() unless we're moving the ptr
     if (want_advance) {
         -- _n;
+        int lim = (_width == 4) ? 1 : 0;
         bool is_buf_full = (_is_fwd) ? (_curr._bitno() + _width == 36) :
-            (_curr._bitno() == 0);
+            (_curr._bitno() <= lim);
         if (is_buf_full) {
             // Need to flush buffer
             if (flush(0) != 0) {
@@ -1189,7 +1202,14 @@ int desc_t::flush(int verbose)
         }
     }
 
-    bool is_full = buf.lo_write == 0 && buf.hi_write == 36 - _width;
+    bool is_full;
+    if (_width != 4)
+        is_full = buf.lo_write == 0 && buf.hi_write == 36 - _width;
+    else {
+        // following may not be necessary if put always pads, but shouldn't
+        // hurt anything
+        is_full = buf.lo_write <= 1 && buf.hi_write == 36 - _width;
+    }
     if (buf.lo_write < 0 || buf.hi_write > 36 - _width) {
         log_msg(WARN_MSG, moi, "Odd, buffer of width %d holds bits %d .. %d\n", _width, buf.lo_write, buf.hi_write);
         cancel_run(STOP_WARN);
@@ -1220,6 +1240,7 @@ int desc_t::flush(int verbose)
         t_uint64 tmp = buf.word;
         if (buf.lo_write > 0)
             buf.word = setbits36(buf.word, 0, buf.lo_write, getbits36(word, 0, buf.lo_write));
+        // Following OK for 4-bit data?
         int tail = buf.hi_write + _width;
         if (tail < 36)
             buf.word = setbits36(buf.word, tail, 36 - tail, word);

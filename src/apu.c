@@ -1167,13 +1167,16 @@ static void register_mod(uint td, uint off, uint *bitnop, int nbits)
         case 015:
         case 016:
         case 017:
+            {
+            uint orig = off;
             chars_to_words(sign18(reg_X[td&07]), nbits, &off, bitnop);
             TPR.CA = off;
             TPR.CA &= MASK18;
             if (opt_debug)
                 log_msg(DEBUG_MSG, "APU", "Tm=REG,Td=%02o: offset 0%o + X[%d]=0%o(%+d decimal)==>0%o(+%d) yields 0%o (%+d decimal)\n",
-                    td, off, td&7, reg_X[td&7], reg_X[td&7], sign18(reg_X[td&7]), sign18(reg_X[td&7]), TPR.CA, TPR.CA);
+                    td, orig, td&7, reg_X[td&7], reg_X[td&7], sign18(reg_X[td&7]), sign18(reg_X[td&7]), TPR.CA, TPR.CA);
             break;
+            }
     }
 }
 

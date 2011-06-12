@@ -6,13 +6,15 @@ History of pre-release versions
 
 === Pre-Version 02 01/07/2008
     Expanded notes
-    hw6180.h: define instr_t, IR_t, fault_reg_t, ctl_unit_data_t, bitval36()
+    hw6180.h:
+        define instr_t, IR_t, fault_reg_t, ctl_unit_data_t, bitval36()
     hw6180.c:
         initial sketch of sim_instr() with call to control_unit()
         initial control_unit() in pseudo code
 
 === Pre-Version 03 01/07/2008
-    hw6180.h: enums addr_modes_t, instr_modes_t
+    hw6180.h:
+        enums addr_modes_t, instr_modes_t
     hw6180.c:
         some expansion of control_unit(), but much is still pseudo code
         and not compilable
@@ -50,7 +52,8 @@ History of pre-release versions
 
 === Pre-Version 06 01/14/2008
     General
-        Loads first block of tape image into memory
+        Loads first block of tape image into memory (by reading directly
+        from the boot tape file, not via a simulated tape drive).
     bits.h: initial version
     bits.c: initial version
     hw6180_cpu.c: load first block of tape image into memory
@@ -156,7 +159,7 @@ History of pre-release versions
     hw6180_sys.c
         Corrections to initial memory contents
     iom.c
-        Much changes
+        Much changed
     mt.c
         Implementation of actual reads
     opu.c
@@ -427,12 +430,14 @@ History of pre-release versions
 
 === Pre-Version 43 10/27/2008
     General
-        The bootload_loader.alm will fault executing the cams instr in non-absolute mode.
-        It isn't legal to execute cams in non absolute mode, but  bootload_loader.alm
-        only skips the cams instruction if the system_type is two.  The value for system_type is
-        determined by bootload_tape_label.alm based on the contents of memory location zero.  A
-        non-zero value for system_type indicates the presence of an IOX rather than an IOM.  So, the
-        IOM will need to be replaced by an IOX.
+        The bootload_loader.alm will fault executing the cams instr in
+        non-absolute mode.  It isn't legal to execute cams in non absolute
+        mode, but  bootload_loader.alm only skips the cams instruction if
+        the system_type is two.  The value for system_type is determined
+        by bootload_tape_label.alm based on the contents of memory location
+        zero.  A non-zero value for system_type indicates the presence of
+        an IOX rather than an IOM.  So, the IOM will need to be replaced
+        by an IOX.
     cpu.c
         Dump history of changed registers after each instruction.
         Handling of the "rpt" repeat instruction.
@@ -442,34 +447,51 @@ History of pre-release versions
 
 === Pre-Version 44, Nov 12, 2008
     General
-        Use the IOM/IOX to read the first tape record.  Fixes to repeat instructions re
-        the instruction tag and X[n] updating.  Updated parse_addr() to handle expressions
-        involving pr registers.
+        Use the IOM/IOX to read the first tape record.  Fixes to repeat
+        instructions re the instruction tag and X[n] updating.  Updated
+        parse_addr() to handle expressions involving pr registers.
     opu.c
         Repaired adlaq and sbaq.    
         Added sti, asxn, anxn, 0epbpn, sprpn, rsw, trtn.
-        Don't fault on cams in absolute mode -- the boot tape wants to do this when
-        using an IOM.
+        Don't fault on cams in absolute mode -- the boot tape wants to do
+        this when using an IOM.
     iom.c
         Handle a DDCW tally of zero as 010000.  Updates to status returns.
     mt.c
-        Add BSR (back space record).  No longer return an error when out of data.  Instead
-        return a 4000 all-clear which bootload_tape_label.alm seems to assume, but also
-        return an out-of-band non-zero status to the IOM to make it stop.
+        Add BSR (back space record).  No longer return an error when out of
+        data.  Instead return a 4000 all-clear which bootload_tape_label.alm
+        seems to assume, but also return an out-of-band non-zero status to
+        the IOM to make it stop.
 
 === Pre-Version 45, Nov 16, 2008
     General
-        Diag tape indicates a need for invalidation of the cached odd instruction
-        after a write.   Added various indicators to make diag tape happy:  exp
-        overflow, exp underflow, parity mask, parity error.
+        Diag tape indicates a need for invalidation of the cached odd
+        instruction after a write.   Added various indicators to make diag
+        tape happy:  exp overflow, exp underflow, parity mask, parity error.
     mt.c
         Updated status codes from tape subsystem.
     opu.c
-        Made a guess at what rsw should do for an effective address of xxxxx0.  RSw
-        also no claims the cache is enabled.
+        Made a guess at what rsw should do for an effective address of xxxxx0.
+        Rsw for xxxxx0 also now claims the cache is enabled.
 
 === Pre-Version 46, Nov 18, 2008
+    General
+        Remove TPR_t's bitno, use TPR_t's TBR instead.
+        Updates to bit offset addressing.
+        Changes to message logging re levels and history.
+    opu.c
+        Updates re 18-bit to 36-bit promotions
+        Add opcodes lprpN.  Fixes to ldbr, sdbr, cams, camp
+        
 === Pre-Version 47, Nov 24, 2008
+    apu.c
+        Fix on ",du" and ",dl" modes
+    opu.c
+        Investigation of setting IR based on 18-bit math results rather
+        than 36-bit results (based on unexpected behavior with diag tape).
+        Update to sbq.  IR fixes to ora, oraq, orq, orxN.  Fix to canxN.
+        Change dis to halt instead of noop.
+
 === Pre-Version 48, Nov 25, 2008
 === Pre-Version 49, Dec 2, 2008
 === Pre-Version 50, Dec 4, 2008
@@ -527,7 +549,7 @@ History of pre-release versions
         Fixes to status words
     opu.c
         Changes to messages re address mode being changed by an operand
-        fix to lreg and fld for reg E
+        Fix to lreg and fld for reg E
         Added tss, sbar, lbar, scu
         Fix to absa
         Debugging re adding ,dl operands
@@ -537,7 +559,7 @@ History of pre-release versions
         Display IR symbolically.  Allow SIMH to display PR registers.
 === Pre-Version 59, Apr 27, 2009
     General
-        Create cpu_t and move PTWAM, SDWAM, and DSBR thrre.
+        Create cpu_t and move PTWAM, SDWAM, and DSBR there.
         Implement save/restore
         Add xseginfo and xfind commands
         Notes on the config deck
@@ -545,9 +567,9 @@ History of pre-release versions
     General
         Updates to location tracking.
         Figure out rsw 0 and fix.
-        After adding commands to dump the linkage sections, found that the xec to an empty
-        word is from bound_priv_1$read_mask.  That's a very short ALM routine, all of
-        which is listed here:
+        After adding commands to dump the linkage sections, found that the
+        xec to an empty word is from bound_priv_1$read_mask.  That's a very
+        short ALM routine, all of which is listed here:
             read_mask:
             inhibit on      <+><+><+><+><+><+><+><+><+><+><+><+>
             lxl1    prds$processor_tag
@@ -556,8 +578,8 @@ History of pre-release versions
             inhibit off     <-><-><-><-><-><-><-><-><-><-><-><->
             staq    ap|2,*
             short_return
-        So, the issue is that the simulator is not preparing a config deck to be loaded
-        into the SCS segment.
+        So, the issue is that the simulator is not preparing a config deck
+        to be loaded into the SCS segment.
 === Pre-Version 61, May  3, 2009
     General
         Updates to source tracking
@@ -641,10 +663,11 @@ History of pre-release versions
         Remember first name of segments with multiple names instead of the last seen.
     Math_real.c
         Finish fno instruction
+
 === Pre-Version 75, Oct 30, 2009
     General
-        Implemented fno, ufm, btd, and mvne.  This includes support for EIS numeric
-        descriptors and MOP editing micro operations..
+        Implemented fno, ufm, btd, and mvne.  This includes support for EIS
+        numeric descriptors and MOP editing micro operations..
     hw6180.h
         Support for EIS numeric descriptors
     eis_mw_desc.c
@@ -655,8 +678,8 @@ History of pre-release versions
         Implemented ufm
         Corrected debug output of multics_to_double()
     console.c
-        Temporarily disable sending of control chars to the console because current execution
-        is spewing garbage on the console.
+        Temporarily disable sending of control chars to the console because
+        current execution is spewing garbage on the console.
 
 === Pre-Version 76, Nov 3, 2009
     General
@@ -680,6 +703,7 @@ History of pre-release versions
     opu.c
         Cleanup code for handling generation of bad its pointers
         Update to rsw, absa, long_right_shift()
+
 === Pre-Version 78, Nov 8, 2009
 === Pre-Version 79, Nov 8, 2009
 === Pre-Version 80, Nov 9, 2009
@@ -691,31 +715,34 @@ History of pre-release versions
 === Pre-Version 86, Nov 22, 2009
 === Pre-Version 87, Nov 23, 2009
 === Pre-Version 88, Nov 23, 2009
-=== Pre-Version 89, Dev 7, 2009
-=== Pre-Version 90, Dev 7, 2009
-=== Pre-Version 91, Dev 7, 2009
-=== Pre-Version 92, Dev 8, 2009
-=== Pre-Version 93, Dev 9, 2009
-=== Pre-Version 94, Dev 9, 2009
-=== Pre-Version 95, Dev 11, 2009
-=== Pre-Version 96, Dev 13, 2009
-=== Pre-Version 97, Dev 17, 2009
-=== Pre-Version 98, Dev 17, 2009
-=== Pre-Version 99, Dev 20, 2009
-=== Pre-Version 100, Dev 21, 2009
-=== Pre-Version 101, Dev 30, 2009
-=== Pre-Version 102, Dev 30, 2009
+=== Pre-Version 89, Dec 7, 2009
+=== Pre-Version 90, Dec 7, 2009
+=== Pre-Version 91, Dec 7, 2009
+=== Pre-Version 92, Dec 8, 2009
+=== Pre-Version 93, Dec 9, 2009
+=== Pre-Version 94, Dec 9, 2009
+=== Pre-Version 95, Dec 11, 2009
+=== Pre-Version 96, Dec 13, 2009
+=== Pre-Version 97, Dec 17, 2009
+=== Pre-Version 98, Dec 17, 2009
+=== Pre-Version 99, Dec 20, 2009
+=== Pre-Version 100, Dec 21, 2009
+=== Pre-Version 101, Dec 30, 2009
+=== Pre-Version 102, Dec 30, 2009
 === Pre-Version 103, Jan 5, 2010
 === Pre-Version 104, Jan 27, 2010
+
 === Pre-Version 105, Feb 22, 2010
     General
         Fix to overflow indication on negation of max neg
         Add opcodes negl, erx*
         Floating point work: Add fdv and equalize mantissas in opcodes
         dfcmp and fcmp
+
 === Pre-Version 106, Jul 20, 2010
     General
         Cosmetic tweaks for new warnings from new compiler version
+
 === Pre-Version 107, Mar 8, 2011
     General
         Verified that no extra symbol table info, e.g., for
@@ -731,4 +758,21 @@ History of pre-release versions
         Updated listing parser to do some type parsing of automatics.
         Implemented opcodes ade, fszn, ste
 
+=== Pre-Version 108, Mar 17, 2011
+    General
+        No code changes
+        Replace most occurances of "BUG" with "FIXME"
+        Rename seginfo.h to seginfo.hpp
+        Expect simh headers to be in ../simh/, not ../
 
+=== Pre-Version 109, June 10, 2011
+    EIS instructions
+        Fix to btd
+        Fixes for padding on MOP puts to only pad digits, not blanks and
+        other specials
+        Initial look at dv3d
+
+110
+    EIS instructions
+        Support indirect descriptors
+        Fix for handling 4 bit data (8 4-bit nibbles per word, not 9).
