@@ -155,6 +155,9 @@ private:
         int lo_write;
         int hi_write;
     } buf;
+#if 1
+    int __get(unsigned* valp, bool want_advance);
+#endif
     int _get(unsigned* valp, bool want_advance);
     int _put(unsigned val, bool want_advance);
 public:
@@ -162,8 +165,8 @@ public:
     void init(const eis_mf_t& mf, int y_addr, int width, int cn, int bit_offset, int nchar, int is_fwd);
     void mod64() {      // adjust length to be modulo 64
         _n %= 64; /* _mod64 = 1 */; }
-    int n() { return _n; }
-    int width() { return _width; }
+    int n() const { return _n; }
+    int width() const { return _width; }
     int put(unsigned val)       // write, advance forward or backwards
         { return _put(val, 1); }
     int set(unsigned val)       // write, no advance
@@ -192,13 +195,22 @@ public:
 
 class num_desc_t : public desc_t {
 private:
+    int _s;     // sign and type: 00b floating with leading sign; 01b-11b scaled fixed point, 01 leading sign, 10 trailing, 11 unsigned
+    int _sf;    // scaling factor
 public:
     num_desc_t(const eis_mf_t& mf, t_uint64 word, int is_fwd);
     // num_desc_t(const eis_mf_t& mf, int addr, int width, int cn, int bit_offset, int nchar, int is_read, int is_fwd, int stype, int sf);
-    char* to_text(char *buf) const;
 
-    int s;      // sign and type: 00b floating with leading sign; 01b-11b scaled fixed point, 01 leading sign, 10 trailing, 11 unsigned
-    int scaling_factor;
+    char* to_text(char *buf) const;
+    int sf() const { return _sf; }
+    int s() const { return _s; }
+    int ndigits() const {
+        // Returns number of coefficient aka "integer" digits
+        int ncoe = n();
+        if (s() != 3) ncoe -= 1;    // sign byte 
+        if (s() == 0) ncoe -= (width() == 4) ? 2 : 1;  // exp byte(s)
+        return ncoe;
+    }
 };
 
 #endif // __cplusplus

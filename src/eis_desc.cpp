@@ -318,8 +318,8 @@ char* num_desc_t::to_text(char *bufp) const
     len_to_text(reg_buf);
     yaddr_to_text(addr_buf);
 
-    sprintf(bufp, "{y=%s, char-no=%#o, %d-bits, sign-ctl=%o, sf=%02o, len=%s}",
-        addr_buf, first_char.cn, _width, s, scaling_factor, reg_buf);
+    sprintf(bufp, "{y=%s, char-no=%#o, %d-bits, sign-ctl=%o, sf=%+d, len=%s}",
+        addr_buf, first_char.cn, _width, _s, _sf, reg_buf);
     return bufp;
 }
 
@@ -453,8 +453,8 @@ num_desc_t::num_desc_t(const eis_mf_t& mf, t_uint64 word, int is_fwd)
     int width = (tn == 0) ? 9 : 4;
 
     init(mf, y_addr, width, cn, bitno, n_orig, is_fwd);
-    s = stype;
-    scaling_factor = sf;
+    _s = stype;
+    _sf = bits2num(6, sf);
 }
 
 //=============================================================================
@@ -776,7 +776,30 @@ void ptr_t::_bit_advance(int nbits, bool quiet)
  * internal pointer forwards or backwards as appropriate.
  */
 
-int desc_t::_get(unsigned* valp, bool want_advance)
+int desc_t::_get(unsigned* valp, bool want_advance) {
+    const char* moi = "APU::EIS::get";
+#if 0
+    return __get(valp, want_advance);
+#else
+    // Valgrind incorrectly claims __get() sometimes does not write to
+    // valp.   This proves that only happens on non-zero returns.
+    static const unsigned impossible = ~ (unsigned) 0;
+    unsigned buf = impossible;
+    int ret = __get(&buf, want_advance);
+    if (ret == 0 || buf != impossible)
+        *valp = buf;
+    if (ret == 0) {
+        if (buf == impossible) {
+            log_msg(ERR_MSG, moi, "__get failed to return data.\n");
+            cancel_run(STOP_BUG);
+            // return 1;
+        }
+    }
+    return ret;
+#endif
+}
+
+int desc_t::__get(unsigned* valp, bool want_advance)
 {
 
     const char* moi = "APU::EIS::get";
@@ -867,7 +890,7 @@ int decode_eis_alphanum_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 wo
     descp->n = d.n();
     descp->nbits = d.width();
     descp->num.s = -1;
-    descp->num.scaling_factor = -1;
+    descp->num.scaling_factor = 0;
     descp->dummyp = descp;
     return descp->objp == NULL;
 }
@@ -881,7 +904,7 @@ int decode_eis_bit_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 word, i
     descp->n = d.n();
     descp->nbits = d.width();
     descp->num.s = -1;
-    descp->num.scaling_factor = -1;
+    descp->num.scaling_factor = 0;
     descp->dummyp = descp;
     return descp->objp == NULL;
 }
@@ -896,7 +919,7 @@ int decode_eis_num_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 word, i
     descp->n = nd.n();
     descp->nbits = nd.width();
     descp->num.s = nd.s;
-    descp->num.scaling_factor = nd.scaling_factor;
+    descp->num.scaling_factor = nd.sf();
 
     descp->dummyp = descp;
     return descp->objp == NULL;

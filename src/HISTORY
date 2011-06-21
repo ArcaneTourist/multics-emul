@@ -772,7 +772,14 @@ History of pre-release versions
         other specials
         Initial look at dv3d
 
-110
+=== Pre-Version 110, June 12, 2011
     EIS instructions
         Support indirect descriptors
         Fix for handling 4 bit data (8 4-bit nibbles per word, not 9).
+
+=== Pre-Version 111, ...
+    EIS instructions
+        Use a generalized decimal input function.
+        Generalize mvn's output logic for use by other EIS decimal
+        instructions
+        Add dv3d, divide decimal with three operands.

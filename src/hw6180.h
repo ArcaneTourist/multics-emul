@@ -108,7 +108,6 @@ static const t_uint64 MASK36 = ~(~((t_uint64)0)<<36);   // lower 36 bits all on
 static const t_uint64 MASK18 = ~(~((t_uint64)0)<<18);   // lower 18 bits all on
 #define MASKBITS(x) ( ~(~((t_uint64)0)<<x) )    // lower (x) bits all ones
 
-
 // ============================================================================
 // === Struct typdefs
 

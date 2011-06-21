@@ -144,6 +144,29 @@ static inline int32 sign15(uint x)
         return x;
 }
 
+/*
+    bits2num()
+
+    Extract an (nbits-1)bit signed value from a bit string of length nbits.
+*/
+
+static inline int bits2num(unsigned nbits, unsigned x)
+{
+
+#if 1
+    // make compiler happer about nbits - 1
+    if (nbits < 2 || nbits >= (8*sizeof(int)))
+         return ~0;
+#endif
+
+    unsigned nb = nbits - 1;
+    if (x > MASKBITS((nb))) {
+        int r = - ((1<<nb) - (x&MASKBITS(nb)));
+        return r;
+    } else
+        return x;
+}
+
 //=============================================================================
 
 /*

@@ -18,9 +18,9 @@ LDFLAGS=-lm -lrt
 else
 # linux needs librt
 #CC = gcc -std=c99 -O3 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I .
-CC = gcc -std=c99 -pedantic -O3 -Wall -Wno-unused-variable -march=native -pipe -DUSE_INT64 -DUSE_ADDR64 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I ../simh
+CC = gcc -std=c99 -pedantic -O3 -Wall -Wno-unused-variable -march=native -pipe -DUSE_INT64 -DUSE_ADDR64 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I ../simh -I /usr/local/include/decNumber
 # optimizing
-CXX = g++ -pedantic -O3 -Wall -Wno-long-long -Wno-unused-variable -march=native -pipe -DUSE_INT64 -DUSE_ADDR64 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I ../simh
+CXX = g++ -pedantic -O3 -Wall -Wno-long-long -Wno-unused-variable -march=native -pipe -DUSE_INT64 -DUSE_ADDR64 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I ../simh -I /usr/local/include/decNumber
 # debugging, remove optimization
 # CXX = g++ -pedantic -O0 -Wall -Wno-long-long -Wno-unused-variable -march=native -pipe -DUSE_INT64 -U__STRICT_ANSI__ -g $(OS_CCDEFS) -I ..
 LDFLAGS=-lm -lrt -lgmp
