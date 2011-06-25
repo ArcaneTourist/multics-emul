@@ -1,50 +1,4 @@
 #ifdef __cplusplus
-extern "C" {
-#endif
-
-/*
- * "C" interfaces to C++ objects
- *
- * This hack should be removed...
- */
-
-// TODO: Does OPU need to force modulo 64 for register derived lengths (which might otherwise be over 6 bits) ?
-// Might be better to do via parse_eis_*_desc()
-
-// We probably need to get rid of this and use desc_t's derived types (FIXME)
-typedef struct {
-    void *dummyp;
-    void *objp;
-    int n;
-    int nbits;
-#if 1
-    // The following is also in num_desc_t...
-    struct {
-        int s;      // sign and type: 00b floating with leading sign; 01b-11b scaled fixed point, 01 leading sign, 10 trailing, 11 unsigned
-        int scaling_factor;
-    } num;
-#endif
-} eis_desc_t;
-
-extern int decode_eis_alphanum_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 word, int is_read, int is_fwd);
-extern int decode_eis_bit_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 word, int is_read, int is_fwd);
-extern int decode_eis_num_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 word, int is_read, int is_fwd);
-extern const char* eis_desc_to_text(const eis_desc_t* descp);
-
-extern void eis_desc_mod64(eis_desc_t *descp);
-
-extern int eis_desc_get(eis_desc_t* descp, unsigned* valp);
-extern int eis_desc_val(eis_desc_t* descp, unsigned* valp);
-extern int eis_desc_put(eis_desc_t* descp, unsigned val);
-extern int eis_desc_flush(eis_desc_t*);
-
-#ifdef __cplusplus
-}
-#endif
-
-
-
-#ifdef __cplusplus
 
 /*
  * A pointer into main memory.  Pointers used in EIS descriptors are 18-bit
@@ -52,6 +6,10 @@ extern int eis_desc_flush(eis_desc_t*);
  * are a 3-bit "PR" register number and a 15-bit offset against that PR.
  * Which of the two interpretations should be used is controlled by the "ar"
  * flag.
+ *
+ * This class acts as a cache for mapping the segmented address to
+ * physical memory and stepping though memory via bit, character, or
+ * word increments.
  */
 
 class ptr_t {

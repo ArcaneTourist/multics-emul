@@ -783,3 +783,8 @@ History of pre-release versions
         Generalize mvn's output logic for use by other EIS decimal
         instructions
         Add dv3d, divide decimal with three operands.
+    General
+        Rename M[] to *Mem.
+        Add support for warning re reads of uninitialized memory.
+        Valgrind reports a couple of false positives on unitialized Mem[]
+        accesses after call to fetch_abs_word in desc_t::_get().

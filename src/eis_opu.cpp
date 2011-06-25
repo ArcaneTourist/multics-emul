@@ -194,35 +194,26 @@ extern int op_mvt(const instr_t* ip)
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, &word3) != 0)
         return 1;
 
-    eis_desc_t desc1;
-    if (decode_eis_alphanum_desc(&desc1, &ip->mods.mf1, word1, 1, 1) != 0) {
-        log_msg(ERR_MSG, moi, "failed to decode descriptor 1.\n");
-        cancel_run(STOP_BUG);
-        return 1;
-    }
-    eis_desc_t desc2;
-    if (decode_eis_alphanum_desc(&desc2, &mf2, word2, 0, 1) != 0) {
-        log_msg(ERR_MSG, moi, "failed to decode descriptor 2.\n");
-        cancel_run(STOP_BUG);
-        return 1;
-    }
+    alpha_desc_t desc1(ip->mods.mf1, word1, 1);
+    alpha_desc_t desc2(mf2, word2, 1);
     uint addr3;
     if (get_eis_indir_addr(word3, &addr3) != 0)
         return 1;
 
-    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_desc_to_text(&desc1));
-    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_desc_to_text(&desc2));
+    char buf[100];
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", desc1.to_text(buf));
+    log_msg(DEBUG_MSG, moi, "desc2: %s\n", desc2.to_text(buf));
     log_msg(DEBUG_MSG, moi, "translation table at %#llo => %#o\n", word3, addr3);
 
     int ret = 0;
 
     // uint n = desc1.n;
-    while (desc2.n > 0) {
+    while (desc2.n() > 0) {
         uint m;
-        if (desc1.n == 0)
-            m = fill & MASKBITS(desc2.nbits);
+        if (desc1.n() == 0)
+            m = fill & MASKBITS(desc2.width());
         else
-            if (eis_desc_get(&desc1, &m) != 0) {
+            if (desc1.get(&m) != 0) {
                 ret = 1;
                 break;
             }
@@ -232,14 +223,14 @@ extern int op_mvt(const instr_t* ip)
             ret = 1;
             break;
         }
-        if (eis_desc_put(&desc2, t) != 0) {
+        if (desc2.put(t) != 0) {
             ret = 1;
             break;
         }
     }
 
     if (ret == 0) {
-        IR.truncation = desc1.n != 0;
+        IR.truncation = desc1.n() != 0;
         if (IR.truncation && t) {
             fault_gen(overflow_fault);  // truncation
             ret = 1;
@@ -247,7 +238,7 @@ extern int op_mvt(const instr_t* ip)
     }
     // write unsaved data (if any)
     if (ret == 0)
-        if (eis_desc_flush(&desc2) != 0)
+        if (desc2.flush() != 0)
             return 1;
 
     //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
@@ -275,40 +266,31 @@ int op_cmpc(const instr_t* ip)
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
         return 1;
 
-    eis_desc_t desc1;
-    if (decode_eis_alphanum_desc(&desc1, &ip->mods.mf1, word1, 1, 1) != 0) {
-        log_msg(ERR_MSG, moi, "failed to decode descriptor 1.\n");
-        cancel_run(STOP_BUG);
-        return 1;
-    }
-    eis_desc_t desc2;
+    alpha_desc_t desc1(ip->mods.mf1, word1, 1);
     // force (ignored) type of descriptor 2 to match descriptor 1
     unsigned ta = getbits36(word1, 21, 2);
     word2 = setbits36(word2, 21, 2, ta);
-    if (decode_eis_alphanum_desc(&desc2, &mf2, word2, 1, 1) != 0) {
-        log_msg(ERR_MSG, moi, "failed to decode descriptor 2.\n");
-        cancel_run(STOP_BUG);
-        return 1;
-    }
+    alpha_desc_t desc2(mf2, word2, 1);
 
-    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_desc_to_text(&desc1));
-    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_desc_to_text(&desc2));
+    char buf[100];
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", desc1.to_text(buf));
+    log_msg(DEBUG_MSG, moi, "desc2: %s\n", desc2.to_text(buf));
 
     int ret = 0;
 
     uint nib1, nib2;
-    while (desc1.n > 0 || desc2.n > 0) {
-        if (desc1.n == 0)
-            nib1 = fill & MASKBITS(desc1.nbits);
+    while (desc1.n() > 0 || desc2.n() > 0) {
+        if (desc1.n() == 0)
+            nib1 = fill & MASKBITS(desc1.width());
         else
-            if (eis_desc_get(&desc1, &nib1) != 0) {
+            if (desc1.get(&nib1) != 0) {
                 ret = 1;
                 break;
             }
-        if (desc2.n == 0)
-            nib2 = fill & MASKBITS(desc2.nbits);
+        if (desc2.n() == 0)
+            nib2 = fill & MASKBITS(desc2.width());
         else
-            if (eis_desc_get(&desc2, &nib2) != 0) {
+            if (desc2.get(&nib2) != 0) {
                 ret = 1;
                 break;
             }
@@ -722,20 +704,11 @@ int op_cmpb(const instr_t* ip)
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
         return 1;
 
-    eis_desc_t desc1;
-    if (decode_eis_bit_desc(&desc1, &ip->mods.mf1, word1, 1, 1) != 0) {
-        log_msg(ERR_MSG, moi, "failed to decode descriptor 1.\n");
-        cancel_run(STOP_BUG);
-        return 1;
-    }
-    eis_desc_t desc2;
-    if (decode_eis_bit_desc(&desc2, &mf2, word2, 1, 1) != 0) {
-        log_msg(ERR_MSG, moi, "failed to decode descriptor 2.\n");
-        cancel_run(STOP_BUG);
-        return 1;
-    }
-    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_desc_to_text(&desc1));
-    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_desc_to_text(&desc2));
+    bit_desc_t desc1(ip->mods.mf1, word1, 1);
+    bit_desc_t desc2(mf2, word2, 1);
+    char buf[100];
+    log_msg(DEBUG_MSG, moi, "desc1: %s\n", desc1.to_text(buf));
+    log_msg(DEBUG_MSG, moi, "desc2: %s\n", desc2.to_text(buf));
     log_msg(DEBUG_MSG, moi, "fill bit %d\n", fill);
 
     int ret = 0;
@@ -743,18 +716,18 @@ int op_cmpb(const instr_t* ip)
     flag_t nib1, nib2;  // for this instruction, these are bit valued
     int zero = 1;
     int carry = 1;
-    while (desc1.n > 0 || desc2.n > 0) {
-        if (desc1.n == 0)
-            nib1 = fill & MASKBITS(desc1.nbits);
+    while (desc1.n() > 0 || desc2.n() > 0) {
+        if (desc1.n() == 0)
+            nib1 = fill & MASKBITS(desc1.width());
         else
-            if (eis_desc_get(&desc1, &nib1) != 0) { // must fetch when needed
+            if (desc1.get(&nib1) != 0) {    // must fetch when needed
                 ret = 1;
                 break;
         }
-        if (desc2.n == 0)
-            nib2 = fill & MASKBITS(desc2.nbits);
+        if (desc2.n() == 0)
+            nib2 = fill & MASKBITS(desc2.width());
         else
-            if (eis_desc_get(&desc2, &nib2) != 0) { // must fetch when needed
+            if (desc2.get(&nib2) != 0) {    // must fetch when needed
                 ret = 1;
                 break;
             }
@@ -796,32 +769,26 @@ int op_scm(const instr_t* ip, int fwd)
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, &word3) != 0)
         return 1;
 
-    eis_desc_t desc1;
-    if (decode_eis_alphanum_desc(&desc1, &ip->mods.mf1, word1, 1, fwd) != 0) {
-        log_msg(ERR_MSG, moi, "failed to decode descriptor 1.\n");
-        cancel_run(STOP_BUG);
-        return 1;
-    }
-    eis_desc_t desc2;
+    alpha_desc_t desc1(ip->mods.mf1, word1, fwd);
+
     // force (ignored) type of desc2 to match desc1
     unsigned ta = getbits36(word1, 21, 2);
     word2 = setbits36(word2, 21, 2, ta);
     // force (ignored) count of desc2 to one
     word2 = setbits36(word2, 24, 12, 1);
-    if (decode_eis_alphanum_desc(&desc2, &mf2, word2, 1, 1) != 0) {
-        log_msg(ERR_MSG, moi, "failed to decode descriptor 2.\n");
-        cancel_run(STOP_BUG);
-        return 1;
-    }
+    alpha_desc_t desc2(mf2, word2, 1);
 
     uint y3;
     if (get_eis_indir_addr(word3, &y3) != 0)
             return 1;
     
-    log_msg(DEBUG_MSG, moi, "mask = %03o\n", mask);
-    log_msg(DEBUG_MSG, moi, "desc1: %s\n", eis_desc_to_text(&desc1));
-    log_msg(DEBUG_MSG, moi, "desc2: %s\n", eis_desc_to_text(&desc2));
-    log_msg(DEBUG_MSG, moi, "y3: %06o\n", y3);
+    if (opt_debug) {
+        char buf[100];
+        log_msg(DEBUG_MSG, moi, "mask = %03o\n", mask);
+        log_msg(DEBUG_MSG, moi, "desc1: %s\n", desc1.to_text(buf));
+        log_msg(DEBUG_MSG, moi, "desc2: %s\n", desc2.to_text(buf));
+        log_msg(DEBUG_MSG, moi, "y3: %06o\n", y3);
+    }
 
     uint test_nib;
     if (mf2.id == 0 && mf2.reg == 3) {  // 3 is ",du"
@@ -829,7 +796,7 @@ int op_scm(const instr_t* ip, int fwd)
         log_msg(DEBUG_MSG, moi, "test char specified via special-case ',du'\n");
     } else {
         log_msg(DEBUG_MSG, moi, "Getting test char\n");
-        if (eis_desc_get(&desc2, &test_nib) != 0)
+        if (desc2.get(&test_nib) != 0)
             return 1;
     }
     if (opt_debug) {
@@ -840,15 +807,16 @@ int op_scm(const instr_t* ip, int fwd)
     }
 
     int ret = 0;
-    uint n = desc1.n;
+    uint n = desc1.n();
     uint i;
     for (i = 0; i < n; ++i) {
         uint nib;
-        ret = eis_desc_get(&desc1, &nib);
+        ret = desc1.get(&nib);
         if (ret != 0)
             break;
         uint z = ~mask & (nib ^ test_nib);
-        log_msg(DEBUG_MSG, moi, "compare nibble %#o(%+d): value %03o yields %#o\n", i, i, nib, z);
+        if (opt_debug)
+            log_msg(DEBUG_MSG, moi, "compare nibble %#o(%+d): value %03o yields %#o\n", i, i, nib, z);
         if (z == 0)
             break;
     }
@@ -856,7 +824,8 @@ int op_scm(const instr_t* ip, int fwd)
         IR.tally_runout = i == n;
         // t_uint64 word = setbits36(0, 12, 24, i);
         t_uint64 word = i;
-        log_msg(DEBUG_MSG, moi, "TRO=%d (%s); writing %#o(%+d) to abs addr %#o\n", IR.tally_runout, IR.tally_runout ? "not found" : "found", i, i, y3);
+        if (opt_debug)
+            log_msg(DEBUG_MSG, moi, "TRO=%d (%s); writing %#o(%+d) to abs addr %#o\n", IR.tally_runout, IR.tally_runout ? "not found" : "found", i, i, y3);
         ret = store_abs_word(y3, word);
     }
 
@@ -888,42 +857,33 @@ int op_csl(const instr_t* ip)
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
         return 1;
 
-    eis_desc_t desc1;
-    if (decode_eis_bit_desc(&desc1, &ip->mods.mf1, word1, 1, 1) != 0) {
-        log_msg(ERR_MSG, moi, "failed to decode descriptor 1.\n");
-        cancel_run(STOP_BUG);
-        return 1;
-    }
-    log_msg(INFO_MSG, moi, "desc1: %s\n", eis_desc_to_text(&desc1));
-    eis_desc_t desc2;
-    if (decode_eis_bit_desc(&desc2, &mf2, word2, 1, 1) != 0) {
-        log_msg(ERR_MSG, moi, "failed to decode descriptor 2.\n");
-        cancel_run(STOP_BUG);
-        return 1;
-    }
-    // BUG: eis_alpha_desc_to_text is magic and sees real type
-    log_msg(INFO_MSG, moi, "desc2: %s\n", eis_desc_to_text(&desc2));
+    char buf[100];
+    bit_desc_t desc1(ip->mods.mf1, word1, 1);
+    log_msg(INFO_MSG, moi, "desc1: %s\n", desc1.to_text(buf));
+    bit_desc_t desc2(mf2, word2, 1);
+    log_msg(INFO_MSG, moi, "desc2: %s\n", desc2.to_text(buf));
 
     int ret = 0;
 
     flag_t all_zero = 1;
-    while (desc2.n > 0) {
+    while (desc2.n() > 0) {
         flag_t bit1, bit2;
-        if (desc1.n == 0)
+        if (desc1.n() == 0)
             bit1 = fill;
         else
-            if (eis_desc_get(&desc1, &bit1) != 0) {
+            if (desc1.get(&bit1) != 0) {
                 ret = 1;
                 break;
             }
-        // eis_desc_val() won't ever advance the pointer
-        if (eis_desc_val(&desc2, &bit2) != 0) { // must fetch when needed
+        // val() won't ever advance the pointer
+        if (desc2.val(&bit2) != 0) {
             ret = 1;
             break;
         }
         flag_t r = (bolr >> (3 - ((bit1 << 1) | bit2))) & 1;    // like indexing into a truth table
-        log_msg(DEBUG_MSG, moi, "nbits1=%d, nbits2=%d; %d op(%#o) %d => %d\n", desc1.n, desc2.n, bit1, bolr, bit2, r);
-        if (eis_desc_put(&desc2, r) != 0) {
+        if (opt_debug)
+            log_msg(DEBUG_MSG, moi, "nbits1=%d, nbits2=%d; %d op(%#o) %d => %d\n", desc1.n(), desc2.n(), bit1, bolr, bit2, r);
+        if (desc2.put(r) != 0) {
             ret = 1;
             break;
         }
@@ -932,11 +892,11 @@ int op_csl(const instr_t* ip)
     }
     if (ret == 0)
         // write unsaved data (if any)
-        if (eis_desc_flush(&desc2) != 0)
+        if (desc2.flush() != 0)
             ret = 1;
     if (ret == 0) {
         IR.zero = all_zero;
-        IR.truncation = desc1.n > 0;
+        IR.truncation = desc1.n() > 0;
         if (IR.truncation && t) {
             fault_gen(overflow_fault);  // truncation
             ret = 1;
@@ -1066,7 +1026,7 @@ static int mop_init(num_desc_t *descp, int is_decimal)
 
 // ============================================================================
 
-static int mop_put(eis_desc_t *dest_descp, int is_decimal, unsigned byte)
+static int mop_put(alpha_desc_t *dest_descp, int is_decimal, unsigned byte)
 {
     const char *moi = "opu::MOP::put";
 
@@ -1080,11 +1040,11 @@ static int mop_put(eis_desc_t *dest_descp, int is_decimal, unsigned byte)
                 cancel_run(STOP_IBKPT);
             }
         }
-        if (dest_descp->nbits == 4)
+        if (dest_descp->width() == 4)
             byte &= 0xf;
-        else if (dest_descp->nbits == 6)
+        else if (dest_descp->width() == 6)
             byte &= 0x3f;
-        else if (dest_descp->nbits == 9) {
+        else if (dest_descp->width() == 9) {
             // Caller should fill digits or send specials such as blanks
         }
 
@@ -1092,13 +1052,13 @@ static int mop_put(eis_desc_t *dest_descp, int is_decimal, unsigned byte)
             log_msg(DEBUG_MSG, moi, "Writing %03o '%c'\n", byte, byte);
         else
             log_msg(DEBUG_MSG, moi, "Writing %03o\n", byte);
-        if (eis_desc_put(dest_descp, byte) != 0)
+        if (dest_descp->put(byte) != 0)
             return 1;
         
     } else {
         log_msg(ERR_MSG, moi, "Alphanumeric unimplemented.\n");
         cancel_run(STOP_BUG);
-        if (eis_desc_put(dest_descp, byte) != 0)    // wrong
+        if (dest_descp->put(byte) != 0) // wrong
             return 1;
         log_msg(ERR_MSG, moi, "Alphanumeric unimplemented.\n");
     }
@@ -1107,12 +1067,12 @@ static int mop_put(eis_desc_t *dest_descp, int is_decimal, unsigned byte)
 
 // ============================================================================
 
-static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is_decimal)
+static int mop_exec_single(alpha_desc_t *mop_descp, alpha_desc_t *dest_descp, int is_decimal)
 {
     const char *moi = "opu::MOP::exec";
 
     uint mop_byte;
-    if (eis_desc_get(mop_descp, &mop_byte) != 0) {
+    if (mop_descp->get(&mop_byte) != 0) {
         fault_gen(illproc_fault);
         return 1;
     }
@@ -1154,7 +1114,7 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
             for (uint i = 0; i < mop_if; ++i) {
                 if (mop_put(dest_descp, is_decimal, mopinfo.eit[1]) != 0)
                     return 1;
-                if (dest_descp->n == 0)
+                if (dest_descp->n() == 0)
                     return 0;   // exhaustion of destination is the only normal termination
             }
             break;
@@ -1165,7 +1125,7 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
                 return 1;
             }
             unsigned int m;
-            if (eis_desc_get(mop_descp, &m) != 0) {
+            if (mop_descp->get(&m) != 0) {
                 fault_gen(illproc_fault);
                 return 1;
             }
@@ -1189,7 +1149,7 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
                     mopinfo.flags.z = 0;
                 log_msg(DEBUG_MSG, moi, "Fetched src %#o\n", src);
                 if (mopinfo.flags.es) {
-                    if (is_decimal && dest_descp->nbits == 9) {
+                    if (is_decimal && dest_descp->width() == 9) {
                         src &= 0xf;
                         src |= mopinfo.eit[8] & 0x1f0;
                     }
@@ -1212,7 +1172,7 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
                 }
                 if (mop_put(dest_descp, is_decimal, src) != 0)
                     return 1;
-                if (dest_descp->n == 0)
+                if (dest_descp->n() == 0)
                     return 0;   // exhaustion of destination is the only normal termination
             }
             break;
@@ -1230,13 +1190,13 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
                 --mopinfo.n_src;
                 if (src != 0)
                     mopinfo.flags.z = 0;
-                if (is_decimal && dest_descp->nbits == 9) {
+                if (is_decimal && dest_descp->width() == 9) {
                     src &= 0xf;
                     src |= mopinfo.eit[8] & 0x1f0;
                 }
                 if (mop_put(dest_descp, is_decimal, src) != 0)
                     return 1;
-                if (dest_descp->n == 0)
+                if (dest_descp->n() == 0)
                     return 0;   // exhaustion of destination is the only normal termination
             }
             break;
@@ -1263,7 +1223,7 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
                 if (mop_if == 0) {
                     log_msg(INFO_MSG, moi, "INSB: write EIT[one]==%#o and skip next MOP.\n", mopinfo.eit[1]);
                     unsigned ignored;
-                    if (eis_desc_get(mop_descp, &ignored) != 0) {
+                    if (mop_descp->get(&ignored) != 0) {
                         fault_gen(illproc_fault);
                         return 1;
                     }
@@ -1274,7 +1234,7 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
                     byte = mopinfo.eit[mop_if];
                     log_msg(INFO_MSG, moi, "INSB: write EIT[IF==%d] which is %#o\n", mop_if, byte);
                 } else {
-                    if (eis_desc_get(mop_descp, &byte) != 0) {
+                    if (mop_descp->get(&byte) != 0) {
                         fault_gen(illproc_fault);
                         return 1;
                     }
@@ -1307,23 +1267,23 @@ static int mop_exec_single(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is
  *
  */
 
-static int mop_execute(eis_desc_t *mop_descp, eis_desc_t *dest_descp, int is_decimal)
+static int mop_execute(alpha_desc_t *mop_descp, alpha_desc_t *dest_descp, int is_decimal)
 {
     const char *moi = "opu::MOP::execute";
 
     int ret = 0;
 
-    while (mop_descp->n > 0 && dest_descp->n > 0) {
+    while (mop_descp->n() > 0 && dest_descp->n() > 0) {
         if (mop_exec_single(mop_descp, dest_descp, is_decimal) != 0) {
             ret = 1;
             // break;       // BUG
         }
-        if (ret) log_msg(ERR_MSG, moi, "MOP list %d remaining, dest %d remaining.\n", mop_descp->n, dest_descp->n);
+        if (ret) log_msg(ERR_MSG, moi, "MOP list %d remaining, dest %d remaining.\n", mop_descp->n(), dest_descp->n());
     }
 
     // write unsaved data (if any)
     // if (ret == 0)    // BUG
-        if (eis_desc_flush(dest_descp) != 0)
+        if (dest_descp->flush() != 0)
             return 1;
 
     return ret;
@@ -1369,26 +1329,17 @@ int _op_mvne(const instr_t* ip)
     num_desc_t desc1(ip->mods.mf1, word1, 1);
     char msg_buf[100];
     log_msg(INFO_MSG, moi, "desc1: %s\n", desc1.to_text(msg_buf));
-    eis_desc_t desc2;
-    if (decode_eis_alphanum_desc(&desc2, &mf2, word2, 1, 1) != 0) {
-        log_msg(ERR_MSG, moi, "failed to decode descriptor 2.\n");
-        cancel_run(STOP_BUG);
-        return 1;
-    }
+    alpha_desc_t desc2(mf2, word2, 1);
     // NOTE: AL-39 says that the only the lower 6 bits of the lengths
     // may be non-zero, but also says that the lengths are treated
     // as modulo 64.  The latter probably just means that the higher order
     // bits are ignored and no fault is generated if they are set.
-    eis_desc_mod64(&desc2);
-    eis_desc_t desc3;
-    if (decode_eis_alphanum_desc(&desc3, &mf3, word3, 0, 1) != 0) {
-        log_msg(ERR_MSG, moi, "failed to decode descriptor 3.\n");
-        cancel_run(STOP_BUG);
-        return 1;
-    }
-    eis_desc_mod64(&desc3);
-    log_msg(INFO_MSG, moi, "desc2: %s\n", eis_desc_to_text(&desc2));
-    log_msg(INFO_MSG, moi, "desc3: %s\n", eis_desc_to_text(&desc3));
+    desc2.mod64();
+    alpha_desc_t desc3(mf3, word3, 1);
+    desc3.mod64();
+    char buf[100];
+    log_msg(INFO_MSG, moi, "desc2: %s\n", desc2.to_text(buf));
+    log_msg(INFO_MSG, moi, "desc3: %s\n", desc3.to_text(buf));
 
     int ret = 0;
     // Initialize the EIT and load the source bytes

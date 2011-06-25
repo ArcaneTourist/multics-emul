@@ -325,20 +325,6 @@ char* num_desc_t::to_text(char *bufp) const
 
 //=============================================================================
 
-const char* eis_desc_to_text(const eis_desc_t* descp)
-{
-    static char bufs[2][100];
-    static int which = 0;
-    which = !which;
-    char *bufp = bufs[which];
-
-    desc_t *dp = (desc_t*) descp->objp;
-    dp->to_text(bufp);
-    return bufp;
-}
-
-//=============================================================================
-
 /*
  * desc_t::init()
  *
@@ -858,97 +844,6 @@ int desc_t::_get(unsigned* valp, bool want_advance)
     return 0;
 }
     
-//=============================================================================
-
-int decode_eis_alphanum_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 word, int is_read, int is_fwd)
-{
-    alpha_desc_t d = decode_eis_alphanum_desc(word, mfp, is_read, is_fwd);
-    descp->objp = new alpha_desc_t(d);
-    descp->n = d.n();
-    descp->nbits = d.width();
-    descp->num.s = -1;
-    descp->num.scaling_factor = 0;
-    descp->dummyp = descp;
-    return descp->objp == NULL;
-}
-
-//=============================================================================
-
-int decode_eis_bit_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 word, int is_read, int is_fwd)
-{
-    bit_desc_t d = decode_eis_bit_desc(word, mfp, is_read, is_fwd);
-    descp->objp = new bit_desc_t(d);
-    descp->n = d.n();
-    descp->nbits = d.width();
-    descp->num.s = -1;
-    descp->num.scaling_factor = 0;
-    descp->dummyp = descp;
-    return descp->objp == NULL;
-}
-
-//=============================================================================
-
-#if 0
-int decode_eis_num_desc(eis_desc_t* descp, const eis_mf_t* mfp, t_uint64 word, int is_read, int is_fwd)
-{
-    num_desc_t nd = decode_eis_num_desc(word, mfp, is_read, is_fwd);
-    descp->objp = new num_desc_t(nd);
-    descp->n = nd.n();
-    descp->nbits = nd.width();
-    descp->num.s = nd.s;
-    descp->num.scaling_factor = nd.sf();
-
-    descp->dummyp = descp;
-    return descp->objp == NULL;
-}
-#endif
-
-//=============================================================================
-
-void eis_desc_mod64(eis_desc_t* descp)
-{
-    desc_t* d = (desc_t*) descp->objp;
-    d->mod64();
-}
-
-//=============================================================================
-
-int eis_desc_get(eis_desc_t* descp, unsigned* valp)
-{
-    desc_t* d = (desc_t*) descp->objp;
-    int ret = d->get(valp);
-    descp->n = d->n();
-    return ret;
-}
-
-//=============================================================================
-
-int eis_desc_val(eis_desc_t* descp, unsigned* valp)
-{
-    desc_t* d = (desc_t*) descp->objp;
-    int ret = d->val(valp);
-    descp->n = d->n();
-    return ret;
-}
-
-//=============================================================================
-
-int eis_desc_put(eis_desc_t* descp, unsigned val)
-{
-    desc_t* d = (desc_t*) descp->objp;
-    int ret = d->put(val);
-    descp->n = d->n();
-    return ret;
-}
-
-//=============================================================================
-
-int eis_desc_flush(eis_desc_t* descp)
-{
-    desc_t* d = (desc_t*) descp->objp;
-    return d->flush();
-}
-
 //=============================================================================
 
 /*
