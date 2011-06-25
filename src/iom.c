@@ -47,7 +47,7 @@
 
     Config switch: 3 positions -- Standard GCOS, Extended GCOS, Multics
 
-    Note that all M[addr] references are absolute (The IOM has no access to
+    Note that all Mem[addr] references are absolute (The IOM has no access to
     the CPU's appending hardware.)
 */
 
@@ -55,7 +55,6 @@
 #include <sys/time.h>
 #include "iom.hincl"
 
-extern t_uint64 M[];    /* memory */
 extern cpu_ports_t cpu_ports;
 extern scu_t scu;
 extern iom_t iom;
@@ -1316,7 +1315,7 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
     if (chanp == NULL)
         return 1;
 
-    log_msg(DEBUG_MSG, "IOW::DO-DDCW", "%012llo: %s\n", M[addr], dcw2text(dcwp));
+    log_msg(DEBUG_MSG, "IOW::DO-DDCW", "%012llo: %s\n", Mem[addr], dcw2text(dcwp));
 
     // impossible for (cp == 7); see do_dcw
 
@@ -1328,7 +1327,7 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
     uint daddr = dcwp->fields.ddcw.daddr;
     uint tally = dcwp->fields.ddcw.tally;
     t_uint64 word = 0;
-    t_uint64 *wordp = (type == 3) ? &word : M + daddr;  // 2 impossible; see do_dcw
+    t_uint64 *wordp = (type == 3) ? &word : Mem + daddr;    // 2 impossible; see do_dcw
     if (type == 3 && tally != 1)
         log_msg(ERR_MSG, "IOM::DDCW", "Type is 3, but tally is %d\n", tally);
     int ret;
@@ -1373,9 +1372,9 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
     // update dcw
 #if 0
     // Assume that DCW is only in scratchpad (bootload_tape_label.alm rd_tape reuses same DCW on each call)
-    M[addr] = setbits36(M[addr], 0, 18, daddr);
-    M[addr] = setbits36(M[addr], 24, 12, tally);
-    log_msg(DEBUG_MSG, "IOM::DDCW", "Data DCW update: %012llo: addr=%0o, tally=%d\n", M[addr], daddr, tally);
+    Mem[addr] = setbits36(Mem[addr], 0, 18, daddr);
+    Mem[addr] = setbits36(Mem[addr], 24, 12, tally);
+    log_msg(DEBUG_MSG, "IOM::DDCW", "Data DCW update: %012llo: addr=%0o, tally=%d\n", Mem[addr], daddr, tally);
 #endif
     return ret;
 }
@@ -1451,7 +1450,7 @@ static void parse_dcw(dcw_t *p, int addr)
         if (p->fields.instr.mask) {
             // Bit 21 is extension control (EC), not a mask
             // BUG: Check LPW bit 23
-            // M[addr] = setbits36(word, 12, 6, present_addr_extension);
+            // Mem[addr] = setbits36(word, 12, 6, present_addr_extension);
             log_msg(ERR_MSG, "IOW::DCW", "I-DCW bit EC not implemented\n");
             cancel_run(STOP_BUG);
             // return 1;
@@ -1597,7 +1596,7 @@ char* print_lpw(t_addr addr)
 
 int lpw_write(int chan, int chanloc, const lpw_t* p)
 {
-    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o had %012llo %012llo\n", chan, chanloc, M[chanloc], M[chanloc+1]);
+    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o had %012llo %012llo\n", chan, chanloc, Mem[chanloc], Mem[chanloc+1]);
     lpw_t temp;
     parse_lpw(&temp, chanloc, chan == IOM_CONNECT_CHAN);
     //log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o had: %s\n", chan, chanloc, lpw2text(&temp, chan == IOM_CONNECT_CHAN));
@@ -1622,7 +1621,7 @@ int lpw_write(int chan, int chanloc, const lpw_t* p)
         word1 = setbits36(word1, 18, 18, p->idcw);
         (void) store_abs_word(chanloc+1, word1);
     }
-    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o now %012llo %012llo\n", chan, chanloc, M[chanloc], M[chanloc+1]);
+    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o now %012llo %012llo\n", chan, chanloc, Mem[chanloc], Mem[chanloc+1]);
     return 0;
 }
 

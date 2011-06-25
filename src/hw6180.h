@@ -577,6 +577,12 @@ typedef struct {
 // ============================================================================
 // === Variables
 
+// Memory.
+// Most access is via fetch_abs_word() and store_abs_word(), but a
+// few source files make direct access (debugging and the IOM).
+#define MAXMEMSIZE (16*1024*1024)
+extern t_uint64 *Mem;
+
 // Non CPU
 extern int opt_debug;
 extern sysinfo_t sys_opts;

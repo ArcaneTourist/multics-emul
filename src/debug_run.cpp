@@ -23,7 +23,6 @@ using namespace std;
 #include "seginfo.hpp"
 
 // BUG: The following externs are hacks
-extern t_uint64 M[];    /* memory */    // BUG: hack
 extern DEVICE cpu_dev;
 
 //=============================================================================
@@ -572,7 +571,7 @@ static int stack_to_entry(unsigned abs_addr, AR_PR_t* prp)
     // returns the "current" entry point address that's
     // recorded in the stack frame.  Abs_addr should be a 24-bit
     // absolute memory location.
-    return words2its(M[abs_addr+026], M[abs_addr+027], prp);
+    return words2its(Mem[abs_addr+026], Mem[abs_addr+027], prp);
 }
 
 #if 0
@@ -617,7 +616,7 @@ static void print_frame(
         } else
             out_msg("\tUnknown entry %o|%o  ", entry_pr.PR.snr, entry_pr.wordno);
     } else
-        out_msg("\tUnknowable entry {%llo,%llo}  ", M[addr+026], M[addr+027]);
+        out_msg("\tUnknowable entry {%llo,%llo}  ", Mem[addr+026], Mem[addr+027]);
     out_msg("(stack frame at %03o|%06o)\n", seg, offset);
 
 #if 0
@@ -678,14 +677,14 @@ static int walk_stack(int output, list<seg_addr_t>* frame_listp)
         return 1;
     }
     AR_PR_t stack_begin_pr;
-    if (words2its(M[hdr_addr+022], M[hdr_addr+023], &stack_begin_pr) != 0) {
+    if (words2its(Mem[hdr_addr+022], Mem[hdr_addr+023], &stack_begin_pr) != 0) {
         log_msg(INFO_MSG, moi, "Stack header seems invalid; no stack_begin_ptr at %03o|22\n", seg);
         if (output)
             out_msg("Stack Trace: Stack header seems invalid; no stack_begin_ptr at %03o|22\n", seg);
         return 1;
     }
     AR_PR_t stack_end_pr;
-    if (words2its(M[hdr_addr+024], M[hdr_addr+025], &stack_end_pr) != 0) {
+    if (words2its(Mem[hdr_addr+024], Mem[hdr_addr+025], &stack_end_pr) != 0) {
         //if (output)
             out_msg("Stack Trace: Stack header seems invalid; no stack_end_ptr at %03o|24\n", seg);
         return 1;
@@ -696,7 +695,7 @@ static int walk_stack(int output, list<seg_addr_t>* frame_listp)
         return 1;
     }
     AR_PR_t lot_pr;
-    if (words2its(M[hdr_addr+026], M[hdr_addr+027], &lot_pr) != 0) {
+    if (words2its(Mem[hdr_addr+026], Mem[hdr_addr+027], &lot_pr) != 0) {
         //if (output)
             out_msg("Stack Trace: Stack header seems invalid; no LOT ptr at %03o|26\n", seg);
         return 1;
@@ -726,7 +725,7 @@ static int walk_stack(int output, list<seg_addr_t>* frame_listp)
         // Sanity check
         if (prev != 0) {
             AR_PR_t prev_pr;
-            if (words2its(M[addr+020], M[addr+021], &prev_pr) == 0) {
+            if (words2its(Mem[addr+020], Mem[addr+021], &prev_pr) == 0) {
                 if (prev_pr.wordno != prev) {
                     if (output)
                         out_msg("STACK Trace: Stack frame's prior ptr, %03o|%o is bad.\n", seg, prev_pr.wordno);
@@ -735,7 +734,7 @@ static int walk_stack(int output, list<seg_addr_t>* frame_listp)
         }
         prev = framep;
         // Print the current frame
-        if (finished && M[addr+022] == 0 && M[addr+024] == 0 && M[addr+026] == 0)
+        if (finished && Mem[addr+022] == 0 && Mem[addr+024] == 0 && Mem[addr+026] == 0)
             break;
 #if 0
         if (need_hist_msg) {
@@ -750,7 +749,7 @@ static int walk_stack(int output, list<seg_addr_t>* frame_listp)
             (*frame_listp).push_back(seg_addr_t(seg, framep));
         // Get the next one
         AR_PR_t next;
-        if (words2its(M[addr+022], M[addr+023], &next) != 0) {
+        if (words2its(Mem[addr+022], Mem[addr+023], &next) != 0) {
             if (!finished)
                 if (output)
                     out_msg("STACK Trace: no next frame.\n");
@@ -782,7 +781,7 @@ static int walk_stack(int output, list<seg_addr_t>* frame_listp)
         // Use the return ptr in the current frame to print the source line.
         if (! finished && output) {
             AR_PR_t return_pr;
-            if (words2its(M[addr+024], M[addr+025], &return_pr) == 0) {
+            if (words2its(Mem[addr+024], Mem[addr+025], &return_pr) == 0) {
                 where_t where;
                 int offset = return_pr.wordno;
                 if (offset > 0)
@@ -975,7 +974,7 @@ static int have_stack()
 static int its2pr(uint addr, seg_addr_t& a)
 {
     AR_PR_t pr;
-    if (words2its(M[addr], M[addr+1], &pr) == 0) {
+    if (words2its(Mem[addr], Mem[addr+1], &pr) == 0) {
         a = seg_addr_t(pr.PR.snr, pr.wordno);
         return 0;
     } else
@@ -987,10 +986,10 @@ static char* its2text(uint addr)
 {
     AR_PR_t pr;
     static char buf[80];
-    if (words2its(M[addr], M[addr+1], &pr) == 0) {
+    if (words2its(Mem[addr], Mem[addr+1], &pr) == 0) {
         sprintf(buf, "%#o|%#o", pr.PR.snr, pr.wordno);
     } else {
-        sprintf(buf, "{ %#llo, %#llo }", M[addr], M[addr+1]);
+        sprintf(buf, "{ %#llo, %#llo }", Mem[addr], Mem[addr+1]);
     }
     return buf;
 }
@@ -1010,7 +1009,7 @@ static int is_stack_frame(int segno, int offset)
         return 0;
 
     AR_PR_t pr;
-    if (words2its(M[hdr_addr+026], M[hdr_addr+027], &pr) != 0) {
+    if (words2its(Mem[hdr_addr+026], Mem[hdr_addr+027], &pr) != 0) {
         // log_msg(INFO_MSG, moi, "Segment %#o does not have a valid header; no LOT ptr at offset 26.\n", segno);
         return 0;
     }
@@ -1018,7 +1017,7 @@ static int is_stack_frame(int segno, int offset)
         // log_msg(INFO_MSG, moi, "Segment %#o does not have a valid header; LOT ptr is not in segment 015.\n");
         return 0;
     }
-    if (words2its(M[hdr_addr+022], M[hdr_addr+023], &pr) != 0) {
+    if (words2its(Mem[hdr_addr+022], Mem[hdr_addr+023], &pr) != 0) {
         // log_msg(INFO_MSG, moi, "Segment %#o does not have a valid header; no frame ptr at offset 22.\n", segno);
         return 0;
     }
@@ -1122,7 +1121,7 @@ void multics_stack_frame::set_linkage(const linkage_info* lip)
         map<int,val_t>::iterator it = vals.end();
         for (map<int,var_info>::const_iterator autos_it = sfp->automatics.begin(); autos_it != sfp->automatics.end(); ++ autos_it) {
             int soffset = (*autos_it).first;
-            t_uint64 curr = M[_addr+soffset];
+            t_uint64 curr = Mem[_addr+soffset];
             it = vals.insert(it, pair<int,val_t>(soffset, val_t(curr)));
         }
     } else {
@@ -1496,8 +1495,8 @@ static void out_auto(ostringstream& obuf, const var_info& v, int addr, int is_in
 {
     ostringstream buf;
     if (v.type == var_info::ptr && v.size == 72) {
-        t_uint64 curr1 = M[addr];
-        t_uint64 curr2 = M[addr + 1];
+        t_uint64 curr1 = Mem[addr];
+        t_uint64 curr2 = Mem[addr + 1];
         buf << setw(12) << setfill('0') << oct;
         buf << curr1 << " " <<  setw(12) << curr2;
         buf << setw(0);
@@ -1520,7 +1519,7 @@ static void out_auto(ostringstream& obuf, const var_info& v, int addr, int is_in
             }
         }
     } else {
-        t_uint64 curr = M[addr];
+        t_uint64 curr = Mem[addr];
         // buf << dec << curr << setw(12) << setfill('0') << oct << "(" << curr << ")";
         buf << dec << setw(0) << curr
             << " ("
@@ -1570,7 +1569,7 @@ void multics_stack_frame::update_autos(
     for (map<int, val_t>::iterator autos_it = vals.begin(); autos_it != vals.end(); ++ autos_it) {
         int soffset = (*autos_it).first;
         val_t& autov = (*autos_it).second;
-        t_uint64 curr = M[sp_addr + soffset];
+        t_uint64 curr = Mem[sp_addr + soffset];
         change_t chg = autov.change(curr);
         if (chg == initial_change || chg == changed) {
             if (!is_changed && entry() && entry()->source && log_any_io(0)) {

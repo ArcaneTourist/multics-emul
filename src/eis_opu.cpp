@@ -543,7 +543,7 @@ int op_btd(const instr_t* ip)
 // ============================================================================
 
 
-#if 0
+#if 1
 static int _op_dtb(const instr_t* ip);
 int op_dtb(const instr_t* ip)
 {
@@ -557,7 +557,7 @@ int op_dtb(const instr_t* ip)
     return ret;
 }
 #endif
-int op_dtb(const instr_t* ip)
+int _op_dtb(const instr_t* ip)
 {
     const char* moi = "OPU::dtb";
 
@@ -637,7 +637,7 @@ int op_dtb(const instr_t* ip)
     }
     if (negate)
         val = (~ val) + 1;  // val will not be max positive or max neg
-    log_msg(INFO_MSG, moi, "source BCD value is %d -> %#o.\n", val, val);
+    log_msg(NOTIFY_MSG, moi, "source BCD value is %d -> %#o.\n", val, val);
 
     // We have a source value of at most 32 bits.  Dest is 9 to 72 bits;
     // see if it fits.
@@ -1418,7 +1418,7 @@ static decNumber* new_decNumber(void)
     if (extra_digits < 0)
         extra_digits = 0;
     int extra_space = sizeof(decNumberUnit) * (extra_digits / DECDPUN + 1);
-    return (decNumber*) malloc(sizeof(decNumber) + extra_space);
+    return (decNumber*) calloc(1, sizeof(decNumber) + extra_space);
 }
 
 static void debug_show(const decNumber& decnum, const char* msg);

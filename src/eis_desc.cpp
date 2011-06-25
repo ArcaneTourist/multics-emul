@@ -776,30 +776,7 @@ void ptr_t::_bit_advance(int nbits, bool quiet)
  * internal pointer forwards or backwards as appropriate.
  */
 
-int desc_t::_get(unsigned* valp, bool want_advance) {
-    const char* moi = "APU::EIS::get";
-#if 0
-    return __get(valp, want_advance);
-#else
-    // Valgrind incorrectly claims __get() sometimes does not write to
-    // valp.   This proves that only happens on non-zero returns.
-    static const unsigned impossible = ~ (unsigned) 0;
-    unsigned buf = impossible;
-    int ret = __get(&buf, want_advance);
-    if (ret == 0 || buf != impossible)
-        *valp = buf;
-    if (ret == 0) {
-        if (buf == impossible) {
-            log_msg(ERR_MSG, moi, "__get failed to return data.\n");
-            cancel_run(STOP_BUG);
-            // return 1;
-        }
-    }
-    return ret;
-#endif
-}
-
-int desc_t::__get(unsigned* valp, bool want_advance)
+int desc_t::_get(unsigned* valp, bool want_advance)
 {
 
     const char* moi = "APU::EIS::get";
@@ -976,6 +953,8 @@ int eis_desc_flush(eis_desc_t* descp)
 
 /*
  * desc_t::init_ptr()
+ *
+ * Called by ::get() and ::put().
  *
  * BUG: handle buf.is_loaded;
  */

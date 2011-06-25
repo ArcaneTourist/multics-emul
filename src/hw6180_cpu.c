@@ -33,6 +33,8 @@
 #include "sim_tape.h"
 // #include "bits.h"
 
+#define MEM_CHECK_UNINIT 1
+
 //-----------------------------------------------------------------------------
 // *** SIMH specific externs
 
@@ -44,8 +46,7 @@ extern int32 sim_switches;
 //-----------------------------------------------------------------------------
 // *** Main memory
 
-#define MAXMEMSIZE (16*1024*1024)
-t_uint64 M[MAXMEMSIZE];
+t_uint64 *Mem;
 
 //-----------------------------------------------------------------------------
 // *** CPU Registers
@@ -498,7 +499,7 @@ t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
     if (write_flag) {
         out_msg("Dumping memory to %s.\n", fnam);
         for (int i = 0; i < MAXMEMSIZE - 1; i += 2) {
-            if (write72(fileref, M[i], M[i+1]) != 0) {
+            if (write72(fileref, Mem[i], Mem[i+1]) != 0) {
                 log_msg(ERR_MSG, "DUMP", "Error writing %s: %s\n", fnam, strerror(errno));
                 return SCPE_IOERR;
             }
@@ -510,7 +511,7 @@ t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
                 out_msg("EOF on %s after %d words\n", fnam, i);
                 return SCPE_OK;
             }
-            if (read72(fileref, &M[i], &M[i+1]) != 0) {
+            if (read72(fileref, &Mem[i], &Mem[i+1]) != 0) {
                 log_msg(ERR_MSG, "DUMP", "Error reading %s: %s\n", fnam, strerror(errno));
                 return SCPE_IOERR;
             }
@@ -1805,10 +1806,10 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
         log_msg(DEBUG_MSG, "CU::fetch", "Fetch from 0..030 for addr %#o\n", addr);
     }
 
-    if (addr >= ARRAY_SIZE(M)) {
+    if (addr >= MAXMEMSIZE) {
             log_msg(ERR_MSG, "CU::fetch", "Addr %#o (%d decimal) is too large\n", addr, addr);
             (void) cancel_run(STOP_BUG);
-            return 0;
+            return 1;
     }
 
     if (sim_brk_summ) {
@@ -1816,13 +1817,24 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
         // has its own test for appending mode breakpoints.
         t_uint64 simh_addr = addr_emul_to_simh(ABSOLUTE_mode, 0, addr);
         if (sim_brk_test (simh_addr, SWMASK ('M'))) {
-            log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address %#o.  Fetched value %012llo\n", addr, M[addr]);
+            log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address %#o.  Fetched value %012llo\n", addr, Mem[addr]);
             (void) cancel_run(STOP_IBKPT);
         }
     }
 
     cpu.read_addr = addr;   // Should probably be in scu
-    *wordp = M[addr];   // absolute memory reference
+#if MEM_CHECK_UNINIT
+    {
+    t_uint64 word = Mem[addr];  // absolute memory reference
+    if (word == ~ 0) {
+        word = 0;
+        log_msg(WARN_MSG, "CU::fetch", "Fetch from uninitialized absolute locaction %#o.\n", addr);
+    }
+    *wordp = word;
+    }
+#else
+    *wordp = Mem[addr]; // absolute memory reference
+#endif
     if (get_addr_mode() == BAR_mode)
         log_msg(DEBUG_MSG, "CU::fetch-abs", "fetched word at %#o\n", addr);
     return 0;
@@ -1900,10 +1912,10 @@ int store_abs_word(uint addr, t_uint64 word)
         //log_msg(DEBUG_MSG, "CU::store", "Fetch from 0..030 for addr %#o\n", addr);
     }
 
-    if (addr >= ARRAY_SIZE(M)) {
+    if (addr >= MAXMEMSIZE) {
             log_msg(ERR_MSG, "CU::store", "Addr %#o (%d decimal) is too large\n");
             (void) cancel_run(STOP_BUG);
-            return 0;
+            return 1;
     }
     if (sim_brk_summ) {
         // Check for absolute mode breakpoints.  Note that store_appended()
@@ -1923,11 +1935,11 @@ int store_abs_word(uint addr, t_uint64 word)
                 log_msg(NOTIFY_MSG, "CU::store", "Write to a location that has an unknown type of breakpoint, address %#o\n", addr);
                 (void) cancel_run(STOP_IBKPT);
             }
-            log_msg(INFO_MSG, "CU::store", "Address %08o: value was %012llo, storing %012llo\n", addr, M[addr], word);
+            log_msg(INFO_MSG, "CU::store", "Address %08o: value was %012llo, storing %012llo\n", addr, Mem[addr], word);
         }
     }
 
-    M[addr] = word; // absolute memory reference
+    Mem[addr] = word;   // absolute memory reference
     if (addr == cpu.IC_abs) {
         log_msg(NOTIFY_MSG, "CU::store", "Flagging cached odd instruction from %o as invalidated.\n", addr);
         cpu.irodd_invalid = 1;
@@ -2258,7 +2270,8 @@ static t_stat cpu_ex (t_value *eval_array, t_addr simh_addr, UNIT *uptr, int32 s
         return SCPE_ARG;    // BUG: is this the right failure code
     }
 
-    memcpy(eval_array, &M[abs_addr], sizeof(M[0])); // SIMH absolute reference
+    // TODO: handle MEM_CHECK_UNINIT
+    memcpy(eval_array, &Mem[abs_addr], sizeof(Mem[0])); // SIMH absolute reference
     return 0;
 }
 
@@ -2287,7 +2300,7 @@ static t_stat cpu_dep (t_value v, t_addr simh_addr, UNIT *uptr, int32 switches)
 
     // We use the translated absolute reference here.
     // BUG: We should use store_abs_word() in case we need cache invalidation.
-    M[abs_addr] = v;
+    Mem[abs_addr] = v;
 
     return 0;
 }

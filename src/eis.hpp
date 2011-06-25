@@ -145,7 +145,7 @@ private:
     // t_uint64 buf[8]; // EIS instructions use a buffer
     // ptr_t _base;
     ptr_t _curr;
-    bool _is_read;
+    // bool _is_read;
     bool _is_fwd;
     //bool _mod64;
     struct {
@@ -155,9 +155,6 @@ private:
         int lo_write;
         int hi_write;
     } buf;
-#if 1
-    int __get(unsigned* valp, bool want_advance);
-#endif
     int _get(unsigned* valp, bool want_advance);
     int _put(unsigned val, bool want_advance);
 public:

@@ -5,6 +5,8 @@
 #include "hw6180.h"
 #include <ctype.h>
 
+#define MEM_CHECK_UNINIT 1
+
 // The following are assigned to SIMH function pointers
 static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr);
 static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr addr);
@@ -16,7 +18,6 @@ extern DEVICE opcon_dev;
 extern DEVICE iom_dev;
 //extern DEVICE dsk_dev;
 extern REG cpu_reg[];
-extern t_uint64 M[];
 
 extern UNIT TR_clk_unit;
 extern switches_t switches;
@@ -192,6 +193,17 @@ static void hw6180_init(void)
     // Only one IOM
     iom.iom_num = 0;    // IOM "A"
 
+    Mem = malloc(sizeof(*Mem) * MAXMEMSIZE);
+    if (Mem == NULL) {
+        log_msg(ERR_MSG, "SYS::init", "Cannot allocate memory.\n");
+        return;
+    }
+#if MEM_CHECK_UNINIT
+    memset(Mem, 0xff, MAXMEMSIZE*sizeof(Mem[0]));
+#else
+    memset(Mem, 0, MAXMEMSIZE*sizeof(Mem[0]));
+#endif
+
     // TODO: init_memory_iom() should probably be called by boot()
     //init_memory_iox();
     init_memory_iom();      // Using IOX causes use of unknown instr "ldo" and IOX has an undocumented mailbox architecture
@@ -301,9 +313,6 @@ static void init_memory_iom()
     // Maybe an is-IMU flag; IMU is later version of IOM
     t_uint64 imu = 0;       // 1 bit
 
-#define MAXMEMSIZE (16*1024*1024)   /* BUG */
-    memset(M, 0, MAXMEMSIZE*sizeof(M[0]));
-
     /* Description of the bootload channel from 43A239854
         Legend
             BB - Bootload channel #
@@ -315,34 +324,38 @@ static void init_memory_iom()
     */
 
     t_uint64 dis0 = 0616200;
-    /* 1*/ M[010 + 2 * iom] = (imu << 34) | dis0;           // system fault vector; DIS 0 instruction (imu bit not mentioned by 43A239854)
-    /* 2*/ M[030 + 2 * iom] = dis0;                     // terminate interrupt vector (overwritten by bootload)
+    /* 1*/ Mem[010 + 2 * iom] = (imu << 34) | dis0;         // system fault vector; DIS 0 instruction (imu bit not mentioned by 43A239854)
+    // Zero other 1/2 of y-pair to avoid msgs re reading uninitialized
+    // memory (if we have that turned on)
+    Mem[010 + 2 * iom + 1] = 0;
+
+    /* 2*/ Mem[030 + 2 * iom] = dis0;                       // terminate interrupt vector (overwritten by bootload)
     int base_addr = base << 6; // 01400
 
-    /* 3*/ M[base_addr + 7] = ((t_uint64) base_addr << 18) | 02000002;  // tally word for sys fault status
+    /* 3*/ Mem[base_addr + 7] = ((t_uint64) base_addr << 18) | 02000002;    // tally word for sys fault status
                 // ??? Fault channel DCW
 
     // bootload_tape_label.alm says 04000, 43A239854 says 040000.  Since 43A239854 says
     // "no change", 40000 is correct; 4000 would be a large tally
-    /* 4*/ M[base_addr + 010] = 040000;     // Connect channel LPW; points to PCW at 000000
+    /* 4*/ Mem[base_addr + 010] = 040000;       // Connect channel LPW; points to PCW at 000000
     int mbx = base_addr + 4 * tape_chan;
-    /* 5*/ M[mbx] = 03020003;               // Boot device LPW; points to IDCW at 000003
-    /* 6*/ M[4] = 030 << 18;                // Second IDCW: IOTD to loc 30 (startup fault vector)
+    /* 5*/ Mem[mbx] = 03020003;             // Boot device LPW; points to IDCW at 000003
+    /* 6*/ Mem[4] = 030 << 18;              // Second IDCW: IOTD to loc 30 (startup fault vector)
 
     // Default SCW points at unused first mailbox.
     // T&D tape overwrites this before the first status is savec, though.
-    /* 7*/ M[mbx + 2] = ((t_uint64)base_addr << 18);        // SCW
+    /* 7*/ Mem[mbx + 2] = ((t_uint64)base_addr << 18);      // SCW
 
-    /* 8*/ M[0] = 0720201;                  // 1st word of bootload channel PCW
+    /* 8*/ Mem[0] = 0720201;                    // 1st word of bootload channel PCW
 
     // Why are we putting a port # in the 2nd word of the PCW?  The lower 27
     // bits of the odd word of a PCW should be all zero.
-    /* 9*/ M[1] = ((t_uint64) tape_chan << 27) | port;      // 2nd word of PCW pair
+    /* 9*/ Mem[1] = ((t_uint64) tape_chan << 27) | port;        // 2nd word of PCW pair
 
     // following verified correct; instr 362 will not yield 1572 with a different shift
-    /*10*/ M[2] = ((t_uint64) base_addr << 18) | pi_base | iom; // word after PCW (used by program)
+    /*10*/ Mem[2] = ((t_uint64) base_addr << 18) | pi_base | iom;   // word after PCW (used by program)
 
-    /*11*/ M[3] = (cmd << 30) | (dev << 24) | 0700000;      // IDCW for read binary
+    /*11*/ Mem[3] = (cmd << 30) | (dev << 24) | 0700000;        // IDCW for read binary
 
 }
 
@@ -378,43 +391,40 @@ static void init_memory_iox()
 
     t_uint64 imu = 0;       // 1 bit; Maybe an is-IMU flag; IMU is later version of IOM
 
-#define MAXMEMSIZE (16*1024*1024)   /* BUG */
-    memset(M, 0, MAXMEMSIZE*sizeof(M[0]));
-
     //  6/Command, 6/Device#, 6/0, 18/700000
-    M[0] = (cmd << 30) | (dev << 24) | 0700000; // Bootload IDCW
-    M[1] = 030 << 18;                           // Second IDCW: IOTD to loc 30 (startup fault vector)
+    Mem[0] = (cmd << 30) | (dev << 24) | 0700000;   // Bootload IDCW
+    Mem[1] = 030 << 18;                         // Second IDCW: IOTD to loc 30 (startup fault vector)
     // 24/7000000,12/IOXoffset
-    M[4] = ((t_uint64)07000000 << 12) | iox_offset;     // A register value for connect
+    Mem[4] = ((t_uint64)07000000 << 12) | iox_offset;       // A register value for connect
 
-    M[010] = (1<<18) | 0612000;                 // System fault vector; a HALT instruction
-    M[030] = (010<<18) | 0612000;               // Terminate interrupt vector (overwritten by bootload)
+    Mem[010] = (1<<18) | 0612000;                   // System fault vector; a HALT instruction
+    Mem[030] = (010<<18) | 0612000;             // Terminate interrupt vector (overwritten by bootload)
 
     // IOX Mailbox
-    M[001400] = 0;      // base addr 0
-    M[001401] = 0;      // base addr 1
-    M[001402] = 0;      // base addr 2
-    M[001403] = 0;      // base addr 3
-    M[001404] = ((t_uint64)0777777<<18);    // bound 0, bound 1
-    M[001405] = 0;              // bound 2, bound 3
-    M[001406] = 03034;          // channel link word
-    M[001407] = (0400 << 9) | 0400; // lpw
+    Mem[001400] = 0;        // base addr 0
+    Mem[001401] = 0;        // base addr 1
+    Mem[001402] = 0;        // base addr 2
+    Mem[001403] = 0;        // base addr 3
+    Mem[001404] = ((t_uint64)0777777<<18);  // bound 0, bound 1
+    Mem[001405] = 0;                // bound 2, bound 3
+    Mem[001406] = 03034;            // channel link word
+    Mem[001407] = (0400 << 9) | 0400;   // lpw
         // but what the heck lpw is Chan 01 -- [dcw=00 ires=1 hrel=0 ae=0 nc=0 trun=0 srel=0 tally=0400] [lbnd=00 size=05(5) idcw=020001]
 
     // The following were set by bootload..
-    //M[001407] = 001402000002; // Chan 01 -- [dcw=01402 ires=0 hrel=0 ae=0 nc=0 trun=0 srel=0 tally=02]
-    //M[001410] = 000000040000; // [lbnd=00 size=00(0) idcw=040000]
-    //M[001402] = 000000000000;
-    //M[001403] = 000000000000;
-    //M[040000] = 013732054000;
+    //Mem[001407] = 001402000002;   // Chan 01 -- [dcw=01402 ires=0 hrel=0 ae=0 nc=0 trun=0 srel=0 tally=02]
+    //Mem[001410] = 000000040000;   // [lbnd=00 size=00(0) idcw=040000]
+    //Mem[001402] = 000000000000;
+    //Mem[001403] = 000000000000;
+    //Mem[040000] = 013732054000;
 
     /* Described in A43A239854_600B_IOM_Spec_Jul75.pdf */
     // LPW for connect channel
-    // M[001410] = 05040000;    // LPW for connect channel; NC=1; DCW=5
-    M[001410] = 05020001;   // LPW for connect channel; NC=0, tro=1, tally=1, DCW=5
+    // Mem[001410] = 05040000;  // LPW for connect channel; NC=1; DCW=5
+    Mem[001410] = 05020001; // LPW for connect channel; NC=0, tro=1, tally=1, DCW=5
     // PCW for connect channel -- we'll arbitrarily use words 5 and 6
-    M[5] = 0720201;                 // Bootload channel PCW, word 1 (this is an 18 bit value)
-    M[6] = ((t_uint64) tape_chan << 27) | port;     // Bootload channel PCW, word 2
+    Mem[5] = 0720201;                   // Bootload channel PCW, word 1 (this is an 18 bit value)
+    Mem[6] = ((t_uint64) tape_chan << 27) | port;       // Bootload channel PCW, word 2
     // LPW for bootload channel (channel #5) -- BUG, we probably need one...
     // NOTE: Two DCW words for bootload channel are at location zero
 }
@@ -480,16 +490,16 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
         /* Next, we always output the numeric value */
         t_addr alow = abs_addr;
         t_addr ahi = abs_addr;
-        fprintf(ofile, "%012llo", M[abs_addr]);
+        fprintf(ofile, "%012llo", Mem[abs_addr]);
         if (sw & SWMASK('S')) {
             // SDWs are two words
             ++ ahi;
-            fprintf(ofile, " %012llo", M[ahi]);
+            fprintf(ofile, " %012llo", Mem[ahi]);
         }
         /* User may request (A)scii in addition to another format */
         if (sw & SWMASK('A')) {
             for (t_addr a = alow; a <= ahi; ++ a) {
-                t_uint64 word = M[a];
+                t_uint64 word = Mem[a];
                 fprintf(ofile, " ");
                 for (int i = 0; i < 4; ++i) {
                     uint c = word >> 27;
@@ -505,18 +515,18 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
         /* See if any other format was requested (but don't bother honoring multiple formats */
         if (sw & SWMASK('M')) {
             // M -> instr
-            char *instr = print_instr(M[abs_addr]);
+            char *instr = print_instr(Mem[abs_addr]);
             fprintf(ofile, " %s", instr);
         } else if (sw & SWMASK('L')) {
             // L -> LPW
             fprintf(ofile, " %s", print_lpw(abs_addr));
         } else if (sw & SWMASK('P')) {
             // P -> PTW
-            char *s = print_ptw(M[abs_addr]);
+            char *s = print_ptw(Mem[abs_addr]);
             fprintf(ofile, " %s", s);
         } else if (sw & SWMASK('S')) {
             // S -> SDW
-            char *s = print_sdw(M[abs_addr], M[abs_addr+1]);
+            char *s = print_sdw(Mem[abs_addr], Mem[abs_addr+1]);
             fprintf(ofile, " %s", s);
         } else if (sw & SWMASK('A')) {
             // already done

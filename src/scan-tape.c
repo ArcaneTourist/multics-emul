@@ -252,7 +252,6 @@ void tape_block(int n_blocks, unsigned char *p, uint32 len)
         sprintf(msg, "Block %3d, WORD %5lo", n_blocks, (unsigned long) hack);
         ++hack;
         anal36(msg, word);
-        // bitstm_get(bp, 36, &M[hack++]);
         nbits -= 36;
     }
     printf("\n");
