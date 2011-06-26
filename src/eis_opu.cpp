@@ -78,8 +78,6 @@ int op_move_alphanum(const instr_t* ip, int fwd)
             ret = 2;
     }
 
-    //log_msg(WARN_MSG, moi, "Need to verify; auto breakpoint\n");
-    //cancel_run(STOP_WARN);
     log_msg(DEBUG_MSG, moi, "finished.\n");
 
     PPR.IC += 3;        // BUG: when should we bump IC?  probably not for seg faults, but probably yes for overflow
@@ -619,35 +617,20 @@ int _op_dtb(const instr_t* ip)
     }
     if (negate)
         val = (~ val) + 1;  // val will not be max positive or max neg
-    log_msg(NOTIFY_MSG, moi, "source BCD value is %d -> %#o.\n", val, val);
+    log_msg(INFO_MSG, moi, "source BCD value is %d -> %#o.\n", val, val);
 
     // We have a source value of at most 32 bits.  Dest is 9 to 72 bits;
     // see if it fits.
 
-#if 0
-    unsigned v = val;
-    int nquads = 0;
-    for (int i = 0; i < 4; ++i) {
-        if (negate) {
-            if ((v & 0x1ff) != 0x1ff)
-                nquads = i + 1;
-            v >>= 9;
-            v |= 0x1ff << 27;
-        } else {
-            if ((v & 0x1ff) != 0)
-                nquads = i + 1;
-            v >> = 9;
-        }
-    }
-    ...
-#else
     int is_overflow;
     if (negate) {
+        // All upper bits of val should be on
         unsigned mask = MASKBITS(desc2.n() * 9);
         is_overflow = (mask | val) != MASKBITS(sizeof(val) * 8);
-    } else
+    } else {
+        // None of the upper bits of val should be on
         is_overflow = (val >> (desc2.n() * 9)) != 0;
-#endif
+    }
 
     int ret = 0;
     if (is_overflow) {
@@ -658,7 +641,8 @@ int _op_dtb(const instr_t* ip)
         IR.zero = is_zero;
 
         log_msg(DEBUG_MSG, moi, "Storing %d bytes\n", desc2.n());
-        // put_eis_an_rev doesn't exist...
+        // put_eis_an_rev() doesn't exist, so write fwd, but access
+        // appropriate bits of val
         for (int n = desc2.n(); n != 0; --n) {
             uint nib;
             if (n > 4)
@@ -676,9 +660,6 @@ int _op_dtb(const instr_t* ip)
     if (ret == 0)
         if (desc2.flush() != 0)
             return 1;
-
-    log_msg(WARN_MSG, moi, "Untested; IR may be wrong; auto breakpoint\n");
-    cancel_run(STOP_IBKPT);
 
     PPR.IC += 3;        // BUG: when should we bump IC?  probably not for faults, but probably yes for conditions
     return ret;
@@ -1556,6 +1537,7 @@ static int write_decimal(const dec_t& src, num_desc_t desc2, flag_t rounding, fl
 
     int src_sign = src.sign_nibble;
     int src_neg = src.is_neg;
+    int auto_break = 0;
 
 #if 0
     int dst_sign = (src_neg) ? 015
@@ -1623,6 +1605,10 @@ static int write_decimal(const dec_t& src, num_desc_t desc2, flag_t rounding, fl
 
     int sf1 = src.exp;
     int sf2 = (desc2.s() == 0) ? 0 : desc2.sf();
+    if (sf1 != sf2) {
+        auto_break = 1;
+        log_msg(INFO_MSG, moi, "Non equal exponents; auto breakpoint.\n");
+    }
     log_msg(DEBUG_MSG, moi, "Src has %d coefficient digits with %d leading zeros: %.100s.\n", n_src, n_src_lz, src.coe_text);
     log_msg(DEBUG_MSG, moi, "Src has exponent or scaling factor %d.\n", sf1);
     log_msg(DEBUG_MSG, moi, "Dest has %s %d.\n",
@@ -1718,6 +1704,8 @@ static int write_decimal(const dec_t& src, num_desc_t desc2, flag_t rounding, fl
         // Unused source digits (we tested for overflow earlier, these
         // are lost low digits).
         log_msg(DEBUG_MSG, moi, "Checking src bytes %d .. %d for rounding or trunc.\n", head, tail);
+        log_msg(INFO_MSG, moi, "Unused source digit; auto breakpoint.\n");
+        auto_break = 1;
         if (rounding) {
             if ((src.coe[inp] & 0xf) >= 5) {
                 int out_head = (desc2.s() == 00 || desc2.s() == 1) ? 1 : 0;
@@ -1763,10 +1751,15 @@ static int write_decimal(const dec_t& src, num_desc_t desc2, flag_t rounding, fl
     // Handle trailing sign or exponent byte(s), if any
     if (desc2.s() == 0) {
         if (desc2.s() == 0) {
-            if (sf2 < -128)
+            if (sf2 < -128) {
                 IR.exp_underflow = 1;
-            else if (sf2 > 127)
+                log_msg(INFO_MSG, moi, "Exponent underflow; auto breakpoint.\n");
+                auto_break = 1;
+            } else if (sf2 > 127) {
                 IR.exp_overflow = 1;
+                log_msg(INFO_MSG, moi, "Exponent overflow; auto breakpoint.\n");
+                auto_break = 1;
+            }
             if (desc2.width() == 4) {
                 out_ybuf[outp++] = (sf2 >> 4) & 0xff;
                 out_ybuf[outp++] = sf2 & 0xff;
@@ -1810,9 +1803,6 @@ static int write_decimal(const dec_t& src, num_desc_t desc2, flag_t rounding, fl
             return 1;
 
     log_msg(DEBUG_MSG, moi, "Wrote %d bytes.\n", outp);
-
-    log_msg(WARN_MSG, moi, "Untested; auto breakpoint\n");
-    cancel_run(STOP_IBKPT);
 
     return ret;
 }
@@ -2033,8 +2023,8 @@ example result format: 3 digits an scale of 2 --- ??? x 10^2
     log_msg(INFO_MSG, moi, "After copy finishes: desc2: %s\n", desc2.to_text(msg_buf));
     log_msg(INFO_MSG, moi, "After copy finishes: desc3: %s\n", desc3.to_text(msg_buf));
 
-    log_msg(ERR_MSG, moi, "Untested\n");
-    cancel_run(STOP_BUG);
+    log_msg(ERR_MSG, moi, "Lightly tested; auto breakpoint\n");
+    cancel_run(STOP_IBKPT);
 
     free(divisor_p);
     free(divisor_copy_p);

@@ -1221,7 +1221,7 @@ static t_stat control_unit(void)
             log_msg(DEBUG_MSG, "CU::interrupt", "calling execute_ir() for xed\n");
             execute_ir();   // executing in INTERRUPT CYCLE, not EXECUTE CYCLE
             log_msg(WARN_MSG, "CU", "Interrupt -- lightly tested\n");
-            (void) cancel_run(STOP_BUG);
+            (void) cancel_run(STOP_IBKPT);
 
             // We executed an XED just above.  XED set various CPU flags.
             // So, now, set the CPU into the EXEC cycle so that the

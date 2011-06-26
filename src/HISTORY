@@ -769,7 +769,7 @@ History of pre-release versions
     EIS instructions
         Fix to btd
         Fixes for padding on MOP puts to only pad digits, not blanks and
-        other specials
+        other specials.
         Initial look at dv3d
 
 === Pre-Version 110, June 12, 2011
@@ -777,14 +777,20 @@ History of pre-release versions
         Support indirect descriptors
         Fix for handling 4 bit data (8 4-bit nibbles per word, not 9).
 
-=== Pre-Version 111, ...
+=== Pre-Version 111, June 21, 2011
     EIS instructions
-        Use a generalized decimal input function.
         Generalize mvn's output logic for use by other EIS decimal
-        instructions
-        Add dv3d, divide decimal with three operands.
+        instructions.
+        Use a generalized decimal input function.
+        Add dv3d, divide decimal with three operands.  Uses decNumber library.
+
+=== Pre-Version 112, June 25, 2011
     General
         Rename M[] to *Mem.
         Add support for warning re reads of uninitialized memory.
         Valgrind reports a couple of false positives on unitialized Mem[]
         accesses after call to fetch_abs_word in desc_t::_get().
+
+=== Pre-Version 113, Jun 25, 2011
+    EIS instructions
+        Remove eis_desc_t and use desc_t abstract base class instead.

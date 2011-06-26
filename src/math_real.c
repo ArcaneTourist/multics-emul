@@ -214,7 +214,6 @@ int instr_ufm(t_uint64 word)
     double x = multics_to_double(reg_A, reg_Q, 0, 1);
     log_msg(NOTIFY_MSG, "opu::ufm", "AQE is %g * 2^%d\n", x, reg_E);
 
-    // int aq_neg = bit36_is_neg(reg_A);
     uint8 op_exp = getbits36(word, 0, 8);
     t_uint64 op_mant = getbits36(word, 8, 28) << 8; // 36-8=28 bits
     log_msg(INFO_MSG, "opu::ufm", "op = %012llo => exp %03o(%d) and mantissa %012llo (%lld)\n", word, op_exp, (int8) op_exp, op_mant, op_mant);
@@ -227,12 +226,14 @@ int instr_ufm(t_uint64 word)
     // BUG: Do we need to generate faults?
     if (exp < -128) {
         IR.exp_underflow = 1;
-        log_msg(NOTIFY_MSG, "opu::ufm", "exp underflow.\n");
         // ret = 1;
+        log_msg(NOTIFY_MSG, "opu::ufm", "exp underflow.\n");
+        cancel_run(STOP_IBKPT);
     } else if (exp > 127) {
         IR.exp_overflow = 1;
-        log_msg(NOTIFY_MSG, "opu::ufm", "exp overflow.\n");
         // ret = 1;
+        log_msg(NOTIFY_MSG, "opu::ufm", "exp overflow.\n");
+        cancel_run(STOP_IBKPT);
     }
     reg_E = (unsigned) exp & MASKBITS(8);
     log_msg(INFO_MSG, "opu::ufm", "new exp is %d aka %#o\n", exp, reg_E);
@@ -259,6 +260,7 @@ int instr_ufm(t_uint64 word)
 
     x = multics_to_double(reg_A, reg_Q, 0, 1);
     log_msg(NOTIFY_MSG, "opu::ufm", "resulting AQE is %g * 2^%d\n", x, reg_E);
+
     if (normalize) {
         log_msg(NOTIFY_MSG, "opu::ufm", "Auto Breakpoint for normalize mode.\n");
         (void) cancel_run(STOP_IBKPT);

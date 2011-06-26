@@ -2477,13 +2477,7 @@ static int do_an_op(instr_t *ip)
             case opcode0_adwp4:
             case opcode0_adwp6:
             case opcode0_adwp7: {
-                int bug_n = (op & 03) + (op >= opcode0_adwp4) ? 4 : 0;
                 int n = (op & 03) + ((op >= opcode0_adwp4) ? 4 : 0);
-                if (bug_n != n) {
-                    char opname[30];
-                    sprintf(opname, "OPU::opcode::%s", op0text[op]);
-                    log_msg(INFO_MSG, opname, "Bug fix: prior version would have updated PR[%d] instead of PR[%d].\n", bug_n, n);
-                }
                 int ret;
                 t_uint64 word;
                 if ((ret = fetch_op(ip, &word)) == 0) {
@@ -3035,8 +3029,6 @@ static int do_an_op(instr_t *ip)
                     ; // SC config reg
                     log_msg(INFO_MSG, "OPU::opcode::sscr", "sys config switches selected\n");
                     ret = scu_set_config_switches(TPR.CA);
-                    cancel_run(STOP_BUG);
-                    ret = 1;
                 } else if (ea == 0020) {
                     log_msg(DEBUG_MSG, "OPU::opcode::sscr", "port zero selected\n");
                     ret = scu_set_mask(TPR.CA, 0);
@@ -3359,17 +3351,11 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
             case opcode1_mlr: {
-                // extern DEVICE cpu_dev; ++ opt_debug; ++ cpu_dev.dctrl;
                 int ret = op_move_alphanum(ip, 1);
-                // -- opt_debug; -- cpu_dev.dctrl;
                 return ret;
             }
             case opcode1_mrl: {
-                extern DEVICE cpu_dev; ++ opt_debug; ++ cpu_dev.dctrl;
                 int ret = op_move_alphanum(ip, 0);
-                -- opt_debug; -- cpu_dev.dctrl;
-                log_msg(NOTIFY_MSG, "OPU::mrl", "Auto breakpoint.\n");
-                cancel_run(STOP_IBKPT);
                 return ret;
             }
 

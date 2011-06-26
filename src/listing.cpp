@@ -3,13 +3,13 @@
     simulator can use for displaying the source lines associated with
     the assembly being executed or displayed.
 
-    TODO: Now that we're extracting multiple items from the listing, it's
-    probably better to redo this in yacc...
+    TODO: Now that this has grown and now that we're extracting multiple
+    items from the listing, it's probably better to redo this in yacc...
 
     TODO: more info from the listings:
         wire_and_mask;     proc;  lines 2733..2738..2348; offset 017525
         stack size info
-        entry types: internal proc, external proc, entry
+        entry types: internal proc, external proc, entry -- done
         from mixed asm/source:
             BEGIN PROCEDURE
             ENTRY TO (note, procs get an entry-to too)
@@ -28,7 +28,8 @@ using namespace std;
 #include "sim_defs.h"
 extern "C" void out_msg(const char* format, ...);
 
-int listing_parse(FILE *f, source_file &src);
+static int listing_parse(FILE *f, source_file &src);
+static int load_listing(FILE *f, source_file &src);
 
 #if 0
 static int consume(int lineno, unsigned loc, const char *line)
@@ -39,7 +40,7 @@ static int consume(int lineno, unsigned loc, const char *line)
 
 int main()
 {
-    int r = listing_parse(stdin, consume);
+    int r = load_listing(stdin, consume);
     printf("Return code is %d\n", r);
 }
 #endif
@@ -101,7 +102,7 @@ extern "C" int cmd_load_listing(int32 arg, char *buf)
     source_file& src = seginfo_add_source_file(segno, s, offset);
 
     out_msg("Loading PL/1 compiler listing, %s\n", s);
-    int ret = listing_parse(f, src);
+    int ret = load_listing(f, src);
     if (fclose(f) != 0) {
         perror(s);
         ret = -1;
@@ -124,7 +125,37 @@ static int str_pmatch(const char *buf, const char *s)
 
 // ============================================================================
 
-int listing_parse(FILE *f, source_file &src)
+static int load_listing(FILE *f, source_file &src)
+{
+    int ret = listing_parse(f, src);
+    if (ret != 0)
+        return ret;
+
+    // No C++0x yet... for (auto it = src.entries.begin(); it != src.entries.end(); ++it)
+    map<int,entry_point>::iterator it;
+    const entry_point* proc = NULL;
+    for (it = src.entries.begin(); it != src.entries.end(); ++it) {
+        int offset = (*it).first;
+        entry_point& ep = (*it).second;
+        if (ep.is_proc)
+            proc = &ep;
+        else {
+            if (!ep.is_proc && ! ep._stack && ! ep.stack_owner) {
+                if (proc) {
+                    cout << "Discovered that " << ep.name << " is an entry point to " << proc->name << ".\n";
+                    // ep.stack_owner = proc
+                } else
+                    cout << "Discovered that " << ep.name << " is an entry point to an unknown procedure.\n";
+            }
+        }
+    }
+    
+    return ret;
+}
+
+// ============================================================================
+
+static int listing_parse(FILE *f, source_file &src)
 {
     // Scans input.  Adds lines to source_file object.
     // Works by first seeing all the source lines and saving them in a list.
@@ -575,9 +606,9 @@ int listing_parse(FILE *f, source_file &src)
         }
 
         // Todo: Look for block list (which indicates which blocks (entry points) share stack frames
-        if (! seen_blocks)
-            seen_blocks = str_pmatch(lbufp, "BLOCK NAME");
-        else {
+        if (! seen_blocks) {
+            seen_blocks = str_pmatch(lbufp, "BLOCK NAME") == 0;
+        } else {
             if (!seen_automatic) {
                 seen_automatic = str_pmatch(lbufp, "STORAGE FOR AUTOMATIC VARIABLES") == 0;
                 if (seen_automatic) {
@@ -592,6 +623,9 @@ int listing_parse(FILE *f, source_file &src)
             char block[sizeof(lbuf)];
             strncpy(block, s, l);
             block[l] = 0;
+            entry_point *epp = src.find_entry(block);
+            if (epp != NULL)
+                epp->is_proc = 1;
             s += l;
             s += strcspn(s, " \t");
             if ((l = strspn(s, "01234567")) != 0) {
@@ -603,6 +637,7 @@ int listing_parse(FILE *f, source_file &src)
             // BUG: It turns out that we didn't really need to know that a proc shares another's
             // stack frame because the simulator can just look at changes to pr6 and assume that
             // if pr6 hasn't changed then whoever is running is sharing that frame.
+            // OTOH, that doesn't work for procs called via an entry point.
             const char *pat;
             const char *p;
             if ((p = strstr(s, pat = "shares stack frame of external procedure")) == NULL)
@@ -616,7 +651,6 @@ int listing_parse(FILE *f, source_file &src)
                     stack_owner[l] = 0;
                 if (stack_owner[l = strlen(stack_owner)-1] == '.')
                     stack_owner[l] = 0;
-                entry_point *epp = src.find_entry(block);
                 if (epp == NULL) {
                     cerr << "Listing: Cannot find entry point " << block  << ", so cannot record stack info." << "\r\n";
                     ret = 1;
@@ -669,7 +703,7 @@ int listing_parse(FILE *f, source_file &src)
                             cerr << "Stack Frame: Cannot find entry point for stack frame owner, " << auto_frame << "\r\n";
                             sframe.owner = NULL;
                         } else {
-                            // BUG: probably need to find other entries and point them at this stack
+                            // NOTE: Caller should find other entries and point them at this stack
                             // cout << "Stack Frame: Found entry point for " << auto_frame << "\r\n";
                             if (ep->_stack != NULL)
                                 cerr << "Entry " << ep->name << " already has a stack frame!" << "\r\n";

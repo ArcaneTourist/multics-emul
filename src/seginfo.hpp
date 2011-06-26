@@ -146,9 +146,9 @@ public:
 // because of relocation by the binder.
 class entry_point {
 public:
-    entry_point() { offset = -1, last = -1; _stack = NULL; stack_owner = NULL; source = NULL; };
+    entry_point() { offset = -1, last = -1; _stack = NULL; stack_owner = NULL; source = NULL; is_proc = 0;};
     entry_point(const string& nm, int off, int lst = -1)
-        { name = nm; offset = off; last = lst; _stack  = NULL; stack_owner = NULL; source = NULL; }
+        { name = nm; offset = off; last = lst; _stack  = NULL; stack_owner = NULL; source = NULL; is_proc = 0;}
     string name;
     seg_offset_t offset;            // Un-relocated offset reported by the compiler
     seg_offset_t last;              // negative if unknown
@@ -156,6 +156,7 @@ public:
     stack_frame* _stack;
     const entry_point* stack_owner;
     const source_file* source;
+    int is_proc;
     ostream& print(ostream& out, int indent) const;
     friend ostream& operator<<(ostream& out, const entry_point& ep)
         { return ep.print(out, 0); }

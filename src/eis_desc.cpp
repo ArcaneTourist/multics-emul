@@ -696,7 +696,7 @@ void ptr_t::char_advance(int nchars)
     if (initial.width != 4)
         _bit_advance(nchars * initial.width, 1);
     else {
-        log_msg(NOTIFY_MSG, "ptr_t::char_advance", "4-bit advance untested.\n");
+        // 4-bit advance with two 4-bit chars per 9-bit nibble
         _bit_advance(9 * (nchars / 2), 0);
         if (nchars % 2 == 1)
             _bit_advance((_bitnum %9 == 0) ? 5 : 4, 0);
