@@ -72,7 +72,6 @@ int disk_iom_cmd(chan_devinfo* devinfop)
 
     // TODO: handle cmd etc for given unit
 
-    log_msg(ERR_MSG, moi, "DISK devices not implemented.\n");
     switch(dev_cmd) {
         // disk_init: idcw.command values:
         //  042 restore access arm
@@ -85,6 +84,7 @@ int disk_iom_cmd(chan_devinfo* devinfop)
             *subp = 0;
             return 0;
         default: {
+            log_msg(ERR_MSG, moi, "DISK devices not implemented.\n");
             devinfop->have_status = 1;
             *majorp = 05;       // Command reject
             *subp = 1;          // invalid opcode
@@ -99,3 +99,31 @@ int disk_iom_cmd(chan_devinfo* devinfop)
 // ============================================================================
 
 
+int disk_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
+{
+    const char* moi = "DISK::iom_io";
+    // log_msg(DEBUG_MSG, moi, "Chan 0%o\n", chan);
+
+    if (chan < 0 || chan >= ARRAY_SIZE(iom.channels)) {
+        *majorp = 05;   // Real HW could not be on bad channel
+        *subp = 2;
+        log_msg(ERR_MSG, moi, "Bad channel %d\n", chan);
+        return 1;
+    }
+
+    DEVICE* devp = iom.channels[chan].dev;
+    if (devp == NULL || devp->units == NULL) {
+        *majorp = 05;
+        *subp = 2;
+        log_msg(ERR_MSG, moi, "Internal error, no device and/or unit for channel 0%o\n", chan);
+        return 1;
+    }
+    UNIT* unitp = devp->units;
+    // BUG: no dev_code
+
+    *majorp = 013;  // MPC Device Data Alert
+    *subp = 02;     // Inconsistent command
+    log_msg(ERR_MSG, moi, "Unimplemented.\n");
+    cancel_run(STOP_BUG);
+    return 1;
+}

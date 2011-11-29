@@ -1324,9 +1324,10 @@ static int dev_io(int chan, t_uint64 *wordp)
             return ret; // caller must choose between our return and the status.{major,substatus}
         }
         case DEV_DISK: {
-            log_msg(ERR_MSG, "IOM::dev-io", "DISK not supported\n");
-            cancel_run(STOP_BUG);
-            return 1;
+            int ret = disk_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
+            if (ret != 0 || chanp->status.major != 0)
+                log_msg(DEBUG_MSG, "IOM::dev-io", "DISK returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
+            return ret; // caller must choose between our return and the status.{major,substatus}
         }
         default:
             log_msg(ERR_MSG, "IOM::dev-io", "Unknown device type 0%o\n", iom.channels[chan].type);
