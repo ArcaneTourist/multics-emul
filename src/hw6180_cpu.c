@@ -232,6 +232,36 @@ DEVICE tape_dev = {
     NULL, DEV_DEBUG
 };
 
+/* unfinished; copied from tape_dev */
+#define M3381_SECTORS 6895616 
+// records per subdev: 74930 (127 * 590)
+// number of sub-volumes: 3
+// records per dev: 3 * 74930 = 224790
+// cyl/sv: 590
+// cyl: 1770 (3*590)
+// rec/cyl 127
+// tracks/cyl 15
+// sector size: 512
+// sectors: 451858
+// data: 3367 MB, 3447808 KB, 6895616 sectors, 
+//  3530555392 bytes, 98070983 records?
+
+// extern t_stat disk_svc(UNIT *up);
+UNIT disk_unit = {
+    UDATA (&channel_svc, UNIT_FIX | UNIT_ATTABLE | UNIT_ROABLE | UNIT_DISABLE | UNIT_IDLE, M3381_SECTORS)
+};
+
+// No disks known to multics had more than 2^24 sectors...
+DEVICE disk_dev = {
+    "DISK", &disk_unit, NULL, NULL, 1,
+    10, 24, 1, 8, 36,
+    /* examine */ NULL, /* deposit */ NULL,
+    /* reset */ NULL, /* boot */ NULL,
+    /* attach */ NULL, /* detach */ NULL,
+    /* context */ NULL, DEV_DEBUG
+};
+
+
 MTAB opcon_mod[] = {
     { MTAB_XTD | MTAB_VDV | MTAB_VAL | MTAB_NC,
         0, NULL, "AUTOINPUT",

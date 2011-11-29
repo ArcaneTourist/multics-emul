@@ -1419,7 +1419,13 @@ static int do_an_op(instr_t *ip)
                     ret = store_word(TPR.CA, word);
                 return ret;
             }
-            // ansq unimplemented
+            case opcode0_ansq: {
+                t_uint64 word;
+                int ret = op_and(ip, &reg_Q, NULL, &word, NULL);
+                if (ret == 0)
+                    ret = store_word(TPR.CA, word);
+                return ret;
+            }
 
             case opcode0_ansx0:
             case opcode0_ansx1:

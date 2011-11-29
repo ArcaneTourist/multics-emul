@@ -783,14 +783,25 @@ History of pre-release versions
         instructions.
         Use a generalized decimal input function.
         Add dv3d, divide decimal with three operands.  Uses decNumber library.
+        Valgrind reports a couple of false positives on unitialized Mem[]
+        accesses after call to fetch_abs_word in desc_t::_get().
 
 === Pre-Version 112, June 25, 2011
     General
         Rename M[] to *Mem.
         Add support for warning re reads of uninitialized memory.
-        Valgrind reports a couple of false positives on unitialized Mem[]
-        accesses after call to fetch_abs_word in desc_t::_get().
 
 === Pre-Version 113, Jun 25, 2011
     EIS instructions
         Remove eis_desc_t and use desc_t abstract base class instead.
+
+=== Pre-Version 114, Jun 25, 2011
+    General
+        Cleanup some source comments and logging.
+        Review auto breakpoints
+        Enhance listing.cpp to handle entry points within
+        procedures for automatic variable handling.
+
+=== Pre-Version 115, Jul 13, 2011
+    General
+        disk.c -- Initial (non-working) support for disk devices.

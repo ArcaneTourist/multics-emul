@@ -231,6 +231,7 @@ int mt_iom_cmd(chan_devinfo* devinfop)
                 *majorp, *subp);
             return 0;
         default: {
+            devinfop->have_status = 1;
             *majorp = 05;
             *subp = 1;
             log_msg(ERR_MSG, "MT::iom_cmd", "Unknown command 0%o\n", dev_cmd);

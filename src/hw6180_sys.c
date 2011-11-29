@@ -16,7 +16,7 @@ extern DEVICE cpu_dev;
 extern DEVICE tape_dev;
 extern DEVICE opcon_dev;
 extern DEVICE iom_dev;
-//extern DEVICE dsk_dev;
+extern DEVICE disk_dev;
 extern REG cpu_reg[];
 
 extern UNIT TR_clk_unit;
@@ -52,6 +52,7 @@ DEVICE *sim_devices[] = {
     &tape_dev,
     &opcon_dev,
     &iom_dev,
+    &disk_dev,
     NULL
 };
 
@@ -247,6 +248,12 @@ static void hw6180_init(void)
     int con_chan = 012; // channels 010 and higher are probed for an operators console
     iom.channels[con_chan].type = DEV_CON;
     iom.channels[con_chan].dev = &opcon_dev;
+
+    /* Disk */
+    const int disk_chan = 20;
+    iom.channels[disk_chan].type = DEV_DISK;
+    iom.channels[disk_chan].dev = &disk_dev;
+
     log_msg(DEBUG_MSG, "SYS::init", "Once-only initialization complete.\n");
     log_msg(DEBUG_MSG, "SYS::init", "Activity queue has %d entries.\n", sim_qcount());
 }

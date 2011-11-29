@@ -759,9 +759,14 @@ extern int get_eis_indir_addr(t_uint64 word, uint* addrp);
 extern int addr_mod_eis_addr_reg(instr_t *ip);
 
 /* mt.c */
+extern void mt_init(void);
 extern int mt_iom_cmd(chan_devinfo* devinfop);
 extern int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
-extern void mt_init(void);
+
+/* disk.c */
+extern void disk_init(void);
+extern int disk_iom_cmd(chan_devinfo* devinfop);
+extern int disk_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 
 /* console.c */
 extern void console_init(void);

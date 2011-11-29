@@ -141,10 +141,9 @@ static int load_listing(FILE *f, source_file &src)
             proc = &ep;
         else {
             if (!ep.is_proc && ! ep._stack && ! ep.stack_owner) {
-                if (proc) {
-                    cout << "Discovered that " << ep.name << " is an entry point to " << proc->name << ".\n";
-                    // ep.stack_owner = proc
-                } else
+                if (proc)
+                    ep.stack_owner = proc;
+                else
                     cout << "Discovered that " << ep.name << " is an entry point to an unknown procedure.\n";
             }
         }

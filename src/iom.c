@@ -1,26 +1,4 @@
 /*
-    TODO -- partially done
-
-    Following is prep for async...
-    Have list service update DCW in mbx (and not just return *addrp)
-    Note that we do write LPW in list_service().
-    Give channel struct a "scratchpad" LPW and DCW.
-    Note that "list service" should "send" pcw/dcw to channel...
-
-    Leave connect channel as immediate
-    Make do_channel() async.
-        Need state info for:
-            have a dcw to process?
-            DCW sent to device?
-            Has device sent back results yet?
-        Move most local vars to chan struct
-        Give device functions a way to report status
-        Review flow charts
-        New function:
-            ms_to_interval()
-*/
-
-/*
     iom.c -- emulation of an I/O Multiplexer
 
     See: Document 43A239854 -- 6000B I/O Multiplexer
@@ -50,6 +28,29 @@
     Note that all Mem[addr] references are absolute (The IOM has no access to
     the CPU's appending hardware.)
 */
+
+/*
+    TODO -- partially done
+
+    Following is prep for async...
+    Have list service update DCW in mbx (and not just return *addrp)
+    Note that we do write LPW in list_service().
+    Give channel struct a "scratchpad" LPW and DCW.
+    Note that "list service" should "send" pcw/dcw to channel...
+
+    Leave connect channel as immediate
+    Make do_channel() async.
+        Need state info for:
+            have a dcw to process?
+            DCW sent to device?
+            Has device sent back results yet?
+        Move most local vars to chan struct
+        Give device functions a way to report status
+        Review flow charts
+        New function:
+            ms_to_interval()
+*/
+
 
 #include "hw6180.h"
 #include <sys/time.h>
@@ -778,6 +779,9 @@ static int run_channel(int chan)
             // Send request to device
             ret = do_dcw(chan, addr, &chanp->control, &chanp->need_indir_svc);
             log_msg(DEBUG_MSG, moi, "Back from latest do_dcw (at %0o); control = %d; have-status = %d\n", addr, chanp->control, chanp->have_status);
+            if (ret != 0) {
+                log_msg(NOTIFY_MSG, moi, "do_dcw returns non-zero.\n");
+            }
         }
     } else if (chanp->control == 3) {
         // BUG: set marker interrupt and proceed (list service)
@@ -1069,8 +1073,11 @@ static int do_dcw(int chan, int addr, int *controlp, flag_t *need_indir_svc)
     (void) fetch_abs_word(addr, &word);
     if (word == 0) {
         log_msg(ERR_MSG, "IOM::dcw", "DCW of all zeros is legal but useless (unless you want to dump first 4K of memory).\n");
-        log_msg(ERR_MSG, "IOM::dcw", "Disallowing legal but useless all zeros DCW at address %012llo.\n", addr);
+        log_msg(ERR_MSG, "IOM::dcw", "Disallowing legal but useless all zeros DCW at address %08o.\n", addr);
         cancel_run(STOP_BUG);
+        channel_t* chanp = get_chan(chan);
+        if (chanp != NULL)
+            chanp->state = chn_err;
         return 1;
     }
     dcw_t dcw;
@@ -1084,8 +1091,14 @@ static int do_dcw(int chan, int addr, int *controlp, flag_t *need_indir_svc)
         int ret = dev_send_idcw(chan, &dcw.fields.instr);
         if (ret != 0)
             log_msg(DEBUG_MSG, "IOM::dcw", "dev-send-pcw returns %d.\n", ret);
-        if (dcw.fields.instr.chan_cmd != 02)
-            *need_indir_svc = 1;
+        if (dcw.fields.instr.chan_cmd != 02) {
+            channel_t* chanp = get_chan(chan);
+            if (chanp != NULL && dcw.fields.instr.control == 0 && chanp->have_status && Mem[addr+1] == 0) {
+                log_msg(ERR_MSG, "IOM::dcw", "Ignoring need to set need-indirect service flag because next dcw is zero.\n");
+                cancel_run(STOP_BUG);
+            } else
+                *need_indir_svc = 1;
+        }
         return ret;
     } else if (dcw.type == tdcw) {
         uint next_addr = word >> 18;
@@ -1140,7 +1153,7 @@ static int dev_send_idcw(int chan, pcw_t *p)
 
     log_msg(INFO_MSG, moi, "Starting for channel 0%o(%d).  PCW: %s\n", chan, chan, pcw2text(p));
 
-    DEVICE* devp = iom.channels[chan].dev;
+    DEVICE* devp = iom.channels[chan].dev;  // FIXME: needs to be per-unit, not per-channel
     // if (devp == NULL || devp->units == NULL)
     if (devp == NULL) {
         // BUG: no device connected; what's the appropriate fault code(s) ?
@@ -1156,7 +1169,35 @@ static int dev_send_idcw(int chan, pcw_t *p)
         log_msg(INFO_MSG, moi, "Chan data is %o (%d)\n",
             p->chan_data, p->chan_data);
 
-    switch(iom.channels[chan].type) {
+    enum dev_type type = iom.channels[chan].type;
+
+    chan_devinfo* devinfop = NULL;
+    if (type == DEV_TAPE || type == DEV_DISK) {
+        // FIXME: devinfo probably needs to partially be per UNIT, not per channel
+        devinfop = devp->ctxt;
+        if (devinfop == NULL) {
+            devinfop = malloc(sizeof(*devinfop));
+            if (devinfop == NULL) {
+                cancel_run(STOP_BUG);
+                return 1;
+            }
+            devp->ctxt = devinfop;
+            devinfop->chan = p->chan;
+            devinfop->statep = NULL;
+        }
+        if (devinfop->chan != p->chan) {
+            log_msg(ERR_MSG, moi, "Device on channel %#o (%d) has missing or bad context.\n", chan, chan);
+            cancel_run(STOP_BUG);
+            return 1;
+        }
+        devinfop->dev_cmd = p->dev_cmd;
+        devinfop->dev_code = p->dev_code;
+        devinfop->chan_data = p->chan_data;
+        devinfop->have_status = 0;
+    }
+
+    int ret;
+    switch(type) {
         case DEV_NONE:
             // BUG: no device connected; what's the appropriate fault code(s) ?
             chanp->status.power_off = 1;
@@ -1164,50 +1205,9 @@ static int dev_send_idcw(int chan, pcw_t *p)
             iom_fault(chan, moi, 0, 0);
             cancel_run(STOP_WARN);
             return 1;
-        case DEV_TAPE: {
-            chan_devinfo* devinfop = devp->ctxt;
-            if (devinfop == NULL) {
-                devinfop = malloc(sizeof(*devinfop));
-                devp->ctxt = devinfop;
-                devinfop->chan = p->chan;
-                devinfop->statep = NULL;
-            }
-            if (devinfop->chan != p->chan) {
-                log_msg(ERR_MSG, moi, "Device on channel %#o (%d) has missing or bad context.\n", chan, chan);
-                cancel_run(STOP_BUG);
-                return 1;
-            }
-            devinfop->dev_cmd = p->dev_cmd;
-            devinfop->dev_code = p->dev_code;
-            devinfop->chan_data = p->chan_data;
-            devinfop->have_status = 0;
-            int ret = mt_iom_cmd(devinfop);
-            chanp->state = chn_cmd_sent;
-            chanp->have_status = devinfop->have_status;
-            if (devinfop->have_status) {
-                chanp->status.major = devinfop->major;
-                chanp->status.substatus = devinfop->substatus;
-                chanp->status.rcount = devinfop->chan_data;
-                chanp->status.read = devinfop->is_read;
-                log_msg(DEBUG_MSG, moi, "MT returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
-            } else if (devinfop->time >= 0) {
-                extern int32 sim_interval;
-                int si = sim_interval;
-                if (sim_activate(devp->units, devinfop->time) == SCPE_OK) {
-                    log_msg(DEBUG_MSG, moi, "Sim interval changes from %d to %d.  Q count is %d.\n", si, sim_interval, sim_qcount());
-                log_msg(DEBUG_MSG, moi, "MT will be returning major code 0%o substatus 0%o\n", devinfop->major, devinfop->substatus);
-                } else {
-                    chanp->err = 1;
-                    log_msg(ERR_MSG, moi, "Cannot queue.\n");
-                }
-            } else {
-                // BUG/TODO: allow devices to have their own queuing
-                log_msg(ERR_MSG, moi, "Device neither returned status nor queued an activity.\n");
-                chanp->err = 1;
-                cancel_run(STOP_BUG);
-            }
-            return ret; // caller must choose between our return and the status.{major,substatus}
-        }
+        case DEV_TAPE:
+            ret = mt_iom_cmd(devinfop);
+            break;
         case DEV_CON: {
             int ret = con_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chanp->status.major, &chanp->status.substatus);
             chanp->state = chn_cmd_sent;
@@ -1216,13 +1216,48 @@ static int dev_send_idcw(int chan, pcw_t *p)
             log_msg(DEBUG_MSG, moi, "CON returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             return ret; // caller must choose between our return and the chan_status.{major,substatus}
         }
+        case DEV_DISK:
+            ret = disk_iom_cmd(devinfop);
+            break;
         default:
             log_msg(ERR_MSG, moi, "Unknown device type 0%o\n", iom.channels[chan].type);
             iom_fault(chan, moi, 1, 0); // BUG: need to pick a fault code
             cancel_run(STOP_BUG);
             return 1;
     }
-    // return -1;   // not reached
+
+    if (devinfop != NULL) {
+        chanp->state = chn_cmd_sent;
+        chanp->have_status = devinfop->have_status;
+        if (devinfop->have_status) {
+            // Device performed request immediately
+            chanp->status.major = devinfop->major;
+            chanp->status.substatus = devinfop->substatus;
+            chanp->status.rcount = devinfop->chan_data;
+            chanp->status.read = devinfop->is_read;
+            log_msg(DEBUG_MSG, moi, "Device returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
+        } else if (devinfop->time >= 0) {
+            // Device asked us to queue a delayed status return.  FIXME: Should queue the work, not
+            // the reporting.
+            extern int32 sim_interval;
+            int si = sim_interval;
+            if (sim_activate(devp->units, devinfop->time) == SCPE_OK) {
+                log_msg(DEBUG_MSG, moi, "Sim interval changes from %d to %d.  Q count is %d.\n", si, sim_interval, sim_qcount());
+                log_msg(DEBUG_MSG, moi, "Device will be returning major code 0%o substatus 0%o in %d time units.\n", devinfop->major, devinfop->substatus, devinfop->time);
+            } else {
+                chanp->err = 1;
+                log_msg(ERR_MSG, moi, "Cannot queue.\n");
+            }
+        } else {
+            // BUG/TODO: allow devices to have their own queuing
+            log_msg(ERR_MSG, moi, "Device neither returned status nor queued an activity.\n");
+            chanp->err = 1;
+            cancel_run(STOP_BUG);
+        }
+        return ret; // caller must choose between our return and the status.{major,substatus}
+    }
+
+    return -1;  // not reached
 }
 
 // ============================================================================
@@ -1287,6 +1322,11 @@ static int dev_io(int chan, t_uint64 *wordp)
             if (ret != 0 || chanp->status.major != 0)
                 log_msg(DEBUG_MSG, "IOM::dev-io", "CON returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             return ret; // caller must choose between our return and the status.{major,substatus}
+        }
+        case DEV_DISK: {
+            log_msg(ERR_MSG, "IOM::dev-io", "DISK not supported\n");
+            cancel_run(STOP_BUG);
+            return 1;
         }
         default:
             log_msg(ERR_MSG, "IOM::dev-io", "Unknown device type 0%o\n", iom.channels[chan].type);
@@ -1449,11 +1489,20 @@ static void parse_dcw(dcw_t *p, int addr)
         p->fields.instr.chan = -1;
         if (p->fields.instr.mask) {
             // Bit 21 is extension control (EC), not a mask
-            // BUG: Check LPW bit 23
+#if 0
+            // For non-multics, we'd check LPW bit 23
+            channel_t* chanp = get_chan(chan);
+            if (chanp && chanp->lpw.srel) { // Impossible, always zero for multics
+                ... refuse the EC request
+            }
+#endif
+#if 1
+            t_uint64 new_ae = getbits36(word, 12, 6);
             // Mem[addr] = setbits36(word, 12, 6, present_addr_extension);
-            log_msg(ERR_MSG, "IOW::DCW", "I-DCW bit EC not implemented\n");
+            log_msg(ERR_MSG, "IOW::DCW", "I-DCW bit EC not implemented; IDCW read from addr %#o; new addr ext %#o\n", addr, new_ae);
             cancel_run(STOP_BUG);
             // return 1;
+#endif
         }
     } else {
         int type = getbits36(word, 22, 2);
