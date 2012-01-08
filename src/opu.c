@@ -49,6 +49,7 @@ static int do_an_op(instr_t *ip);   // todo: hack, fold into do_op
 static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p);
 static int do_spri(int n);
 static int do_spbp(int n);
+static void do_ldi_ret(t_uint64 word, int is_ret);
 
 static int op_dvf(const instr_t* ip);
 static int op_ufa(const instr_t* ip, flag_t subtract);
@@ -308,26 +309,11 @@ static int do_an_op(instr_t *ip)
             case opcode0_ldi: {
                 t_uint64 word;
                 int ret = fetch_op(ip, &word);
-                if (ret == 0) {
-                    uint par = IR.parity_mask;
-                    uint nbar = IR.not_bar_mode;
-                    uint abs = IR.abs_mode;
-                    load_IR(&IR, word);
-                    IR.not_bar_mode = nbar;
-                    IR.abs_mode = abs;
-                    addr_modes_t addr_mode = get_addr_mode();
-                    if (addr_mode != ABSOLUTE_mode) {   // BUG: check priv mode
-                        IR.parity_mask = par;
-                        IR.mid_instr_intr_fault = 0;
-                    }
-                    if (opt_debug) {
-                        t_uint64 ir;
-                        save_IR(&ir);
-                        log_msg(DEBUG_MSG, "OPU::ldi", "IR: %s\n", bin2text(ir, 18));
-                    }
-                }
+                if (ret == 0)
+                    do_ldi_ret(word, 0);
                 return ret;
             }
+
             case opcode0_ldq: { // load Q reg
                 int ret = fetch_op(ip, &reg_Q);
                 if (ret == 0) {
@@ -2121,7 +2107,16 @@ static int do_an_op(instr_t *ip)
                 return 0;
             }
             
-            // opcode0_ret unimplemented
+            case opcode0_ret: {
+                t_uint64 word;
+                int ret = fetch_op(ip, &word);
+                if (ret == 0) {
+                    do_ldi_ret(word, 1);
+                    PPR.IC = word >> 18;
+                    cpu.trgo = 1;
+                }
+                return ret;
+            }
 
             case opcode0_rtcd: {
                 // BUG -- Need to modify APU to check for opcode==rtcd && POA flag
@@ -4056,6 +4051,37 @@ static int op_ufm(const instr_t* ip)
         return ret;
     ret = instr_ufm(word);
     return ret;
+}
+
+// ============================================================================
+
+static void do_ldi_ret(t_uint64 word, int is_ret)
+{
+    uint par = IR.parity_mask;
+    uint nbar = IR.not_bar_mode;
+    uint abs = IR.abs_mode;
+    uint mir = IR.mid_instr_intr_fault;
+    load_IR(&IR, word);
+    if (is_ret) {
+        // Allow turning off, but undo a change that turns on
+        if (!nbar) IR.not_bar_mode = 0;
+        if (!abs) IR.abs_mode = 0;
+    } else {
+        // Undo changes
+        IR.not_bar_mode = nbar;
+        IR.abs_mode = abs;
+    }
+    addr_modes_t addr_mode = get_addr_mode();
+    if (addr_mode != ABSOLUTE_mode) {   // BUG: check priv mode
+        // Undo changes
+        IR.parity_mask = par;
+        IR.mid_instr_intr_fault = mir;
+    }
+    if (opt_debug) {
+        t_uint64 ir;
+        save_IR(&ir);
+        log_msg(DEBUG_MSG, "OPU::ldi", "IR: %s\n", bin2text(ir, 18));
+    }
 }
 
 // ============================================================================
