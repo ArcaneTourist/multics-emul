@@ -58,6 +58,7 @@ static int walk_stack(int output, list<seg_addr_t>* frame_listp);
 // static int push_frame(const seg_addr_t& framep, const linkage_info* lip);
 static int is_stack_frame(int segno, int offset);
 static int have_stack(void);
+static int stack_depth(void);
 
 //=============================================================================
 
@@ -442,7 +443,9 @@ int show_location(int show_source_lines)
     if (display_line && where.line_no >= 0) {
         // Note that if we have a source line, we also expect to have a "proc" entry
         const char *name = where.entry ? where.entry : where.file_name;
-        log_msg(INFO_MSG, NULL, "Source:  %3o|%06o, line %5d: < %s\n", segno, PPR.IC, where.line_no, where.line);
+        // log_msg(INFO_MSG, NULL, "Source:  %3o|%06o, line %5d: < %s\n", segno, PPR.IC, where.line_no, where.line);
+        int depth = stack_depth();
+        log_msg(INFO_MSG, NULL, "Source:  %3o|%06o, line %5d(%d): < %s\n", segno, PPR.IC, where.line_no, depth, where.line);
         ret = 0;
     }
 
@@ -922,7 +925,7 @@ public:
 public:
     int change();           // adjust stack to match observed PR[6]
     void check_frame();     // see if a new under-construction frame has info we need
-    int is_in_frame(int segno, int offset); // returns true if given IC is within top frame's entry
+    int is_in_frame(int segno, int offset, int debug=0);    // returns true if given IC is within top frame's entry
     int unfinished() const { return ! partial.finished; }
 };
 
@@ -966,6 +969,14 @@ void state_invalidate_cache()
 static int have_stack()
 {
     return m_stackp != NULL && m_stackp->size() != 0;
+}
+
+static int stack_depth()
+{
+    if (m_stackp == NULL)
+        return -1;
+    else
+        return m_stackp->size();
 }
 
 //=============================================================================
@@ -1349,7 +1360,7 @@ void multics_stack::check_frame()
 
 //=============================================================================
 
-int multics_stack::is_in_frame(int segno, int offset)
+int multics_stack::is_in_frame(int segno, int offset, int debug)
     // Returns true if given IC is within top frame's entry
     // Given IC should be current or prior instruction
 {
@@ -1363,14 +1374,26 @@ int multics_stack::is_in_frame(int segno, int offset)
     const entry_point* epp = msf.entry();
     if (epp == NULL)
         return 0;
+
+    AR_PR_t entryp;
+    if (stack_to_entry(msf.addr(), &entryp) != 0) {
+        log_msg(INFO_MSG, "STACK::is_in_frame", "Frame at offset %#o seems bad -- no entry point.\n", msf.offset());
+        return 0;
+    }
+if (debug) log_msg(INFO_MSG, NULL, "-- is-in-frame: Frame in seg %#o\n", entryp.PR.snr);
+    if (entryp.PR.snr != segno)
+        return 0;
+
     const linkage_info *lip;
     if (epp->last > 0) {
         const linkage_info* lip = msf.linkage();
+if (debug) log_msg(INFO_MSG, NULL, "-- is-in-frame: linkage is %#o|%#o .. %#o|%#o\n", entryp.PR.snr, lip->offset,  entryp.PR.snr, lip->offset + epp->last);
         return lip->offset <= offset && offset <= lip->offset + epp->last;
     } else {
         // Lookup current IC in symbol table
         const seginfo& seg = segments(segno);
         map<int,linkage_info>::const_iterator li_it = seg.find_entry(offset);
+if (debug) log_msg(INFO_MSG, NULL, "-- is-in-frame: find_entry(%d) returns %d\n", offset, li_it != seg.linkage.end());
         return (li_it != seg.linkage.end());
     }
 }
@@ -1565,25 +1588,54 @@ void multics_stack_frame::update_autos(
     }
 
     log_ignore_ic_change();
-    int is_changed = 0;
+    int any_changed = 0;
     for (map<int, val_t>::iterator autos_it = vals.begin(); autos_it != vals.end(); ++ autos_it) {
         int soffset = (*autos_it).first;
         val_t& autov = (*autos_it).second;
         t_uint64 curr = Mem[sp_addr + soffset];
         change_t chg = autov.change(curr);
         if (chg == initial_change || chg == changed) {
-            if (!is_changed && entry() && entry()->source && log_any_io(0)) {
+#if 0
+            // Disabled -- var could be passed by reference to another procedure, possibly
+            // even one in another segment (and without a stack)
+            if (!any_changed && entry() && entry()->source && log_any_io(0)) {
                 log_msg(INFO_MSG, NULL, "Source: %s\n", entry()->source->fname.c_str());
                 const source_line* lnp = entry()->source->get_line(ic);
                 if (lnp)
-                    log_msg(INFO_MSG, NULL, "Source:  %3o|%06o, line %5d: > %s\n",
-                        segno, ic, lnp->line_no, lnp->text.c_str());
+                    log_msg(INFO_MSG, NULL, "Source:  %3o|%06o, line %5d(%d): > %s\n",
+                        segno, ic, lnp->line_no, stack_depth(), lnp->text.c_str());
             }
-            is_changed = 1;
+            any_changed = 1;
+#endif
+#if 1
+            int show_owner = 0;
+            AR_PR_t entryp;
+            if (stack_to_entry(sp_addr, &entryp) != 0) {
+                log_msg(INFO_MSG, "STACK::update", "Frame %#o|%#o seems bad -- no entry point.\n", _segno, _offset);
+                // return;
+            } else {
+                seg_addr_t entry_pr(entryp.PR.snr, entryp.wordno);
+                if (entryp.PR.snr != segno) {
+                    show_owner = 1;
+                    log_msg(INFO_MSG, NULL, "-- Auto in seg %#o; running in seg %#o\n", entryp.PR.snr, segno);
+                } else {
+                    show_owner = ! m_stackp->is_in_frame(segno, ic);    // FIXME: hack knowing global
+                    if (show_owner)
+                        log_msg(INFO_MSG, NULL, "-- IC %#o|%#o is not within auto's frame\n", segno, ic);
+                }
+            }
+#endif
             map<int,var_info>::const_iterator ni = sfp->automatics.find(soffset);
             const var_info& v = (*ni).second;
             ostringstream buf;
-            buf << "Source:                            " << v.name << " = ";
+            // buf << "Source:                            " << v.name << " = ";
+            //buf << "Source:                               " << v.name << " = ";
+            buf << "Source:                               ";
+#if 1
+            if (show_owner && entry())
+                buf << entry()->name << "::";
+#endif
+            buf << v.name << " = ";
             out_auto(buf, v, sp_addr + soffset, autov.is_initialized());
             if (chg == initial_change)
                 buf << " -- initial value";

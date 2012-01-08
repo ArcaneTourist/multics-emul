@@ -150,6 +150,7 @@ static void hw6180_init(void)
     sys_opts.iom_times.chan_activate = -1;  // unimplemented
     sys_opts.mt_times.read = -1;    // 100; // 1000;
     sys_opts.mt_times.xfer = -1;            // unimplemented
+    sys_opts.warn_uninit = 1;
 
     // Hardware config -- todo - should be based on config cards!
     // BUG/TODO: need to write config deck at 012000 ? Probably not

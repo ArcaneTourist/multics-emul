@@ -44,6 +44,7 @@ static void decode_SDW(t_uint64 word0, t_uint64 word1, SDW_t *sdwp);
 static SDWAM_t* page_in_sdw(void);
 static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uint *maxaddrp);
 static void register_mod(uint td, uint off, uint *bitnop, int nbits);
+static void dump_descriptor_table(void);
 
 //=============================================================================
 
@@ -1426,7 +1427,7 @@ int store_appended(uint offset, t_uint64 word)
 
 int cmd_dump_vm(int32 arg, char *buf)
 {
-    // Dump VM info -- display the cache registers
+    // Dump VM info -- display the cache registers & descriptor table
 
     restore_from_simh();    // in case DSBR or other vars were updated
 
@@ -1461,6 +1462,8 @@ int cmd_dump_vm(int32 arg, char *buf)
             sdwp->priv ? 'Y' : 'N', sdwp->u ? 'Y' : 'N', sdwp->g ? 'Y' : 'N',
             sdwp->c ? 'Y' : 'N', sdwp->cl);
     }
+    out_msg("\n");
+    dump_descriptor_table();
     return 0;
 }
 
@@ -1616,6 +1619,76 @@ static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uin
     return ret;
 }
 
+
+//=============================================================================
+
+/*
+ * dump_descriptor_table()
+ *
+ * Hacked copy of page_in_sdw() for debug display
+ *
+ */
+
+static void dump_descriptor_table()
+{
+    out_msg("Dump of descriptor table:\n");
+    out_msg("\n");
+    for (uint segno = 0; segno * 2 <= 16 * (cpup->DSBR.bound + 1); ++segno) {
+        if (segno * 2 == 16 * (cpup->DSBR.bound + 1)) {
+            out_msg("End of descriptor table.\n");
+            break;
+        }
+        t_uint64 sdw_word0, sdw_word1;
+        uint sdw_addr;
+        if (cpup->DSBR.u) {
+            // Descriptor table is unpaged
+            if (segno * 2 >= 16 * (cpup->DSBR.bound + 1))
+                break;
+            sdw_addr = cpup->DSBR.addr + 2 * segno;
+            if (fetch_abs_pair(cpup->DSBR.addr + 2 * segno, &sdw_word0, &sdw_word1) != 0)
+                break;
+        } else {
+            // Descriptor table is paged
+            if (segno * 2 >= 16 * (cpup->DSBR.bound + 1))
+                break;
+            // First, the DSPTW fetch cycle (PTWAM doesn't cache the DS?)
+            uint y1 = (2 * segno) % page_size;          // offset within page table
+            uint x1 = (2 * segno - y1) / page_size;     // offset within DS page
+            PTW_t DSPTW;
+            t_uint64 word;
+            if (fetch_abs_word(cpup->DSBR.addr + x1, &word) != 0)   // We assume DS is 1024 words (bound=077->16*64=1024)
+                break;
+            decode_PTW(word, &DSPTW);
+            if (DSPTW.f == 0) {
+                out_msg("Segment %#o: lookup would result in DSPTW directed fault\n", segno);
+                continue;
+            }
+            if (! DSPTW.u) {
+                // MDSPTW cycle
+                DSPTW.u = 1;
+                //if (set_PTW_used(cpup->DSBR.addr + x1) != 0) {
+                    // impossible -- we just read this absolute addresed word
+                    //return NULL;
+                //}
+            }
+            // PSDW cycle (Step 5 for case when Descriptor Segment is paged)
+            // log_msg(DEBUG_MSG, "APU::append", "Fetching SDW from 0%o<<6+0%o => 0%o\n", DSPTW.addr, y1, (DSPTW.addr<<6) + y1);
+            sdw_addr = (DSPTW.addr<<6) + y1;
+            if (fetch_abs_pair((DSPTW.addr<<6) + y1, &sdw_word0, &sdw_word1) != 0)
+                continue;
+        }
+        SDW_t sdw;
+        decode_SDW(sdw_word0, sdw_word1, &sdw);
+        //out_msg("Descriptor entry at %06o for segment %03o: %s\n",
+        //  sdw_addr, segno, sdw2text(&sdw));
+        if (sdw.addr != 0) {
+            out_msg("Descriptor entry at %06o for segment %03o:\n",
+                sdw_addr, segno);
+            get_seg_name(segno);
+            out_msg("\n");
+        }
+    }
+}
 
 //=============================================================================
 

@@ -1858,7 +1858,8 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
     t_uint64 word = Mem[addr];  // absolute memory reference
     if (word == ~ 0) {
         word = 0;
-        log_msg(WARN_MSG, "CU::fetch", "Fetch from uninitialized absolute locaction %#o.\n", addr);
+        if (sys_opts.warn_uninit)
+            log_msg(WARN_MSG, "CU::fetch", "Fetch from uninitialized absolute location %#o.\n", addr);
     }
     *wordp = word;
     }

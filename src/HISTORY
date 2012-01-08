@@ -493,7 +493,26 @@ History of pre-release versions
         Change dis to halt instead of noop.
 
 === Pre-Version 48, Nov 25, 2008
+    eis_mw_desc.c
+        Fix bug re truncation of descriptor counts
+
 === Pre-Version 49, Dec 2, 2008
+    apu.c
+        Public get_address() returns a min/max validity range for
+        callers that want to loop over memory without translating
+        every sequential address.
+    eis_mw_desc.c
+        Many changes.  Apparent fixes for bit addressing, reverse
+        descriptors, and paged segments.
+    hw6180.h
+        Changes to EIS descriptor data structures.
+    iom.c
+        Initial support for transfer type DCWs (logging not functionality).
+    opu.c
+        Move spri* to function.
+        Add: spl, spri*
+        mlr: flush partial results on error
+
 === Pre-Version 50, Dec 4, 2008
 === Pre-Version 51, Dec 5, 2008
 === Pre-Version 52, Dec 11, 2008
@@ -803,5 +822,34 @@ History of pre-release versions
         procedures for automatic variable handling.
 
 === Pre-Version 115, Jul 13, 2011
+    disk.c -- Initial (non-working) support for disk devices.
+
+=== Pre-Version 116, Nov 29, 2011
+    Disk
+        disk.c -- initial (non-working) disk_iom_io()
+        iom.c -- call disk_iom_io() when appropriate.
+
+=== Pre-Version 117, Jan 07, 2012
     General
-        disk.c -- Initial (non-working) support for disk devices.
+        Fixes to ORA and ORAQ instructions.
+        More correct handling of IOM address extension in LPWs and DCWs.
+        Simulator seems to properly create and handle faults as expected
+        by init_root_vols$init_root_vols and children.
+        Missing opcode: "ret".
+    opu.c
+        Fix ORA and ORQ to properly set IR.
+    iom.c
+        Move LPW into scratchpad.  Don't reload from memory on every list svc.
+        Handle EC (address extension) bit in DCWs
+    apu.c
+        Added dump_descriptor_table for interactive use via cmd xvmdump
+    debug_run.cpp
+        Display stack depth on source line outputs; minor tweak to automatic
+        var frame detection
+    hw6180_cpu.c
+        Don't warn about accessing uninitialized memory during searches.
+    misc.c
+        Break scan_seg_defs() into multiple functions.
+        Provide get_seg_name(segno).
+        Fix search to handle the packed addresses we give SIMH.
+

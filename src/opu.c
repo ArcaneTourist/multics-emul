@@ -1473,7 +1473,7 @@ static int do_an_op(instr_t *ip)
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
                     reg_A |= word;
-                    IR.zero = word == 0;
+                    IR.zero = reg_A == 0;
                     IR.neg = bit36_is_neg(reg_A);
                 }
                 return ret;
@@ -1494,7 +1494,7 @@ static int do_an_op(instr_t *ip)
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
                     reg_Q |= word;
-                    IR.zero = word == 0;
+                    IR.zero = reg_Q == 0;
                     IR.neg = bit36_is_neg(reg_Q);
                 }
                 return ret;

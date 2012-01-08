@@ -35,7 +35,8 @@
     Following is prep for async...
     Have list service update DCW in mbx (and not just return *addrp)
     Note that we do write LPW in list_service().
-    Give channel struct a "scratchpad" LPW and DCW.
+    [done] Give channel struct a "scratchpad" LPW
+    Give channel struct a "scratchpad" DCW
     Note that "list service" should "send" pcw/dcw to channel...
 
     Leave connect channel as immediate
@@ -89,21 +90,6 @@ enum iom_user_faults {  // aka central status
     iom_bndy_vio = 03,
 };
 
-typedef struct {
-    uint32 dcw; // bits 0..17
-    flag_t ires;    // bit 18; IDCW restrict
-    flag_t hrel;    // bit 19; hardware relative addressing
-    flag_t ae;      // bit 20; address extension
-    flag_t nc;      // bit 21; no tally; zero means update tally
-    flag_t trunout; // bit 22; signal tally runout?
-    flag_t srel;    // bit 23; software relative addressing; not for Multics!
-    uint32 tally;   // bits 24..35
-    // following not valid for paged mode; see B15; but maybe IOM-B non existant
-    uint32 lbnd;
-    uint32 size;
-    uint32 idcw;    // ptr to most recent dcw, idcw, ...
-} lpw_t;
-
 #if 0
 // from AN87, 3-8
 typedef struct {
@@ -141,7 +127,7 @@ static char* dcw2text(const dcw_t *p);
 static void parse_lpw(lpw_t *p, int addr, int is_conn);
 //static void parse_pcw(pcw_t *p, int addr, int ext);
 static void decode_idcw(pcw_t *p, flag_t is_pcw, t_uint64 word0, t_uint64 word1);
-static void parse_dcw(dcw_t *p, int addr);
+static void parse_dcw(int chan, dcw_t *p, int addr);
 static int dev_send_idcw(int chan, pcw_t *p);
 static int status_service(int chan);
 //static int send_chan_flags();
@@ -210,6 +196,7 @@ void iom_init()
             chanp->status.chan = chan;  // BUG/TODO: remove this member
             chanp->unitp = NULL;
             chanp->state = chn_idle;
+            memset(&chanp->lpw, 0, sizeof(chanp->lpw));
             // DEVICEs ctxt pointers used to point at chanp->devinfo,
             // but now both are ptrs to the same object so that either
             // may do the allocation
@@ -251,6 +238,7 @@ t_stat iom_reset(DEVICE *dptr)
             chanp->unitp = NULL;
         }
         chanp->state = chn_idle;
+        memset(&chanp->lpw, 0, sizeof(chanp->lpw));
         // BUG/TODO: flag channels as "masked"
     }
 
@@ -568,7 +556,7 @@ int do_channel(channel_t *chanp)
     };
 
     // Note that the channel may have pending work.  If so, the 
-    // device will have set have_status fals and will have queued an activity.
+    // device will have set have_status false and will have queued an activity.
     // When the device activates, it'll queue a run for the channel.
 
     log_msg(INFO_MSG, moi, "Finished\n");
@@ -590,6 +578,7 @@ static void print_chan_state(const char* moi, channel_t* chanp)
         chanp->have_status ? 'Y' : 'N',
         chanp->err ? 'Y' : 'N',
         chanp->n_list);
+    // FIXME: Maybe dump chanp->lpw
 }
 // ============================================================================
 
@@ -862,25 +851,44 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
     // Core address of next PCW or DCW is returned in *addrp.  Pre-tally-runout
     // is returned in *ptro.
 
-    lpw_t lpw;
     int chanloc = IOM_A_MBX + chan * 4;
     const char* moi = "IOM::list-service";
 
-    *addrp = -1;
-    parse_lpw(&lpw, chanloc, chan == IOM_CONNECT_CHAN);
-    log_msg(DEBUG_MSG, moi, "Starting for LPW for channel %0o(%d dec) at addr %0o\n", chan, chan, chanloc);
-    log_msg(DEBUG_MSG, moi, "LPW: %s\n", lpw2text(&lpw, chan == IOM_CONNECT_CHAN));
+    channel_t* chanp = get_chan(chan);
+    if (chanp == NULL) {
+        return 1;   // we're faulted
+    }
+    lpw_t* lpwp = &chanp->lpw;
 
-    if (lpw.srel) {
-        log_msg(ERR_MSG, moi, "LPW with bit 23 on is invalid for Multics mode\n");
+    *addrp = -1;
+    // FIXME: Maybe we should not load LPW from mem unless first_list ?
+    log_msg(DEBUG_MSG, moi, "Starting %s list service for LPW for channel %0o(%d dec) at addr %0o\n",
+        (first_list) ? "first" : "another", chan, chan, chanloc);
+    lpw_t tmp_lpw = *lpwp;
+    if (first_list) {
+        parse_lpw(lpwp, chanloc, chan == IOM_CONNECT_CHAN);
+    } else {
+#if 0
+        if (memcmp(&tmp_lpw, lpwp, sizeof(*lpwp)) != 0) {
+            log_msg(ERR_MSG, moi, "Stomping scratchpad LPW for channel %0o(%d dec) at addr %0o:\n", chan, chan, chanloc);
+            log_msg(ERR_MSG, moi, "OLD LPW: %s\n", lpw2text(&tmp_lpw, chan == IOM_CONNECT_CHAN));
+            log_msg(ERR_MSG, moi, "NEW LPW: %s\n", lpw2text(lpwp, chan == IOM_CONNECT_CHAN));
+            cancel_run(STOP_BUG);
+        }
+#endif
+    }
+    log_msg(DEBUG_MSG, moi, "LPW: %s\n", lpw2text(lpwp, chan == IOM_CONNECT_CHAN));
+
+    if (lpwp->srel) {
+        log_msg(ERR_MSG, moi, "LPW with bit 23 (SREL) on is invalid for Multics mode\n");
         iom_fault(chan, moi, 1, 014);   // TODO: want enum
         cancel_run(STOP_BUG);
         return 1;
     }
     if (first_list) {
-        lpw.hrel = lpw.srel;
+        lpwp->hrel = lpwp->srel;
     }
-    if (lpw.ae != lpw.hrel) {
+    if (lpwp->ae != lpwp->hrel) {
         log_msg(WARN_MSG, moi, "AE does not match HREL\n");
         cancel_run(STOP_BUG);
     }
@@ -889,22 +897,22 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
 
     if (ptro != NULL)
         *ptro = 0;
-    int addr = lpw.dcw;
+    int addr = lpwp->dcw;
     if (chan == IOM_CONNECT_CHAN) {
-        if (lpw.nc == 0 && lpw.trunout == 0) {
+        if (lpwp->nc == 0 && lpwp->trunout == 0) {
             log_msg(WARN_MSG, moi, "Illegal tally connect channel\n");
             iom_fault(chan, moi, 1, iom_ill_tly_cont);
             cancel_run(STOP_WARN);
             return 1;
         }
-        if (lpw.nc == 0 && lpw.trunout == 1)
-            if (lpw.tally == 0) {
+        if (lpwp->nc == 0 && lpwp->trunout == 1)
+            if (lpwp->tally == 0) {
                 log_msg(WARN_MSG, moi, "TRO on connect channel\n");
                 iom_fault(chan, moi, 1, iom_lpw_tro_conn);
                 cancel_run(STOP_WARN);
                 return 1;
             }
-        if (lpw.nc == 1) {
+        if (lpwp->nc == 1) {
             // we're not updating tally, so pretend it's at zero
             if (ptro != NULL)
                 *ptro = 1;  // forced, see pg 23
@@ -915,35 +923,35 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
         // non connect channel
         // first, do an addr check for overflow
         int overflow = 0;
-        if (lpw.ae) {
-            int sz = lpw.size;
-            if (lpw.size == 0) {
+        if (lpwp->ae) {
+            int sz = lpwp->size;
+            if (lpwp->size == 0) {
                 log_msg(INFO_MSG, "IOM::list-sevice", "LPW size is zero; interpreting as 4096\n");
                 sz = 010000;    // 4096
             }
             if (addr >= sz)     // BUG: was >
                 overflow = 1; // signal or record below
             else
-                addr = lpw.lbnd + addr ;
+                addr = lpwp->lbnd + addr ;
         }
         // see flowchart 4.3.1b
-        if (lpw.nc == 0 && lpw.trunout == 0) {
+        if (lpwp->nc == 0 && lpwp->trunout == 0) {
             if (overflow) {
                 iom_fault(chan, moi, 1, iom_256K_of);
                 return 1;
             }
         }
-        if (lpw.nc == 0 && lpw.trunout == 1) {
+        if (lpwp->nc == 0 && lpwp->trunout == 1) {
             // BUG: Chart not fully handled (nothing after (C) except T-DCW detect)
             for (;;) {
-                if (lpw.tally == 0) {
+                if (lpwp->tally == 0) {
                     log_msg(WARN_MSG, moi, "TRO on channel 0%o\n", chan);
                     iom_fault(chan, moi, 0, iom_lpw_tro);
                     cancel_run(STOP_WARN);
                     // user fault, no return
                     break;
                 }
-                if (lpw.tally > 1) {
+                if (lpwp->tally > 1) {
                     if (overflow) {
                         iom_fault(chan, moi, 1, iom_256K_of);
                         return 1;
@@ -962,7 +970,7 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
             }
         }
         *addrp = addr;
-        // if in GCOS mode && lpw.ae) fault;    // bit 20
+        // if in GCOS mode && lpwp->ae) fault;  // bit 20
         // next: channel should pull DCW from core
         log_msg(DEBUG_MSG, moi, "Expecting that channel 0%o will pull DCW from core\n", chan);
     }
@@ -1003,12 +1011,12 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
     int write_lpw = 0;
     int write_lpw_ext = 0;
     int write_any = 1;
-    if (lpw.nc == 0) {
-        if (lpw.trunout == 1) {
-            if (lpw.tally == 1) {
+    if (lpwp->nc == 0) {
+        if (lpwp->trunout == 1) {
+            if (lpwp->tally == 1) {
                 if (ptro != NULL)
                     *ptro = 1;
-            } else if (lpw.tally == 0) {
+            } else if (lpwp->tally == 0) {
                 write_any = 0;
                 if (chan == IOM_CONNECT_CHAN)
                     iom_fault(chan, moi, 1, iom_lpw_tro_conn);
@@ -1017,11 +1025,11 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
             }
         }
         if (write_any) {
-            -- lpw.tally;
+            -- lpwp->tally;
             if (chan == IOM_CONNECT_CHAN)
-                lpw.dcw += 2;   // pcw is two words
+                lpwp->dcw += 2; // pcw is two words
             else
-                ++ lpw.dcw;     // dcw is one word
+                ++ lpwp->dcw;       // dcw is one word
         }
     } else  {
         // note: ptro forced earlier
@@ -1030,7 +1038,7 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
 
 int did_idcw = 0;   // BUG
 int did_tdcw = 0;   // BUG
-    if (lpw.nc == 0) {
+    if (lpwp->nc == 0) {
         write_lpw = 1;
         if (did_idcw || first_list)
             write_lpw_ext = 1;
@@ -1045,7 +1053,7 @@ int did_tdcw = 0;   // BUG
     //if (pcw.chan != IOM_CONNECT_CHAN) {
     //  ; // BUG: write lpw
     //}
-    lpw_write(chan, chanloc, &lpw);     // BUG: we always write LPW
+    lpw_write(chan, chanloc, lpwp);     // BUG: we always write LPW
 
     log_msg(DEBUG_MSG, moi, "returning\n");
     return 0;   // BUG: unfinished
@@ -1081,7 +1089,7 @@ static int do_dcw(int chan, int addr, int *controlp, flag_t *need_indir_svc)
         return 1;
     }
     dcw_t dcw;
-    parse_dcw(&dcw, addr);
+    parse_dcw(chan, &dcw, addr);
 
     if (dcw.type == idcw) {
         // instr dcw
@@ -1094,8 +1102,10 @@ static int do_dcw(int chan, int addr, int *controlp, flag_t *need_indir_svc)
         if (dcw.fields.instr.chan_cmd != 02) {
             channel_t* chanp = get_chan(chan);
             if (chanp != NULL && dcw.fields.instr.control == 0 && chanp->have_status && Mem[addr+1] == 0) {
-                log_msg(ERR_MSG, "IOM::dcw", "Ignoring need to set need-indirect service flag because next dcw is zero.\n");
-                cancel_run(STOP_BUG);
+                // log_msg(ERR_MSG, "IOM::dcw", "Ignoring need to set need-indirect service flag because next dcw is zero.\n");
+                // cancel_run(STOP_BUG);
+                log_msg(WARN_MSG, "IOM::dcw", "Next dcw is zero.\n");
+                cancel_run(STOP_IBKPT);
             } else
                 *need_indir_svc = 1;
         }
@@ -1218,6 +1228,7 @@ static int dev_send_idcw(int chan, pcw_t *p)
         }
         case DEV_DISK:
             ret = disk_iom_cmd(devinfop);
+            log_msg(INFO_MSG, moi, "DISK returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             break;
         default:
             log_msg(ERR_MSG, moi, "Unknown device type 0%o\n", iom.channels[chan].type);
@@ -1325,8 +1336,8 @@ static int dev_io(int chan, t_uint64 *wordp)
         }
         case DEV_DISK: {
             int ret = disk_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
-            if (ret != 0 || chanp->status.major != 0)
-                log_msg(DEBUG_MSG, "IOM::dev-io", "DISK returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
+            // TODO: uncomment & switch to DEBUG: if (ret != 0 || chanp->status.major != 0)
+                log_msg(INFO_MSG, "IOM::dev-io", "DISK returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             return ret; // caller must choose between our return and the status.{major,substatus}
         }
         default:
@@ -1366,7 +1377,7 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
 
     uint type = dcwp->fields.ddcw.type;
     uint daddr = dcwp->fields.ddcw.daddr;
-    uint tally = dcwp->fields.ddcw.tally;
+    uint tally = dcwp->fields.ddcw.tally;   // FIXME?
     t_uint64 word = 0;
     t_uint64 *wordp = (type == 3) ? &word : Mem + daddr;    // 2 impossible; see do_dcw
     if (type == 3 && tally != 1)
@@ -1476,7 +1487,7 @@ static char* pcw2text(const pcw_t *p)
  * Parse word at "addr" into a dcw_t.
  */
 
-static void parse_dcw(dcw_t *p, int addr)
+static void parse_dcw(int chan, dcw_t *p, int addr)
 {
     t_uint64 word;
     (void) fetch_abs_word(addr, &word);
@@ -1490,20 +1501,19 @@ static void parse_dcw(dcw_t *p, int addr)
         p->fields.instr.chan = -1;
         if (p->fields.instr.mask) {
             // Bit 21 is extension control (EC), not a mask
-#if 0
-            // For non-multics, we'd check LPW bit 23
             channel_t* chanp = get_chan(chan);
-            if (chanp && chanp->lpw.srel) { // Impossible, always zero for multics
-                ... refuse the EC request
+            if (! chanp)
+                    return;
+            if (chanp->lpw.srel) {
+                // Impossible, SREL is always zero for multics
+                // For non-multics, this would be allowed and we'd check
+                log_msg(ERR_MSG, "IOW::DCW", "I-DCW bit EC set but the LPW SREL bit is also set.");
+                cancel_run(STOP_BUG);
+                return;
             }
-#endif
-#if 1
-            t_uint64 new_ae = getbits36(word, 12, 6);
-            // Mem[addr] = setbits36(word, 12, 6, present_addr_extension);
-            log_msg(ERR_MSG, "IOW::DCW", "I-DCW bit EC not implemented; IDCW read from addr %#o; new addr ext %#o\n", addr, new_ae);
-            cancel_run(STOP_BUG);
-            // return 1;
-#endif
+            log_msg(WARN_MSG, "IOW::DCW", "Channel %d: Replacing LPW AE %#o with %#o\n", chan, chanp->lpw.ae, p->fields.instr.ext);
+            chanp->lpw.ae = p->fields.instr.ext;
+            cancel_run(STOP_IBKPT);
         }
     } else {
         int type = getbits36(word, 22, 2);
@@ -1599,7 +1609,8 @@ static void parse_lpw(lpw_t *p, int addr, int is_conn)
     p->nc = getbits36(word0, 21, 1);
     p->trunout = getbits36(word0, 22, 1);
     p->srel = getbits36(word0, 23, 1);
-    p->tally = getbits36(word0, 24, 12);
+    p->tally = getbits36(word0, 24, 12);    // initial value treated as unsigned
+    // p->tally = bits2num(getbits36(word0, 24, 12), 12);
 
     if (!is_conn) {
         // Ignore 2nd word on connect channel

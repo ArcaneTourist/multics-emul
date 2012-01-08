@@ -64,6 +64,22 @@ typedef enum {
     chn_io_sent,    // A io transfer is in progress
     chn_err         // BUG: may not need this state
 } chn_state;
+
+typedef struct {
+    uint32 dcw; // bits 0..17
+    flag_t ires;    // bit 18; IDCW restrict
+    flag_t hrel;    // bit 19; hardware relative addressing
+    flag_t ae;      // bit 20; address extension
+    flag_t nc;      // bit 21; no tally; zero means update tally
+    flag_t trunout; // bit 22; signal tally runout?
+    flag_t srel;    // bit 23; software relative addressing; not for Multics!
+    int32 tally;    // bits 24..35
+    // following not valid for paged mode; see B15; but maybe IOM-B non existant
+    uint32 lbnd;
+    uint32 size;
+    uint32 idcw;    // ptr to most recent dcw, idcw, ...
+} lpw_t;
+
 typedef struct {
     int chan;
     // BUG/TODO: represent "masked" state
@@ -78,5 +94,5 @@ typedef struct {
     int control;    // Indicates next action; mostly from PCW/IDCW ctrl fields
     int err;        // BUG: temporary hack to replace "ret" auto vars...
     chan_devinfo *devinfop;
+    lpw_t lpw;
 } channel_t;
-

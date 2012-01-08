@@ -19,6 +19,8 @@ t: t.c
 malm: malm.o y.tab.o lex.yy.o opcode_text.o
 	g++ -o $@ $^
 
+printmem: printmem.o bitstream.o
+
 y.tab.c: malm.y
 	yacc -d $?
 y.tab.h: malm.y

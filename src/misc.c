@@ -14,6 +14,7 @@ extern FILE *sim_deb, *sim_log;
 
 static void msg(enum log_level level, const char *who, const char* format, va_list ap);
 static int _scan_seg(uint segno, int msgs);
+static int scan_seg_defs(uint segno, AR_PR_t *defsp, int name_only, int msgs);
 uint ignore_IC = 0;
 uint last_IC;
 uint last_IC_seg;
@@ -277,6 +278,8 @@ static int _scan_seg(uint segno, int msgs)
     t_uint64 word0, word1;
 
     if (opt_debug) log_msg(DEBUG_MSG, "scan-seg", "Starting for seg %#o\n", segno);
+
+    /* Locate and report the last non-zero word of the segment */
     if (msgs) {
         /* Get last word of segment -- but in-memory copy may be larger than original, so search for last non-zero word */
         TPR.TSR = segno;
@@ -332,10 +335,8 @@ static int _scan_seg(uint segno, int msgs)
     if (msgs)
         out_msg("LOT entry for seg %#o is %o|%#o linkage pointer.\n", segno, linkage.PR.snr, linkage.wordno);
 
-    /* Linkage section -- read definitions pointer */
-    //uint linkage_addr;
-    //if (get_addr(linkage.PR.snr, linkage.wordno, &linkage_addr) != 0)
-    //  return 2;
+    /* Read definitions pointer from linkage section */
+
     TPR.TSR = linkage.PR.snr;
     AR_PR_t defs = { 0, { 0, 0, 0 }, { 0, 0} };
     if (fetch_pair(linkage.wordno, &word0, &word1) != 0)
@@ -349,7 +350,8 @@ static int _scan_seg(uint segno, int msgs)
     if (msgs)
         out_msg("Linkage section has ITS to defs at %o|%o\n", defs.PR.snr, defs.wordno);
 
-    /* Linkage section -- read link pair info */
+    /* Read link pair info from Linkage section */
+
     if (fetch_word(linkage.wordno + 6, &word1) != 0)
         return 2;
     uint first_link = word1 >> 18;
@@ -364,108 +366,13 @@ static int _scan_seg(uint segno, int msgs)
 
     TPR.TSR = defs.PR.snr;
 
-    uint defp = defs.wordno;
-    if (fetch_word(defp, &word0) != 0)
-        return 2;
-    uint off = word0 >> 18;
-    if (off == 0) {
-        if (msgs)
-            out_msg("Definition header points doesn't point to any entries\n");
-    } else {
-        if (msgs) {
-            out_msg("\n");
-            out_msg("Definition header points to first entry at offset %#o.   This segment provides the following:\n", off);
-        }
-        defp += off;
-        char entryname[1025];
-        char *entryp = entryname;
-        uint segment_defs = 0;  // Note that no definitions will appear at offset zero
-        for (;;) {
-            t_uint64 word2, word3;
-            if (fetch_word(defp, &word0) != 0)
-                return 2;
-            if (word0 == 0)
-                break;  
-            if (fetch_word(defp + 1, &word1) != 0)
-                return 2;
-            if (fetch_word(defp + 2, &word2) != 0)
-                return 2;
-            //if (fetch_word(defp + 3, &word3) != 0)
-            //  return 2;
-            uint fwdp = word0 >> 18;
-            uint class = word1 & 7;
-            // out_msg("Def entry at %o|%o (offset %#o): fwdp %#o, class %#o.  ", TPR.TSR, defp, defp - defs.wordno, fwdp, class);
-            if (msgs)
-                out_msg("Def entry at %o|%04o (offset %04o): class %#o.  ", TPR.TSR, defp, defp - defs.wordno, class);
-            uint namep = word2 >> 18;
-            char buf[513];
-            if (fetch_acc(defs.wordno + namep, buf) != 0)
-                return 2;
-            if (class == 3) {
-                uint firstp = word2 & MASK18;
-                // Segments can have multiple names
-                // seginfo_add_name(segno, thing_relp, buf);    // call unneeded, only first name matters
-                if (firstp == segment_defs) {
-                    if (msgs) {
-                        *(entryp - 1) = 0;
-                        out_msg("Segment %s has alias %s\n", entryname, buf);
-                        *(entryp - 1) = '$';
-                    }
-                } else {
-                    if (msgs)
-                        out_msg("Segment Name is %s; first def is at offset %#o.\n", buf, firstp);
-                    segment_defs = firstp;
-                    strcpy(entryname, buf);
-                    entryp = entryname + strlen(entryname);
-                    *entryp++ = '$';
-                }
-            } else {
-                char sectbuf[20];
-                const char *sect;
-                if (class == 0)
-                    sect = "text";
-                else if (class == 2)
-                    sect = "symbol";
-                else {
-                    sect = sectbuf;
-                    sprintf(sectbuf, "class %d", class);
-                }
-                uint thing_relp = word1 >> 18;
-                //t_uint64 tmp_word;
-                //if (fetch_word(defs.wordno + thing_relp, &tmp_word) != 0) {
-                //  out_msg("%s name is %s; offset is <error>\n", sect, buf);
-                //  return 2;
-                //}
-                //uint off = tmp_word >> 18;
-                if (class == 0) {
-                    // Entries may or may not already have segment info.   For example,
-                    // bound_active1 has a class 3 definition for Segment "wire_proc",
-                    // followed by class 0 definitions for: wire_proc$unwire_proc and unwire_proc
-                    if (msgs)
-                        out_msg("Text %s: link %o|%#o\n", buf, segno, thing_relp);
-                    // if (strncmp(entryname, buf, entryp-entryname) == 0)
-                    if (strchr(buf, '$') != NULL)
-                        seginfo_add_linkage(segno, thing_relp, buf);
-                    else {
-                        strcpy(entryp, buf);
-                        seginfo_add_linkage(segno, thing_relp, entryname);
-                    }
-                } else if (class == 2) {
-                    if (msgs)
-                        out_msg("Name is %s; offset is %#o within %s section\n", buf, thing_relp, sect);
-#if 0
-                    if (strcmp(buf, "bind_map") == 0) {
-                    } else if (strcmp(buf, "symbol_table") == 0) {
-                    } else
-                            ...
-#endif
-                } else
-                    if (msgs)
-                        out_msg("Name is %s with offset thing_relp = %#o within the %s section.\n", buf, thing_relp, sect);
-            }
-            defp = defs.wordno + fwdp;
-        }
-    }
+    /* Definitions */
+
+    int ret = scan_seg_defs(segno, &defs, 0, msgs);
+    if (ret != 0)
+        return ret;
+
+    /* Linkage Section */
 
     if (msgs && first_link != 0 && last_link != 0) {
         out_msg("\n");
@@ -536,6 +443,220 @@ static int _scan_seg(uint segno, int msgs)
         }
     }
 
+    return 0;
+}
+
+// ============================================================================
+
+static int _get_seg_name(uint segno); // FIXME
+
+int get_seg_name(uint segno)
+{
+    uint saved_seg = TPR.TSR;
+    flag_t fgen = fault_gen_no_fault;
+    fault_gen_no_fault = 1;
+    addr_modes_t amode = get_addr_mode();
+    set_addr_mode(APPEND_mode);
+
+    int msgs = 0;
+
+    int saved_debug = opt_debug;
+    opt_debug = 0;
+    t_stat ret = _get_seg_name(segno);
+    if (ret > 1 && msgs)
+        out_msg("get_seg_name: Error processing request.\n");
+
+    opt_debug = saved_debug;
+    TPR.TSR = saved_seg;
+    fault_gen_no_fault = fgen;
+    set_addr_mode(amode);
+    return ret;
+}
+
+static int _get_seg_name(uint segno)
+{
+
+    // Hack: copied from _scan_seg()
+
+    t_uint64 word0, word1;
+    int msgs = 1;
+
+
+    /* Read LOT */
+
+    TPR.TSR = 015;
+
+    if (fetch_word(segno, &word0) != 0) {
+        if (msgs)
+            out_msg("xseginfo: Error reading LOT entry 15|%o\n", segno);
+        return 1;
+    }
+    if (word0 == 0) {
+        if (msgs)
+            out_msg("LOT entry for seg %#o is empty.\n", segno);
+        return 0;
+    }
+    AR_PR_t linkage;
+    word2pr(word0, &linkage);
+    if (msgs)
+        out_msg("LOT entry for seg %#o is %o|%#o linkage pointer.\n", segno, linkage.PR.snr, linkage.wordno);
+
+    /* Read definitions pointer from linkage section */
+
+    TPR.TSR = linkage.PR.snr;
+    AR_PR_t defs = { 0, { 0, 0, 0 }, { 0, 0} };
+    if (fetch_pair(linkage.wordno, &word0, &word1) != 0)
+        return 2;
+    if (word0 == 0 && word1 == 0) {
+        if (msgs)
+            out_msg("Seg %#o has a linkage section at %o|%o with no ITS pointer to definitions.\n", segno, linkage.PR.snr, linkage.wordno);
+        return 1;
+    }
+    words2its(word0, word1, &defs);
+    if (defs.PR.snr == 0 && defs.wordno == 0) {
+        if (msgs)
+            out_msg("Seg %#o has a linkage section at %o|%o with no ITS pointer to definitions.\n", segno, linkage.PR.snr, linkage.wordno);
+        return 1;
+    }
+    if (msgs)
+        out_msg("Linkage section has ITS to defs at %o|%o\n", defs.PR.snr, defs.wordno);
+
+#if 1
+    /* Read link pair info from Linkage section */
+
+    if (fetch_word(linkage.wordno + 6, &word1) != 0)
+        return 2;
+    uint first_link = word1 >> 18;
+    uint last_link = word1 & MASK18;
+    if (msgs) {
+        if (word1 == 0)
+            out_msg("Linkage section has no references to other segments.\n");
+        else {
+            out_msg("Linkage section has %d references to other segments at entry #s %#o .. %#o.\n", (last_link - first_link) / 2 + 1, first_link, last_link);
+        }
+    }
+#endif
+
+    TPR.TSR = defs.PR.snr;
+
+    /* Definitions */
+
+    int ret = scan_seg_defs(segno, &defs, 1, 0);
+    return ret;
+}
+
+
+// ============================================================================
+
+static int scan_seg_defs(uint segno, AR_PR_t *defsp, int name_only, int msgs)
+{
+    // Moved out of _scan_seg()
+    // Intent is to make usable for getting segment names
+
+    t_uint64 word0, word1;
+
+    uint defp = defsp->wordno;
+    if (fetch_word(defp, &word0) != 0)
+        return 2;
+    uint off = word0 >> 18;
+    if (off == 0) {
+        if (msgs)
+            out_msg("Definition header doesn't point to any entries\n");
+    } else {
+        if (msgs) {
+            out_msg("\n");
+            out_msg("Definition header points to first entry at offset %#o.   This segment provides the following:\n", off);
+        }
+        defp += off;
+        char entryname[1025];
+        char *entryp = entryname;
+        uint segment_defs = 0;  // Note that no definitions will appear at offset zero
+        for (;;) {
+            t_uint64 word2, word3;
+            if (fetch_word(defp, &word0) != 0)
+                return 2;
+            if (word0 == 0)
+                break;  
+            if (fetch_word(defp + 1, &word1) != 0)
+                return 2;
+            if (fetch_word(defp + 2, &word2) != 0)
+                return 2;
+            //if (fetch_word(defp + 3, &word3) != 0)
+            //  return 2;
+            uint fwdp = word0 >> 18;
+            uint class = word1 & 7;
+            // out_msg("Def entry at %o|%o (offset %#o): fwdp %#o, class %#o.  ", TPR.TSR, defp, defp - defsp->wordno, fwdp, class);
+            if (msgs || (class == 3 && name_only))
+                out_msg("Def entry at %o|%04o (offset %04o): class %#o.  ", TPR.TSR, defp, defp - defsp->wordno, class);
+            uint namep = word2 >> 18;
+            char buf[513];
+            if (fetch_acc(defsp->wordno + namep, buf) != 0)
+                return 2;
+            if (class == 3) {
+                uint firstp = word2 & MASK18;
+                // Segments can have multiple names
+                // seginfo_add_name(segno, thing_relp, buf);    // call unneeded, only first name matters
+                if (firstp == segment_defs) {
+                    if (msgs || name_only) {
+                        *(entryp - 1) = 0;
+                        out_msg("Segment %s has alias %s\n", entryname, buf);
+                        *(entryp - 1) = '$';
+                    }
+                } else {
+                    if (msgs || name_only)
+                        out_msg("Segment Name is %s; first def is at offset %#o.\n", buf, firstp);
+                    segment_defs = firstp;
+                    strcpy(entryname, buf);
+                    entryp = entryname + strlen(entryname);
+                    *entryp++ = '$';
+                }
+            } else if (! name_only) {
+                char sectbuf[20];
+                const char *sect;
+                if (class == 0)
+                    sect = "text";
+                else if (class == 2)
+                    sect = "symbol";
+                else {
+                    sect = sectbuf;
+                    sprintf(sectbuf, "class %d", class);
+                }
+                uint thing_relp = word1 >> 18;
+                //t_uint64 tmp_word;
+                //if (fetch_word(defsp->wordno + thing_relp, &tmp_word) != 0) {
+                //  out_msg("%s name is %s; offset is <error>\n", sect, buf);
+                //  return 2;
+                //}
+                //uint off = tmp_word >> 18;
+                if (class == 0) {
+                    // Entries may or may not already have segment info.   For example,
+                    // bound_active1 has a class 3 definition for Segment "wire_proc",
+                    // followed by class 0 definitions for: wire_proc$unwire_proc and unwire_proc
+                    if (msgs)
+                        out_msg("Text %s: link %o|%#o\n", buf, segno, thing_relp);
+                    // if (strncmp(entryname, buf, entryp-entryname) == 0)
+                    if (strchr(buf, '$') != NULL)
+                        seginfo_add_linkage(segno, thing_relp, buf);
+                    else {
+                        strcpy(entryp, buf);
+                        seginfo_add_linkage(segno, thing_relp, entryname);
+                    }
+                } else if (class == 2) {
+                    if (msgs)
+                        out_msg("Name is %s; offset is %#o within %s section\n", buf, thing_relp, sect);
+#if 0
+                    if (strcmp(buf, "bind_map") == 0) {
+                    } else if (strcmp(buf, "symbol_table") == 0) {
+                    } else
+                            ...
+#endif
+                } else
+                    if (msgs)
+                        out_msg("Name is %s with offset thing_relp = %#o within the %s section.\n", buf, thing_relp, sect);
+            }
+            defp = defsp->wordno + fwdp;
+        }
+    }
     return 0;
 }
 
@@ -691,22 +812,40 @@ int cmd_find(int32 arg, char *buf)
         return 1;
     }
 
-    t_addr lo = 0, hi = 0;
+    //t_addr lo = 0, hi = 0;
+    t_addr lo;
     int n = -1;
+
+    // Get first address
     char *lo_text = tailp;
     lo = (*sim_vm_parse_addr)(NULL, tailp, &tailp);
     if (! tailp) {
         out_msg("Cannot parse first address in address range.\n");
         return 1;
     }
+    addr_modes_t lo_mode;
+    unsigned lo_segno;
+    unsigned lo_offset;
+    if (addr_simh_to_emul(lo, &lo_mode, &lo_segno, &lo_offset) != 0)
+        return 1;
+    
+    addr_modes_t hi_mode;
+    unsigned hi_segno;
+    unsigned hi_offset;
+
+    // Expect either: -<addr> or /count
     char *lo_tail = tailp;
     tailp += strspn(tailp, "    ");
     if (*tailp == 0) {
-        hi = lo;
+        //  xfind <string> <addr>
+        //hi_mode = lo_mode;
+        //hi_segno = lo_segno;
+        //hi_offset = lo_offset;
+        n = 1;
     } else {
         if (*tailp == '/') {
+            //  xfind <string> <addr> / <count>
             ++ tailp;
-            hi = 0;
             if (strspn(tailp, "01234567     ") == strlen(tailp))
                 (void) sscanf(tailp, "%o", (unsigned *) &n);
             else {
@@ -714,12 +853,19 @@ int cmd_find(int32 arg, char *buf)
                 return 1;
             }
         } else if (*tailp == '-') {
+            //  xfind <string> <addr> - <addr>
             ++ tailp;
             tailp += strspn(tailp, "    ");
             n = -1;
-            hi = (*sim_vm_parse_addr)(NULL, tailp, &tailp);
+            t_addr hi = (*sim_vm_parse_addr)(NULL, tailp, &tailp);
             if (! tailp) {
                 out_msg("Cannot parse second address.\n");
+                return 1;
+            }
+            if (addr_simh_to_emul(hi, &hi_mode, &hi_segno, &hi_offset) != 0)
+                return 1;
+            if (hi_mode != lo_mode || hi_segno != lo_segno) {
+                out_msg("ERROR: Cannot mix segmentation information.\n");
                 return 1;
             }
             tailp += strspn(tailp, "    ");
@@ -732,61 +878,42 @@ int cmd_find(int32 arg, char *buf)
         }
     }
     * lo_tail = 0;
-    if (n == -1)
-        out_msg("Searching for '%s' in %#o .. %#o\n", search, lo, hi);
+
+    int n_words = (n == - 1) ? hi_offset - lo_offset : n;
+    if (lo_mode == APPEND_mode)
+        if (n == -1)
+            out_msg("Searching for '%s' in %#o|%#o .. |%#o (%d words)\n",
+                search, lo_segno, lo_offset, hi_offset, n_words);
+        else
+            out_msg("Searching for '%s' in %#o|%#o/%d\n", search, lo_segno, lo_offset, n);
     else
-        out_msg("Searching for '%s' in %#o/%#o\n", search, lo, n);
-    int addr = -1;
+        if (n == -1)
+            out_msg("Searching for '%s' in %#o ..%#o (%d words)\n",
+                search, lo_offset, hi_offset, n_words);
+        else
+            out_msg("Searching for '%s' in %#o/%d\n", search, lo_offset, n);
+
     char *matchp = search;
     unsigned char stupid[2][513];
     memset(stupid, 0, sizeof(stupid));
     int nstupid = 0;
     int which = 0;
     int found = 0;
-    int seg, offset;
-    uint saved_seg = TPR.TSR;
     addr_modes_t saved_amode = get_addr_mode();
-    set_addr_mode(APPEND_mode);
-    if (strchr(lo_text, '|') == 0) {
-        seg = -1;
-        addr = lo;
-    } else {
-        char dummy;
-        if (sscanf(lo_text, "%o | %o %c", (unsigned *) &seg, (unsigned *) &offset, &dummy) == 2) {
-            out_msg("Using seg %o, initial offset %o\n", seg, offset);
-            TPR.TSR = seg;
-        } else {
-            out_msg("Cannot parse segmented address %s.\n", lo_text);
-            seg = -1;
-        }
-    }
-    for (;;) {
+    uint saved_seg = TPR.TSR;
+    int seg = lo_segno;
+    TPR.TSR = lo_segno;
+    set_addr_mode(lo_mode);
+    int addr = lo_offset;
+    int warn_uninit = sys_opts.warn_uninit;
+    sys_opts.warn_uninit = 0;
+    for (int addr = lo_offset; addr <= lo_offset + n_words; ++ addr) {
         t_uint64 word;
-        if (seg >= 0) {
-            if (n >= 0) {
-                if (--n == 0)
-                    break;
-            } else {
-                // BUG: infinite loop, <seg>|<off1> - <seg>|<off2> not supported here
-            }
-            addr = offset;
-            if (fetch_word(addr, &word) != 0) {
-                TPR.TSR = saved_seg;
-                set_addr_mode(saved_amode);
-                return 1;
-            }
-        } else {
-            if (n >= 0) {
-                if (addr - lo == n)
-                    break;
-            } else
-                if (addr > hi)
-                    break;
-            if (fetch_abs_word(addr, &word) != 0) {
-                TPR.TSR = saved_seg;
-                set_addr_mode(saved_amode);
-                return 1;
-            }
+        if (fetch_word(addr, &word) != 0) {
+            TPR.TSR = saved_seg;
+            set_addr_mode(saved_amode);
+            sys_opts.warn_uninit = warn_uninit;
+            return 1;
         }
         // Really horrible -- no worse algorithm is possible
         // But it was quick to code and doesn't matter for interactive use
@@ -835,16 +962,11 @@ int cmd_find(int32 arg, char *buf)
                 // out_msg("DEBUG: stupid[%d] is now %s.\n", which, bytes2text(stupid[which], nstupid));
             }
         }
-        /* Advance to the next word */
-        if (seg >= 0) {
-            ++offset;
-            // addr = offset;
-        } else
-            ++addr;
     }
 
     TPR.TSR = saved_seg;
     set_addr_mode(saved_amode);
+    sys_opts.warn_uninit = warn_uninit;
     return 0;
 }
 

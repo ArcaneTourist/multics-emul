@@ -560,7 +560,7 @@ typedef struct {
     int time;       // request by device for queuing via sim_activate()
 } chan_devinfo;
 
-// System-wide info not tied to a specific CPU, IOM, or SCU
+// System-wide info and options not tied to a specific CPU, IOM, or SCU
 typedef struct {
     int clock_speed;    // 0 for realtime; otherwise instructions/sec
     // delay times are in cycles; negative for immediate
@@ -572,6 +572,7 @@ typedef struct {
         int read;
         int xfer;
     } mt_times;
+    int warn_uninit;    // Warn when reading uninitialized memory
 } sysinfo_t;
 
 // ============================================================================
