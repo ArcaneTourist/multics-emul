@@ -76,6 +76,7 @@ static struct sim_ctab sim_cmds[] =  {
     { "XLIST",    cmd_load_listing, 0, "xlist <addr> <source>            load pl1 listing\n" },
     { "XSEGINFO", cmd_seginfo, 0,      "xseginfo <seg>                   walk segment linkage table\n" },
     { "XSTACK",   cmd_stack_trace, 0,  "xstack                           dump Multics procedure call stack\n" },
+    { "XSTATS",   cmd_stats, 0,  "xstats                           display statistics\n" },
     { "XSYMTAB",  cmd_symtab_parse, 0, "xsymtab [...]                    define symtab entries\n" },
     { "XVMDUMP",  cmd_dump_vm, 0,      "xvmdump                          dump virtual memory caches\n" },
     { 0, 0, 0, 0}
@@ -145,8 +146,8 @@ static void hw6180_init(void)
     // use of sim_activate().  Zero times have almost the same
     // result, except that the caller queues an immediate run via
     // sim_activate() and then returns.  The zero wait event(s) will
-    // be noticed and run prior to the next instruction execution.
-    sys_opts.iom_times.connect = -1;    // 3    // 10 seconds is too long...
+    // be noticed and handled prior to the next instruction execution.
+    sys_opts.iom_times.connect = 0; // 3    // 10 seconds is too long...
     sys_opts.iom_times.chan_activate = -1;  // unimplemented
     sys_opts.mt_times.read = -1;    // 100; // 1000;
     sys_opts.mt_times.xfer = -1;            // unimplemented
@@ -207,8 +208,14 @@ static void hw6180_init(void)
 #endif
 
     // TODO: init_memory_iom() should probably be called by boot()
+
+    // Initializing memory to reflect the existance of an IOM, not an
+    // IOX.  Using an IOX causes use of the non L68 "ldo" instruction.
+    // The "ldo" instruction was implmented on on the ADP aka ORION aka DPS88.
+    // Also, the IOX has an undocumented mailbox architecture.
+
     //init_memory_iox();
-    init_memory_iom();      // Using IOX causes use of unknown instr "ldo" and IOX has an undocumented mailbox architecture
+    init_memory_iom();
 
     // CPU port 'd' (1) connected to port '0' of SCU
     // scas_init's call to make_card seems to require that the CPU be connected

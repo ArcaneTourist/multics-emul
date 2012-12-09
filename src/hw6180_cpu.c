@@ -322,14 +322,11 @@ flag_t fault_gen_no_fault;
 // This only controls warning messages
 extern int bootimage_loaded;    // only relevent for the boot CPU ?
 
-t_uint64 total_cycles;      // Used for statistics and for simulated clock
-
 // Debugging and statistics
 int opt_debug;
-t_uint64 calendar_a;
+t_uint64 calendar_a; // Used to "normalize" A/Q dumps of the calendar as deltas
 t_uint64 calendar_q;
-t_uint64 total_instr;
-t_uint64 total_msec;
+stats_t sys_stats;
 
 //-----------------------------------------------------------------------------
 // ***  Constants, unchanging lookup tables, etc
@@ -396,8 +393,10 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
      *  bootload_tape_label.alm will check the result in the status mailbox
      *  area of main memory if an IOX is detected.
      *  Emulating an IOX was later abandoned because when using an IOX,
-     *  bootload_tape_label.alm will try to execute the undocumented "ldo"
-     *  instruction.
+     *  bootload_tape_label.alm will try to execute the "ldo" instruction.
+     *  The "ldo" instruction was never implemented on the L68 series. The
+     *  "ldo" instruction was implmented on on the ADP aka ORION aka
+     *  DPS88.
      *  However, we might as well run the IOM or IOX to do the I/O.  Note that
      *  prior to booting, the emulated IOM or IOX must load IOM control words
      *  into memory.  This is done in init_memory_iom() or in init_memory_iox().
@@ -497,9 +496,9 @@ t_stat cpu_reset (DEVICE *dptr)
     calendar_a = 0xdeadbeef;
     calendar_q = 0xdeadbeef;
 
-    total_cycles = 0;
-    total_instr = 0;
-    total_msec = 0;
+#if FEAT_INSTR_STATS
+    memset(&sys_stats, 0, sizeof(sys_stats));
+#endif
 
     return 0;
 }
@@ -596,7 +595,7 @@ void cancel_run(enum sim_stops reason)
  *  and out of the SIMH command processor.
  */
 
-uint32 ninstr;
+#define FEATURE_TIME_EXCL_EVENTS 1  // Don't count time spent in sim_process_event()
 
 t_stat sim_instr(void)
 {
@@ -621,9 +620,10 @@ t_stat sim_instr(void)
     
     cancel = 0;
 
-uint32 ncycles = 0;
-ninstr = 0;
+    uint32 start_cycles = sys_stats.total_cycles;
+    sys_stats.n_instr = 0;
     uint32 start = sim_os_msec();
+    uint32 delta = 0;
 
     // TODO: use sim_activate for the kbd poll
     // if (opt_debug && sim_interval > 32)
@@ -641,8 +641,14 @@ ninstr = 0;
             prev_seg = PPR.PSR;
         }
         if (sim_interval<= 0) { /* check clock queue */
-            // process any SIMH timed events including keyboard halt
+            // Process any SIMH timed events including keyboard halt
+#if FEATURE_TIME_EXCL_EVENTS
+            delta += sim_os_msec() - start;
+#endif
             reason = sim_process_event();
+#if FEATURE_TIME_EXCL_EVENTS
+            start = sim_os_msec();
+#endif
             if (reason != 0)
                 break;
         }
@@ -699,8 +705,7 @@ ninstr = 0;
         // And record history, etc
         //
 
-        ++ total_cycles;
-        ++ ncycles;         // TODO: get rid of this
+        ++ sys_stats.total_cycles;
         sim_interval--; // todo: maybe only per instr or by brkpoint type?
         if (opt_debug) {
             log_ignore_ic_change();
@@ -723,12 +728,13 @@ ninstr = 0;
         }
     }   // while (reason == 0)
 
-    uint32 delta = sim_os_msec() - start;
-    total_msec += delta;
-    total_instr += ninstr;
+    delta += sim_os_msec() - start;
+    uint32 ncycles = sys_stats.total_cycles - start_cycles;
+    sys_stats.total_msec += delta;
+    sys_stats.total_instr += sys_stats.n_instr;
     if (delta > 500)
         log_msg(INFO_MSG, "CU", "Step: %.1f seconds: %d cycles at %d cycles/sec, %d instructions at %d instr/sec\n",
-            (float) delta / 1000, ncycles, ncycles*1000/delta, ninstr, ninstr*1000/delta);
+            (float) delta / 1000, ncycles, ncycles*1000/delta, sys_stats.n_instr, sys_stats.n_instr*1000/delta);
 
     save_to_simh();     // pack private variables into SIMH's world
     flush_logs();
@@ -1070,7 +1076,7 @@ static t_stat control_unit(void)
 
         case FAULT_cycle:
             {
-            log_msg(DEBUG_MSG, "CU", "Cycle = FAULT\n");
+            log_msg(INFO_MSG, "CU", "Cycle = FAULT\n");
 
             // First, find the highest fault.   Group 7 type faults are handled
             // as a special case.  Group 7 faults have different detection
@@ -1585,10 +1591,8 @@ static t_stat control_unit(void)
 
 static void execute_ir(void)
 {
-
     cpu.trgo = 0;       // will be set true by instructions that alter flow
     execute_instr();    // located in opu.c
-    ++ ninstr;  // BUG: exec instructions should increase this
 }
 
 //=============================================================================

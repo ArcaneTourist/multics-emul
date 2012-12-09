@@ -95,6 +95,12 @@ static int do_op(instr_t *ip)
 {
     // Wrapper for do_an_op() with detection of change in address mode (for debugging).
 
+    ++ sys_stats.n_instr;
+#if FEAT_INSTR_STATS
+    ++ sys_stats.instr[ip->opcode].nexec;
+    uint32 start = sim_os_msec();
+#endif
+
     do_18bit_math = 0;
     // do_18bit_math = (switches.FLT_BASE != 2);    // diag tape seems to want this, probably inappropriately
 
@@ -130,6 +136,11 @@ static int do_op(instr_t *ip)
             }
         }
     }
+
+#if FEAT_INSTR_STATS
+    sys_stats.instr[ip->opcode].nmsec += sim_os_msec() - start;
+#endif
+
     return ret;
 }
 
@@ -143,6 +154,7 @@ static int do_an_op(instr_t *ip)
 
     uint op = ip->opcode;
     char *opname = opcodes2text[op];
+
     cu.rpts = 0;    // current instruction isn't a repeat type instruction (as far as we know so far)
     saved_tro = IR.tally_runout;
 
@@ -150,8 +162,8 @@ static int do_an_op(instr_t *ip)
     op >>= 1;
     if (opname == NULL) {
         if (op == 0172 && bit27 == 1) {
-            log_msg(WARN_MSG, "OPU", "Unknown instruction 0172(1) allegedly 'ldo'.  Ignoring instruction.\n");
-            cancel_run(STOP_WARN);
+            log_msg(WARN_MSG, "OPU", "Unavailable instruction 0172(1).  The ldo  instruction is only available on ADP aka ORION aka DPS88.  Ignoring instruction.\n");
+            cancel_run(STOP_BUG);
             return 0;
         }
         log_msg(WARN_MSG, "OPU", "Illegal opcode %03o(%d)\n", op, bit27);

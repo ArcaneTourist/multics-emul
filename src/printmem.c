@@ -1,3 +1,9 @@
+/*
+    printmem.c -- Dump a file in 9-bit format but discarding high bits.
+
+    Useful for searching for text in boot tape images or memory dumps.
+*/
+
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>

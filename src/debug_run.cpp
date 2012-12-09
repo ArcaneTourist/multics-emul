@@ -641,9 +641,9 @@ int cmd_stack_trace(int32 arg, char *buf)
     dump_autos();
     out_msg("\n");
 
-    float secs = (float) total_msec / 1000;
+    float secs = (float) sys_stats.total_msec / 1000;
     out_msg("Stats: %.1f seconds: %lld cycles at %.0f cycles/sec, %lld instructions at %.0f instr/sec\n",
-        secs, total_cycles, total_cycles/secs, total_instr, total_instr/secs);
+        secs, sys_stats.total_cycles, sys_stats.total_cycles/secs, sys_stats.total_instr, sys_stats.total_instr/secs);
 
     return 0;
 }
@@ -1671,3 +1671,38 @@ int seginfo_show_all(int seg, int first)
 
 //=============================================================================
 
+int cmd_stats(int32 arg, char *buf)
+{
+    float secs = (float) sys_stats.total_msec / 1000;
+    out_msg("Stats: %.1f seconds: %lld cycles at %.0f cycles/sec, %lld instructions at %.0f instr/sec\n",
+        secs, sys_stats.total_cycles, sys_stats.total_cycles/secs, sys_stats.total_instr, sys_stats.total_instr/secs);
+
+#if FEAT_INSTR_STATS
+    out_msg("Per-instruction statistics:\n");
+    out_msg("   %-20s  %8s  %7s  %s\n", "Opcode", "Count", "Seconds", "Instr/Sec");
+    uint tot_nexec = 0;
+    uint tot_msec = 0;
+    for (unsigned op = 0; op < ARRAY_SIZE(sys_stats.instr); ++op) {
+        if (sys_stats.instr[op].nexec == 0)
+            continue;
+        tot_nexec += sys_stats.instr[op].nexec;
+        tot_msec += sys_stats.instr[op].nmsec;
+        char *opname = opcodes2text[op];
+        out_msg("   %-20s  %8u  %6.1f  ", opname, sys_stats.instr[op].nexec, (float) sys_stats.instr[op].nmsec / 1000);
+        if (sys_stats.instr[op].nmsec == 0)
+            out_msg("%13s\n", "N/A");
+        else
+            out_msg("%9u/sec\n", sys_stats.instr[op].nexec / sys_stats.instr[op].nmsec * 1000);
+    }
+    out_msg("   %-20s  %8s  %7s  %s\n", "--------------------", "------", "-------", "-------------");
+    out_msg("   %-20s  %8u  %6.1f  ", "TOTAL:", tot_nexec, (float) tot_msec / 1000);
+    if (tot_msec == 0)
+        out_msg("%13s\n", "N/A");
+    else
+        out_msg("%9u/sec\n", tot_nexec / tot_msec * 1000);
+#endif
+
+    return 0;
+}
+
+//=============================================================================

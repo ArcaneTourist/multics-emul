@@ -635,7 +635,7 @@ int scu_get_calendar(t_uint64 addr)
 
     t_uint64 now;
     if (sys_opts.clock_speed != 0) {
-        t_uint64 i_cycles = total_cycles * 2 / 3;   // fetch, exec, exec
+        t_uint64 i_cycles = sys_stats.total_cycles * 2 / 3; // fetch, exec, exec
         //t_uint64 e_sec = i_cycles / sys_opts.clock_speed;
         //int e_us = 1000000 * (i_cycles % sys_opts.clock_speed) / sys_opts.clock_speed;
         t_uint64 elapsed = i_cycles * 1000000 / sys_opts.clock_speed;

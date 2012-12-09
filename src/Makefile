@@ -1,15 +1,42 @@
-include Makefile.defs
+# Makefile for the sources to the Multics emulator.
+# Creates multics.a.
+# See ../Makefile for one that drives library builds for SIMH and
+# decNumber as well as creating the executable.
 
+CC = gcc -std=c99
+
+# Use make DEBUG=1 to disable optimization
+
+CFLAGS += -pedantic -Wall
+CFLAGS += -Wno-unused-variable -Wno-unused-but-set-variable # until we cleanup...
+CFLAGS += -Wno-variadic-macros -Wno-long-long	# non-std features we use
+CFLAGS += -D_GNU_SOURCE	# (SIMH uses this)
+CFLAGS += -U__STRICT_ANSI__	# we want some exensions (and SIMH uses this)
+CFLAGS += -g
+ifneq ($(DEBUG),)
+CFLAGS += -O0
+else
+CFLAGS += -O3
+endif
+CFLAGS += -march=native	# faster executable
+CFLAGS += -pipe			# faster compile
+CFLAGS += -DUSE_INT64 -DUSE_ADDR64	# affects SIMH typedefs
+CFLAGS += -I ../simh -I ../decNumber
+# CFLAGS += -O1 -pg
+
+.cpp.o:
+	$(CXX) $(CFLAGS) -c -o $@ $<
 
 multics.a: seginfo.o debug_run.o debug_io.o listing.o hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o eis_opu.o bitstream.o apu.o eis_desc.o scu.o iom.o mt.o disk.o math.o math_real.o console.o
 # symtab.o
 	ar cr $@ $?
 
+# A crude measure of the size of the code base
 wc:
 	wc hw6180.h seginfo.hpp bit36.h bitstream.h eis.hpp \
-	iom.hincl \
 	seginfo.cpp debug_run.cpp debug_io.cpp listing.cpp hw6180_cpu.c hw6180_sys.c misc.c opu.c eis_opu.cpp bitstream.c apu.c eis_desc.cpp scu.c iom.c mt.c disk.c math.c math_real.c console.c
 
+# A measure of how complete the OPU is
 opcode-count:
 	@echo `grep -n 'case opcode._[a-z0-9]*:' opu.c | grep -cv ' + 0:'` of `grep -c 'opcode._.*=' opcodes.h`
 
@@ -19,7 +46,7 @@ t: t.c
 malm: malm.o y.tab.o lex.yy.o opcode_text.o
 	g++ -o $@ $^
 
-printmem: printmem.o bitstream.o
+malm.o: *.h
 
 y.tab.c: malm.y
 	yacc -d $?
@@ -28,7 +55,8 @@ y.tab.h: malm.y
 lex.yy.c: malm.l y.tab.h
 	lex malm.l
 y.tab.o: *.h
-malm.o: *.h
+
+printmem: printmem.o bitstream.o
 
 hw6180_cpu.o: *.h opcodes.h
 hw6180_sys.o: *.h

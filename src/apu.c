@@ -1938,7 +1938,7 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp,
             PTWp->assoc.pageno = x2;
             PTWp->assoc.is_full = 1;
             if (PTWp->ptw.f == 0) {
-                if(opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "PTW directed fault\n");
+                log_msg(INFO_MSG, "APU::append", "PTW directed fault\n");
                 fault_gen(dir_flt0_fault + PTWp->ptw.fc);   // Directed Faults 0..4 use sequential fault numbers
                 return 1;
             }

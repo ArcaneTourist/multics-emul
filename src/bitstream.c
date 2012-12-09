@@ -122,7 +122,7 @@ int bitstm_get(bitstream_t *bp, size_t len, t_uint64 *word)
     int left = 8 - used;
     if (left != 0 && len < left) {
         // We have enough bits left in the currently buffered byte.
-        uint val = bp->byte >> (8-len); // Consume bits from left of byte
+        unsigned val = bp->byte >> (8-len); // Consume bits from left of byte
         *word = val;
         //printf("b-debug: used %d leading bits of %d-bit curr byte to fufill small request.\n", len, left);
         bp->byte = bp->byte << len;
@@ -167,7 +167,7 @@ int bitstm_get(bitstream_t *bp, size_t len, t_uint64 *word)
         }
         bp->byte = *bp->p;
         ++ bp->p;
-        uint val = bp->byte >> (8-extra);
+        unsigned val = bp->byte >> (8-extra);
         wtmp = (wtmp << extra) | val;
         //printf("b-debug: used %d leading bits of curr byte to finish request.\n", extra);
         bp->byte = bp->byte << extra;

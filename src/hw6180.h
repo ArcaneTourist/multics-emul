@@ -447,6 +447,8 @@ typedef struct {
 // Beginnings of movement of all cpu info into a single struct.   This
 // will be needed for supporting multiple CPUs.   At the moment, it mostly
 // holds semi-exposed registers used during saved/restored memory debugging.
+// On the other hand, it might be better to handle multiple CPUs as
+// separate processes anyway.
 typedef struct {
     PTWAM_t PTWAM[16];  // Page Table Word Associative Memory, 51 bits
     SDWAM_t SDWAM[16];  // Segment Descriptor Word Associative Memory, 88 bits
@@ -575,6 +577,18 @@ typedef struct {
     int warn_uninit;    // Warn when reading uninitialized memory
 } sysinfo_t;
 
+// Statistics
+typedef struct {
+    struct {
+        uint nexec;
+        uint nmsec; // FIXME: WARNING: if 32 bits, only good for ~47 days :-)
+    } instr[1024];
+    t_uint64 total_cycles;      // Used for statistics and for simulated clock
+    t_uint64 total_instr;
+    t_uint64 total_msec;
+    uint n_instr;       // Reset to zero on each call to sim_instr()
+} stats_t;
+
 // ============================================================================
 // === Variables
 
@@ -587,10 +601,8 @@ extern t_uint64 *Mem;
 // Non CPU
 extern int opt_debug;
 extern sysinfo_t sys_opts;
+extern stats_t sys_stats;
 extern flag_t fault_gen_no_fault;   // Allows cmd-line to use APU w/o faulting
-extern t_uint64 total_cycles;
-extern t_uint64 total_instr;
-extern t_uint64 total_msec;
 
 // Parts of the CPU
 extern t_uint64 reg_A;      // Accumulator, 36 bits
@@ -644,6 +656,7 @@ extern char *ir2text(const IR_t *irp);
 extern int cmd_stack_trace(int32 arg, char *buf);
 extern void show_variables(unsigned segno, int ic);
 extern int seginfo_show_all(int seg, int first);
+extern int cmd_stats(int32 arg, char *buf);
 
 /* hw6180_cpu.c */
 extern void cancel_run(enum sim_stops reason);
@@ -782,15 +795,19 @@ extern int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
 // ============================================================================
 
 #ifdef __cplusplus
-}
+}   // extern "C"
+#endif
 
-// C++ only features
+// ============================================================================
+
+#ifndef __cplusplus
+// C++ only features:
 // extern ostream cdebug;
-
 #endif
 
 #include "opcodes.h"
-// #include "seginfo.hpp"
 #include "bit36.h"
+
+#include "options.h"
 
 #endif  // _HW6180_H

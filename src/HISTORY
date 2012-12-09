@@ -445,7 +445,7 @@ History of pre-release versions
         Handling of the "rpt" repeat instruction.
         Fixed easp* instructions to work on the correct registers (not opcode&07).
 
-=== Pre-Version 44, Nov 12, 2008
+=== Pre-Version 44 Nov 12, 2008
     General
         Use the IOM/IOX to read the first tape record.  Fixes to repeat
         instructions re the instruction tag and X[n] updating.  Updated
@@ -514,9 +514,20 @@ History of pre-release versions
         mlr: flush partial results on error
 
 === Pre-Version 50, Dec 4, 2008
+    General
+        Updates to debug messages
+    hw6180_cpu.c
+        Don't auto-attach tape
+    hw6180_sys.c
+        Don't default debugging to on
+        Allow either '#' or '=' to specify absolute addressing mode ('=' is not allowed by the SIMH parser)
+    opu.c
+        Bug fix to spri instr.
+
 === Pre-Version 51, Dec 5, 2008
 === Pre-Version 52, Dec 11, 2008
 === Pre-Version 53, Dec 13, 2008
+
 === Pre-Version 54, Dec 14, 2008
     General
         Updates to debug messages
@@ -724,6 +735,13 @@ History of pre-release versions
         Update to rsw, absa, long_right_shift()
 
 === Pre-Version 78, Nov 8, 2009
+    apu.c
+        PPR privileged flag changes on instruction fetch to match TPR
+    hw6180_sys.c
+        Changes to simulated cabling to match requirements seemingly implied by scas_init.
+    opu.c
+        Implement the privleged requirement for many instructions.
+
 === Pre-Version 79, Nov 8, 2009
 === Pre-Version 80, Nov 9, 2009
 === Pre-Version 81, Nov 11, 2009
@@ -852,4 +870,14 @@ History of pre-release versions
         Break scan_seg_defs() into multiple functions.
         Provide get_seg_name(segno).
         Fix search to handle the packed addresses we give SIMH.
+
+=== Pre-Version 118, Jan 07, 2012
+    Opcode "ret"
+
+=== Pre-Version 119, Dec 08, 2012
+    Cleanup for putting parent folder and prior backups into version control.
+    Remove Makefile.defs.
+    Expect sources to be in ./src/ instead of current aka ./HW6180/.
+    Move source listings from /src/ to ./listings/.
+    Provide "xstats" command to display how often each instruction is used.
 
