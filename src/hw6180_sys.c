@@ -465,7 +465,7 @@ static int prior_lineno;
 
 t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int32 sw)
 {
-    //log_msg(INFO_MSG, "SYS:fprint_sym", "addr is %012llo; val-ptr is %p, uptr is %p\n", simh_addr, val, uptr);
+    // log_msg(INFO_MSG, "SYS:fprint_sym", "addr is %012llo; val-ptr is %p, uptr is %p\n", simh_addr, val, uptr);
 
     if (uptr == &cpu_unit) {
         // memory request -- print memory specified by SIMH 
@@ -555,6 +555,7 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
     } else if (sw & SIM_SW_REG) {
         // Print register
         REG* regp = (void*) uptr;
+        // NOTE: We could also check regp->name to detect which registers should have special formatting
         if (regp && (regp->flags&REG_USER2)) {
             // PR registers
             // NOTE: Another implementation would be to have the value of each register always be its
@@ -576,6 +577,12 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
             IR_t ir;
             load_IR(&ir, *val);
             fprintf(ofile, " %s", ir2text(&ir));
+            fflush(ofile);
+            return SCPE_OK;
+        } else if (regp && strcmp(regp->name,"PPR") == 0) {
+            PPR_t ppr;
+            load_PPR(*val, &ppr);
+            fprintf(ofile, "[ring %0o, address %0o|%0o, priv %d]", ppr.PRR, ppr.PSR, ppr.IC, ppr.P);
             fflush(ofile);
             return SCPE_OK;
         } else

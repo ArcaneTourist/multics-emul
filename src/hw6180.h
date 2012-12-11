@@ -664,6 +664,8 @@ extern void restore_from_simh(void);    // SIMH has a different form of some int
 extern int cmd_load_listing(int32 arg, char *buf);
 extern void load_IR(IR_t *irp, t_uint64 word);
 extern void save_IR(t_uint64* wordp);
+extern void load_PPR(t_uint64 word, PPR_t *pprp);
+extern t_uint64 save_PPR(const PPR_t *pprp);
 extern void fault_gen(enum faults);
 extern int fault_check_group(int group);    // Do faults exist a given or higher priority?
 extern int fetch_instr(uint IC, instr_t *ip);

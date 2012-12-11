@@ -74,9 +74,9 @@ t_uint64 *Mem;
 // composed of registers from the appending unit and the control unit:
 //      AU:PSR -- segment number (15 bits); not used in absolute mode
 //      CU:IC -- instruction counter (18 bits)
+//      AU:P -- privileged mode flag
+//      AU:PRR: 3 bits -- ring number
 //      See also
-//          AU:P -- privileged mode flag
-//          AU:PRR: 3 bits -- ring number
 //          BAR register -- only for BAR mode which Multics doesn't use.
 // We tell SIMH that our "PC" is the saved_PPR_addr global which contains
 // only the portions of the PPR that are needed to form addresses.
@@ -116,9 +116,9 @@ t_uint64 saved_ar_pr[8];    // Only for sending to/from SIMH
 
 // See earlier comments re the PPR and IC
 PPR_t PPR;              // Procedure Pointer Reg, 37 bits, internal only
+static t_uint64 saved_PPR;  // Only for sending to/from SIMH; see also sim_PC and saved_IC
 static t_uint64 saved_PPR_addr; // Only for sending to/from SIMH; see also sim_PC and saved_IC
-static uint8 saved_PPR_perms;   // Only for sending to/from SIMH
-static uint32 saved_IC; // Only for sending to/from SIMH; duplicates saved_PPR_addr
+static uint32 saved_IC; // Only for sending to/from SIMH; duplicates portions of saved_PPR
 
 TPR_t TPR;      // Temporary Pointer Reg, 42 bits, internal only
 static t_uint64 saved_DSBR;     // Descriptor Segment Base Register, 51 bits
@@ -150,10 +150,14 @@ cpu_t *cpup = &cpu_info;    // but we still only have one CPU
 // TODO: modify simh to take a PV_ZLEFT flag (leftmost bit is bit 0) or
 // perhaps PV_ZMSB (most significant bit is numbered zero).  Why did
 // I say this... Perhaps that comment was before fprint_sym/fprint_addr?
+// 
+// NOTE: Instead of using REF_USER# flags, we could also check regp->name to
+// detect which registers should have special formatting in fprint_sym.
 
 REG cpu_reg[] = {
     // structure members: name="PC", loc=PC, radix=<8>, width=36, offset=<0>, depth=<1>, flags=, qptr=
-    { ORDATA (PPR, saved_PPR_addr, 64) },       // Packed PPR.PSR and PPR.IC (but not priv flag or rings)
+    { ORDATA (PPR_addr, saved_PPR_addr, 64), REG_RO | REG_VMIO | REG_HIDDEN },
+    { ORDATA (PPR, saved_PPR, 64), REG_VMIO },
     { ORDATA (IC, saved_IC, 18) },      // saved_IC address also stored in sim_PC external
     { GRDATA (IR, saved_IR, 2, 18, 0), REG_RO | REG_VMIO | REG_USER1},
     { ORDATA (A, reg_A, 36) },
@@ -165,12 +169,11 @@ REG cpu_reg[] = {
     { BRDATA (PR, saved_ar_pr, 8, 42, 8), REG_VMIO | REG_USER2 },
     // stuff needed to yield a save/restore sufficent for examining memory dumps
     { BRDATA (BAR, saved_BAR, 8, 9, 2) },
-    { GRDATA (PPR_perms, saved_PPR_perms, 2, 4, 0) },
     { ORDATA (DSBR, saved_DSBR, 51) },
     // The following is a hack, but works as long as you don't save/restore
     // across different architectures, compiler implementations, or phases
     // of the moon.
-        { BRDATA (CPUINFO, (&cpu_info), 8, 8, sizeof(cpu_info)) },
+        { BRDATA (CPUINFO, (&cpu_info), 8, 8, sizeof(cpu_info)), REG_RO },
     { NULL }
 };
 
@@ -760,7 +763,7 @@ static void save_to_simh(void)
 
     saved_IC = PPR.IC;
     addr_modes_t mode = get_addr_mode();
-    // BUG: We need to always save the segment even if not in appending mode
+    saved_PPR = save_PPR(&PPR);
     saved_PPR_addr = addr_emul_to_simh(mode, PPR.PSR, PPR.IC);
     t_uint64 sIR;
     save_IR(&sIR);
@@ -769,8 +772,6 @@ static void save_to_simh(void)
 
     saved_BAR[0] = BAR.base;
     saved_BAR[1] = BAR.bound;
-    saved_PPR_perms = PPR.P | // 1 bit
-        (PPR.PRR << 1); // 3 bits
     saved_DSBR = 
         cpup->DSBR.stack | // 12 bits
         (cpup->DSBR.u << 12) | // 1 bit
@@ -797,17 +798,7 @@ void restore_from_simh(void)
     restore_PR_registers();
     BAR.base = saved_BAR[0];
     BAR.bound = saved_BAR[1];
-    PPR.P = saved_PPR_perms & 1;
-    PPR.PRR = saved_PPR_perms >> 1;
-    addr_modes_t mode;
-    unsigned segno;
-    unsigned offset;    // ignored -- we'll use the explicit seperate IC
-    if (addr_simh_to_emul(saved_PPR_addr, &mode, &segno, &offset) != 0) {
-        log_msg(ERR_MSG, "restore-from-simh", "cannot convert PPR.\n");
-        cancel_run(STOP_BUG);
-    }
-    if (segno >= 0)
-        PPR.PSR = segno;
+    load_PPR(saved_PPR, &PPR);
     PPR.IC = saved_IC;  // allow user to update "IC"
     cpup->DSBR.stack = saved_DSBR & MASKBITS(12);
     cpup->DSBR.u = (saved_DSBR >> 12) & 1;
@@ -884,6 +875,32 @@ void save_IR(t_uint64* wordp)
         (IR.hex_mode << (35-32));
 }
         
+//=============================================================================
+
+/*
+ * save_PPR() & load_PPR()
+ *
+ * Convert between PPR and bit string
+ */
+
+t_uint64 save_PPR(const PPR_t *pprp)
+{
+    t_uint64 word = pprp->IC & MASK18;          // 18 bits
+    word |= (t_uint64) (pprp->P & 1) << 18;     //  1 bit
+    word |= (t_uint64) (pprp->PSR & 077777) << 19;  // 15 bits
+    word |= (t_uint64) (pprp->PRR & 7) << 34;   //  3 bits
+    return word;
+}
+
+
+void load_PPR(t_uint64 word, PPR_t *pprp)
+{
+    pprp->IC = word & MASK18;       // 18 bits
+    pprp->P = (word >> 18) & 1;     //  1 bit
+    pprp->PSR = (word >> 19) & 077777;  //  15 bits
+    pprp->PRR = (word >> 34) & 7;   //  3 bits
+}
+
 //=============================================================================
 
 /*
@@ -1375,6 +1392,15 @@ static t_stat control_unit(void)
             flag_t is_fault = events.any && events.low_group && events.low_group < 7;
             if (is_fault) {
                 log_msg(WARN_MSG, "CU", "Probable fault detected after instruction execution\n");
+                if (PPR.IC != IC_temp) {
+                    // Our OPU always advances the IC, but should not do so
+                    // on faults, so we restore it
+                    log_msg(INFO_MSG, "CU", "Restoring IC to %06o (from %06o)\n",
+                        IC_temp, PPR.IC);
+                    // Note: Presumably, none of the instructions that change the PPR.PSR
+                    // are capable of generating a fault after doing so...
+                    PPR.IC = IC_temp;
+                }
                 if (doing_xde || doing_xdo) {
                     char *which = doing_xde ? "even" : "odd";
                     log_msg(WARN_MSG, "CU", "XED %s instruction terminated by fault.\n", which);

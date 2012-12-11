@@ -25,7 +25,13 @@ CFLAGS += -I ../simh -I ../decNumber
 # CFLAGS += -O1 -pg
 
 .cpp.o:
-	$(CXX) $(CFLAGS) -c -o $@ $<
+	@echo $(CXX) \$$CFLAGS -c -o $@ $<
+	@$(CXX) $(CFLAGS) -c -o $@ $<
+
+.c.o:
+	@echo $(CC) \$$CFLAGS $(CPPFLAGS) $(TARGET_ARCH) -c -o $@ $<
+	@$(CC) $(CFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c -o $@ $<
+
 
 multics.a: seginfo.o debug_run.o debug_io.o listing.o hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o eis_opu.o bitstream.o apu.o eis_desc.o scu.o iom.o mt.o disk.o math.o math_real.o console.o
 # symtab.o
