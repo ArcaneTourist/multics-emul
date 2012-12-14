@@ -122,6 +122,9 @@ static uint32 saved_IC; // Only for sending to/from SIMH; duplicates portions of
 
 TPR_t TPR;      // Temporary Pointer Reg, 42 bits, internal only
 static t_uint64 saved_DSBR;     // Descriptor Segment Base Register, 51 bits
+mode_reg_t MR;
+t_uint64 CMR;   // Cache Mode Register (ignored); 28 bits scattered within a 36bit word
+t_uint64 FR;        // "FR" Fault Register
 
 // Other registers listed in the processor manual but not implemented
 // as globals.
@@ -129,7 +132,6 @@ static t_uint64 saved_DSBR;     // Descriptor Segment Base Register, 51 bits
 // PTWAM_t PTWAM[16];   // Page Table Word Associative Memory, 51 bits
 // static fault_reg_t FR;   // Fault Register, 35 bits
 // mode register
-// CMR;     // Cache Mode Register, 28 bits
 // CU_hist[16];     // 72 bits
 // OU_hist[16];     // 72 bits
 // DU_hist[16];     // 72 bits
@@ -164,12 +166,15 @@ REG cpu_reg[] = {
     { ORDATA (Q, reg_Q, 36) },
     { ORDATA (E, reg_E, 8) },
     { BRDATA (X, reg_X, 8, 18, 8) },
+    { ORDATA (FR, FR, 36) },
+    { ORDATA (MR, MR.word, 36), REG_RO },
     { ORDATA (TR, reg_TR, 27), REG_RO },
     // TODO: Let SIMH modify the AR/PR registers -- use VM_AD flags, etc
     { BRDATA (PR, saved_ar_pr, 8, 42, 8), REG_VMIO | REG_USER2 },
     // stuff needed to yield a save/restore sufficent for examining memory dumps
     { BRDATA (BAR, saved_BAR, 8, 9, 2) },
     { ORDATA (DSBR, saved_DSBR, 51) },
+    { ORDATA (CMR, CMR, 36), REG_RO },
     // The following is a hack, but works as long as you don't save/restore
     // across different architectures, compiler implementations, or phases
     // of the moon.
@@ -439,7 +444,7 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
  *  any outstanding timing operations. Used by SIMH's RESET, RUN, and BOOT
  *  commands
  *
- *  BUG: Should reset *all* structures to zero.
+ *  BUG: Should reset *all* structures and registers to zero.
  *  
  *  Note that SIMH doesn't have much difference between reset and power-on
  *
@@ -1154,6 +1159,8 @@ static t_stat control_unit(void)
             // BUG: should we clear the fault?  Or does scr instr do that? Or
             // maybe the OS's fault handling routines do it?   At the
             // moment, we clear it and find the next pending fault.
+            // Above was written before we had FR and scpr; perhaps
+            // we need to revist the transitions to/from FAULT cycles.
 
             int next_fault = 0;
             if (group == 7) {
@@ -1191,11 +1198,11 @@ static t_stat control_unit(void)
             // flag and run the EXEC case?  // Maybe the following increments
             // and tests could be handled by EXEC and/or the XED opcode?
 
-            // Update history
-            uint IC_temp = PPR.IC;
-            // PPR.IC = addr;
+            // Update history (show xed at current location; next two will be addr and addr+1
+            //uint IC_temp = PPR.IC;
+            //PPR.IC = addr;
             ic_history_add();       // record the xed
-            PPR.IC = IC_temp;
+            //PPR.IC = IC_temp;
 
             // TODO: Check for SIMH breakpoint on execution for the addr of
             // the XED instruction.  Or, maybe check in the code for the
@@ -1374,9 +1381,12 @@ static t_stat control_unit(void)
             // Munge PPR.IC for history debug
             if (cu.xde)
                 PPR.IC = TPR.CA;
-            else
-                if (cu.xdo)
+            else 
+                if (cu.xdo) {
+                    // BUG: This lie may be wrong if prior instr updated TPR.CA, so
+                    // we should probably remember the prior xde addr
                     PPR.IC = TPR.CA + 1;
+                }
             ic_history_add();
             PPR.IC = IC_temp;
             execute_ir();
@@ -1679,8 +1689,20 @@ void fault_gen(enum faults f)
         return;
     }
 
+    if (f == illproc_fault)
+        FR |= fr_ill_proc;
+ 
     events.any = 1;
     log_msg(DEBUG_MSG, "CU::fault", "Recording fault # %d in group %d\n", f, group);
+
+    // Note that we never simulate a (hardware) op_not_complete_fault
+    if (MR.mr_enable && (f == op_not_complete_fault || MR.fault_reset)) {
+        if (MR.strobe) {
+            log_msg(INFO_MSG, "CU::fault", "Clearing MR.strobe.\n");
+            MR.strobe = 0;
+        } else
+            log_msg(INFO_MSG, "CU::fault", "MR.strobe was already unset.\n");
+    }
 
     if (group == 7) {
         // Recognition of group 7 faults is delayed and we can have
@@ -1692,7 +1714,7 @@ void fault_gen(enum faults f)
         if (cpu.cycle == FAULT_cycle) {
             f = trouble_fault;
             group = fault2group[f];
-            log_msg(DEBUG_MSG, "CU::fault", "Double fault:  Recording current fault as a trouble fault (fault # %d in group %d).\n", f, group);
+            log_msg(WARN_MSG, "CU::fault", "Double fault:  Recording current fault as a trouble fault (fault # %d in group %d).\n", f, group);
         } else {
             if (events.fault[group]) {
                 // todo: error, unhandled fault

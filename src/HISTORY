@@ -881,3 +881,12 @@ History of pre-release versions
     Move source listings from /src/ to ./listings/.
     Provide "xstats" command to display how often each instruction is used.
 
+=== Pre-Version 120, Dec 10, 2012
+    Save entire PPR to SIMH.
+    Fixup IC after fault to undo auto-advance so that the IC points to
+    the faulted instruction.
+
+=== Pre-Version 121, Dec 12, 2012
+    Provide the fault register, mode register, and cache mode register.
+    Properly handle EIS descriptors in absolute addressing mode.
+

@@ -2,20 +2,22 @@
 
 /*
  * A pointer into main memory.  Pointers used in EIS descriptors are 18-bit
- * values that are either an 18-bit offset against the current segment or
- * are a 3-bit "PR" register number and a 15-bit offset against that PR.
- * Which of the two interpretations should be used is controlled by the "ar"
- * flag.
+ * values that may be an absolute memory location, an 18-bit offset against
+ * the current segment or a 3-bit "PR" register number and a 15-bit offset
+ * against that PR.   Which of the these interpretations should be used is
+ * controlled by the abs flag and the "ar" * flag.
  *
  * This class acts as a cache for mapping the segmented address to
  * physical memory and stepping though memory via bit, character, or
  * word increments.
+ *
  */
 
 class ptr_t {
 private:
     // For compability with prior debug messages we defer real initialization
     struct mf_y_addr_t {
+        bool abs;           // absolute mode or appending? (BAR not supported)
         bool ar;
         int reg;
         int width;
@@ -27,7 +29,7 @@ private:
     // single merged bitno.  Let caller copy out the base and/or
     // have two objects.
     struct pr_info_t {
-        int init(bool ar, unsigned reg, int width, unsigned y);
+        int init(bool abs, bool ar, unsigned reg, int width, unsigned y);
         bool _init;
         uint ringno;
         uint segno;
@@ -38,10 +40,10 @@ private:
     } base;
     struct page_t {
         bool _valid;
-        unsigned addr;  // 24-bit main memory address
-        unsigned lo;
-        unsigned hi;
-        int _offset;    // offset used to generate addr member
+        unsigned addr;  // 24-bit "absolute" main memory address of _offset
+        unsigned lo;    // absolute
+        unsigned hi;    // absolute
+        int _offset;    // offset within page used to generate addr member
         int valid() const { return _valid && addr >= lo && addr <= hi; }
         // int valid(int offset) const;
         page_t() { _valid = 0; _offset = 0; }
@@ -49,9 +51,9 @@ private:
     void _bit_advance(int nbits, bool quiet);
 public:
     ptr_t() {}
-    ptr_t(bool ar, unsigned reg, int nbits, unsigned y) {
-        set(ar, reg, nbits, y);
-    }
+    //ptr_t(bool ar, unsigned reg, int nbits, unsigned y) {
+    //  set(ar, reg, nbits, y);
+    //}
     void set(bool ar, unsigned reg, int nbits, unsigned y);
     int init();
     int valid() const { return page.valid(); }

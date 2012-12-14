@@ -548,6 +548,16 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
 
 void ptr_t::set(bool ar, unsigned reg, int width, unsigned y)
 {
+    initial.abs = get_addr_mode() == ABSOLUTE_mode;
+    if (initial.abs) {
+        // Since bounds never change in absolute mode, get() doesn't maintain these
+        // and we initialize them here
+        // set
+        page._valid = 1;
+        page._offset = y;
+        page.lo = 0;
+        page.hi = MAXMEMSIZE;
+    }
     initial.ar = ar;
     initial.reg = reg;
     initial.width = width;
@@ -567,7 +577,7 @@ void ptr_t::set(bool ar, unsigned reg, int width, unsigned y)
 
 int ptr_t::init()
 {
-    int ret = base.init(initial.ar, initial.reg, initial.width, initial.y);
+    int ret = base.init(initial.abs, initial.ar, initial.reg, initial.width, initial.y);
     _bitnum = base.bitno;
     return ret;
 }
@@ -580,10 +590,18 @@ int ptr_t::init()
  *
  */
 
-int ptr_t::pr_info_t::init(bool ar, unsigned reg, int width, unsigned y)
+int ptr_t::pr_info_t::init(bool abs, bool ar, unsigned reg, int width, unsigned y)
 {
     const char* moi = "APU::EIS::addr::init";
 
+    if (abs) {
+        _init = 1;
+        ringno = ~0;    // ignored in abs mode
+        segno = ~0;     // ignored in abs mode
+        offset = 0; 
+        bitno = 0;
+        return 0;
+    }
     if (opt_debug)
         log_msg(DEBUG_MSG, moi, "Calling get-address.\n");
     unsigned bitpos;
@@ -610,6 +628,12 @@ int ptr_t::pr_info_t::init(bool ar, unsigned reg, int width, unsigned y)
 int ptr_t::get()
 {
     const char* moi = "APU::EIS::addr::get";
+
+    if (initial.abs) {
+        // no translation
+        page.addr = page._offset;
+        return 0;
+    }
 
     if (!base._init)
         init();             // shame on caller though
@@ -742,13 +766,8 @@ void ptr_t::_bit_advance(int nbits, bool quiet)
         if (!quiet)
             log_msg(INFO_MSG, moi, "Too many offset bits for a single word.  Offset was %#o with bit offset %d; now: %#o with bit offset %d.\n", page._offset, _bitnum, page._offset + nwords, bitno);
         _bitnum = bitno;
-        bool was_valid = page.valid();
         page._offset += nwords;
         page.addr += nwords;
-#if 0
-        if (was_valid && ! page.valid())
-            log_msg(INFO_MSG, moi, "Ptr %o now outside of page bounds %o .. %o after advancing %d bits.\n", page.addr, page.lo, page.hi, nbits);
-#endif
     }
 }
 

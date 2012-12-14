@@ -2692,19 +2692,35 @@ static int do_an_op(instr_t *ip)
                 t_uint64 word;
                 switch (ip->mods.single.tag) {      // no addr modifications
                     case 2:
+                        // Note that we completely ignore the CMR other
+                        // loading and storing it -- we don't have nor
+                        // need a cache.
                         ret = fetch_word(TPR.CA, &word);
-                        log_msg(ERR_MSG, "OPU::opcode::lcpr", "Not writing %#llo to cache mode reg.\n", word);
-                        if (word != 0)
-                            ret = 1;
+                        if (! ret) {
+                            CMR = word;
+                            CMR = setbits36(CMR, 36-36, 15, 0);
+                            CMR = setbits36(CMR, 51-36, 3, 0);
+                            CMR = setbits36(CMR, 58-36, 1, 0);
+                            CMR = setbits36(CMR, 60-36, 4, 0);
+                        }
                         break;
                     case 4:
                         ret = fetch_word(TPR.CA, &word);
-                        log_msg(ERR_MSG, "OPU::opcode::lcpr", "Not writing %#llo to mode reg.\n", word);
-                        if (word != 0)
-                            ret = 1;
+                        if (! ret) {
+                            MR.word = word;
+                            MR.mr_enable = word & 1; word &= ~1;
+                            MR.strobe = word & 020; // word &= ~020;
+                            MR.fault_reset = word &040; word &= ~040;
+                            word &= MASK36;
+                            if (word != 0) {
+                                ret = 1;
+                                log_msg(ERR_MSG, "OPU::opcode::lcpr", "Wrote %#llo to mode reg, but flags are ignored.\n", MR.word);
+                            }
+                        }
                         break;
                     case 3:
                         log_msg(ERR_MSG, "OPU::opcode::lcpr", "history reg zero unimplemented.\n");
+                        ret = 1;
                         break;
                     case 7:
                         log_msg(ERR_MSG, "OPU::opcode::lcpr", "history reg setting unimplemented.\n");
@@ -2714,7 +2730,8 @@ static int do_an_op(instr_t *ip)
                         log_msg(ERR_MSG, "OPU::opcode::lcpr", "Bad tag %#o\n", ip->mods.single.tag);
                         ret = 1;
                 }
-                cancel_run(STOP_WARN);
+                if (ret)
+                    cancel_run(STOP_WARN);
                 return ret;
             }
             case opcode0_ldbr: {
@@ -2774,29 +2791,73 @@ static int do_an_op(instr_t *ip)
             // lsdp unimplemented -- T&D Instruction
             // lsdr unimplemented -- T&D Instruction
             // rcu unimplemented -- restore control unit
-            // scpr unimplemented -- store cp register
 
-            // scu unimplemented -- store control unit
+            case opcode0_scpr: {    // Store CU reg
+                if (get_addr_mode() == BAR_mode || ! PPR.P) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                t_uint64 words[2];
+                int ret = 1;
+                int unimp = 1;
+                switch (ip->mods.single.tag) {
+                    case 0:
+                        log_msg(WARN_MSG, "OPU::scpr", "APU history register not implemented\n");
+                        cancel_run(STOP_BUG);
+                        break;
+                    case 1:
+                        unimp = 0;
+                        words[0] = FR;
+                        words[1] = 0;
+                        FR = 0;
+                        log_msg(WARN_MSG, "OPU::scpr", "Fault register only partially implemented\n");
+                        cancel_run(STOP_WARN);
+                        break;
+                    case 6:
+                        unimp = 0;
+                        words[0] = MR.word;
+                        words[1] = CMR; // cache mode register
+                        break;
+                    case 010:
+                    case 020:
+                    case 040:
+                        break;
+                    default:
+                        // illegal procedure fault
+                        fault_gen(illproc_fault);
+                        return 1;
+                }
+                if (unimp) {
+                    log_msg(WARN_MSG, "OPU::scpr", "Unimplemented tag %#o\n", ip->mods.single.tag);
+                    cancel_run(STOP_BUG);
+                } else {
+                    ret = store_pair(ip->addr, words[0], words[1]);
+                    cancel_run(STOP_WARN);
+                }
+                return ret;
+            }
+
             case opcode0_scu: {
-                // AL39 says that CU data is not, in general, valid at any time except
-                // when safe-stored by the first of the pair of the instructions
-                // associated with the fault or interrupt.
-                // On the other hand, the T&D tape expects that a ldi/scu pair results
-                // in the updated IR and IC being stored.
-                // The T&D tape also expects that the saved data will appropriately
-                // reflect whether or not the CPU was in appending mode at the time
-                // of a fault even though the subsequent scu was executed in absolute
-                // mode.
-                // An alternative to our implemention might be to save state after
-                // every instruction except xed instructions.
+                // AL39 says that CU data is not, in general, valid at any time
+                // except when safe-stored by the first of the pair of the
+                // instructions associated with the fault or interrupt.
+                // On the other hand, the T&D tape expects that a ldi/scu pair
+                // results in the updated IR and IC being stored.
+                // The T&D tape also expects that the saved data will
+                // appropriately reflect whether or not the CPU was in
+                // appending mode at the time of a fault even though the
+                // subsequent scu was executed in absolute mode.
+                // An alternative to our implemention might be to save state 
+                // fter every instruction except xed instructions.
                 extern events_t events; // BUG: put in hdr file or hide behind an access function
                 log_msg(WARN_MSG, "OPU::scu", "Not fully implemented\n");
                 if (switches.FLT_BASE == 2) {
                     log_msg(WARN_MSG, "OPU::scu", "Auto breakpoint\n");
                     cancel_run(STOP_WARN);
                 }
-                if (! events.xed)
-                    scu2words(scu_data);
+                // BUG: why are we doing a safe store *withing* scu???
+                // if (! events.xed)
+                //  scu2words(scu_data);
                 return store_yblock8(TPR.CA, scu_data);
             }
 
@@ -3452,21 +3513,34 @@ void cu_safe_store()
 
 static void scu2words(t_uint64 *words)
 {
+    // BUG:  We don't track much of the data that should be tracked
+
     memset(words, 0, 8 * sizeof(*words));
 
     words[0] = setbits36(0, 0, 3, PPR.PRR);
     words[0] = setbits36(words[0], 3, 15, PPR.PSR);
     words[0] = setbits36(words[0], 18, 1, PPR.P);
+    // 19 "b" XSF
+    // 20 "c" SDWAMN
     words[0] = setbits36(words[0], 21, 1, cu.SD_ON);
+    // 22 "e" PTWAM
     words[0] = setbits36(words[0], 23, 1, cu.PT_ON);
+    // 24..32 various
+    // 33-35 FCT
+
+    // words[1]
+
     words[2] = setbits36(0, 0, 3, TPR.TRR);
     words[2] = setbits36(words[2], 3, 15, TPR.TSR);
     words[2] = setbits36(words[2], 27, 3, switches.cpu_num);
     words[2] = setbits36(words[2], 30, 6, cu.delta);
+
     words[3] = 0;
     words[3] = setbits36(words[3], 30, 6, TPR.TBR);
+
     save_IR(&words[4]);
     words[4] = setbits36(words[4], 0, 18, PPR.IC);
+
     words[5] = setbits36(0, 0, 18, TPR.CA);
     words[5] = setbits36(words[5], 18, 1, cu.repeat_first);
     words[5] = setbits36(words[5], 19, 1, cu.rpt);
@@ -3474,7 +3548,9 @@ static void scu2words(t_uint64 *words)
     words[5] = setbits36(words[5], 24, 1, cu.xde);
     words[5] = setbits36(words[5], 24, 1, cu.xdo);
     words[5] = setbits36(words[5], 30, 6, cu.CT_HOLD);
+
     encode_instr(&cu.IR, &words[6]);    // BUG: cu.IR isn't kept fully up-to-date
+
     words[7] = cu.IRODD;
 }
 

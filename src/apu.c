@@ -360,34 +360,37 @@ int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp,
     char *moi = "APU::get-addr";
 
     addr_modes_t addr_mode = get_addr_mode();
-    if (addr_mode != APPEND_mode) {
-        // FIXME: handle BAR mode and abs mode as described in EIS indir doc
-        log_msg(WARN_MSG, moi, "Unexpected usage of non append mode.\n");
-        cancel_run(STOP_WARN);
-    }
-
     uint offset;
     uint saved_PSR = 0, saved_PRR = 0, saved_CA = 0, saved_bitno = 0;
+
     if (ar) {
-        saved_PSR = TPR.TSR;
-        saved_PRR = TPR.TRR ;
-        saved_CA = TPR.CA;
-        saved_bitno = TPR.TBR;
-        //
-        uint n = y >> 15;
-        int32 soffset = sign15(y & MASKBITS(15));
-        TPR.TSR = AR_PR[n].PR.snr;
-        TPR.TRR = max3(AR_PR[n].PR.rnr, TPR.TRR, PPR.PRR);
-        offset = AR_PR[n].wordno + soffset;
-        TPR.TBR = AR_PR[n].PR.bitno;
-        TPR.TBR += xbits;
-        if (TPR.TBR >= 36) {
-            offset += TPR.TBR / 36;
-            TPR.TBR %= 36;
+        if (addr_mode != APPEND_mode) {
+            log_msg(WARN_MSG, moi, "Illegal usage of non append mode.\n");
+            log_msg(INFO_MSG, moi, "Args were y=%06o, ar=%d, reg=%d, nbits=%d\n",
+                y, ar, reg, nbits);
+            cancel_run(STOP_BUG);
+            return -1;
+        } else {
+            saved_PSR = TPR.TSR;
+            saved_PRR = TPR.TRR ;
+            saved_CA = TPR.CA;
+            saved_bitno = TPR.TBR;
+            //
+            uint n = y >> 15;
+            int32 soffset = sign15(y & MASKBITS(15));
+            TPR.TSR = AR_PR[n].PR.snr;
+            TPR.TRR = max3(AR_PR[n].PR.rnr, TPR.TRR, PPR.PRR);
+            offset = AR_PR[n].wordno + soffset;
+            TPR.TBR = AR_PR[n].PR.bitno;
+            TPR.TBR += xbits;
+            if (TPR.TBR >= 36) {
+                offset += TPR.TBR / 36;
+                TPR.TBR %= 36;
+            }
+            if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o(0%o+0%o), bitno=0%o\n",
+                n, TPR.TSR, TPR.TRR, offset, AR_PR[n].wordno, soffset, TPR.TBR);
+            *(uint*)bitnop = TPR.TBR;
         }
-        if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o(0%o+0%o), bitno=0%o\n",
-            n, TPR.TSR, TPR.TRR, offset, AR_PR[n].wordno, soffset, TPR.TBR);
-        *(uint*)bitnop = TPR.TBR;
     } else {
         offset = y;
         // int32 sofset = sign18(y);
@@ -417,16 +420,18 @@ int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp,
     }
 
     uint perm = 0;  // FIXME: need to have caller specify
-    int ret = page_in(offset, perm, addrp, minaddrp, maxaddrp);
-    if (ret != 0) {
-        if (opt_debug>0) log_msg(DEBUG_MSG, moi, "page-in faulted\n");
-    }
-
-    if (ar) {
-        TPR.TSR = saved_PSR;
-        TPR.TRR = saved_PRR;
-        TPR.CA = saved_CA;
-        TPR.TBR = saved_bitno;
+    int ret = 0;
+    if (addr_mode == APPEND_mode) {
+        ret = page_in(offset, perm, addrp, minaddrp, maxaddrp);
+        if (ret != 0) {
+            if (opt_debug>0) log_msg(DEBUG_MSG, moi, "page-in faulted\n");
+        }
+        if (ar) {
+            TPR.TSR = saved_PSR;
+            TPR.TRR = saved_PRR;
+            TPR.CA = saved_CA;
+            TPR.TBR = saved_bitno;
+        }
     }
 
     return ret;
@@ -445,14 +450,14 @@ int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint
     char *moi = "APU::get-addr";
 
     addr_modes_t addr_mode = get_addr_mode();
-    if (addr_mode != APPEND_mode) {
-        // FIXME: handle BAR mode and abs mode as described in EIS indir doc
-        log_msg(WARN_MSG, moi, "Unexpected usage of non append mode.\n");
-        cancel_run(STOP_WARN);
-    }
 
     int offset;     // might be negative during intermediate calcuations
     if (ar) {
+        if (addr_mode != APPEND_mode) {
+            log_msg(WARN_MSG, moi, "Unexpected usage of non append mode.\n");
+            cancel_run(STOP_BUG);
+            return -1;
+        }
         uint n = y >> 15;
         int32 soffset = sign15(y & MASKBITS(15));
         *segnop = AR_PR[n].PR.snr;
@@ -524,9 +529,11 @@ int get_ptr_address(uint ringno, uint segno, uint offset, uint *addrp, uint *min
 
     addr_modes_t addr_mode = get_addr_mode();
     if (addr_mode != APPEND_mode) {
-        // FIXME: handle BAR mode and abs mode as described in EIS indir doc
-        log_msg(WARN_MSG, moi, "Unexpected usage of non append mode.\n");
-        cancel_run(STOP_WARN);
+        log_msg(WARN_MSG, moi, "Illegal usage of non append mode.\n");
+        log_msg(INFO_MSG, moi, "Args were ring=%d, seg=%d, offset=%#o\n",
+            ringno, segno, offset);
+        cancel_run(STOP_BUG);
+        return -1;
     }
 
     uint saved_PSR = TPR.TSR;
@@ -693,6 +700,8 @@ int addr_mod(const instr_t *ip)
         if (op == opcode0_stba || op == opcode0_stbq)
             return 0;
         if (op == opcode0_lcpr)
+            return 0;
+        if (op == opcode0_scpr)
             return 0;
     }
 
@@ -1562,6 +1571,11 @@ int get_seg_addr(uint offset, uint perm_mode, uint *addrp)
 {
     if (addrp == NULL)
         return -1;
+    addr_modes_t addr_mode = get_addr_mode();
+    if (addr_mode != APPEND_mode && addr_mode != BAR_mode) {
+        log_msg(WARN_MSG, "APU::get_seg_addr", "Not APPEND mode\n");
+        return -1;
+    }
     uint minaddr, maxaddr;  // results unneeded
     int ret = page_in(offset, perm_mode, addrp, &minaddr, &maxaddr);
     if (ret)
@@ -1684,6 +1698,17 @@ static void dump_descriptor_table()
         if (sdw.addr != 0) {
             out_msg("Descriptor entry at %06o for segment %03o:\n",
                 sdw_addr, segno);
+            if (sdw.u) {
+                uint bound = 16 * (sdw.bound + 1);
+                out_msg("Segment %03o is unpaged and ranges from absolute %06o .. %06o\n",
+                    segno, sdw.addr, sdw.addr + sdw.bound - 1);
+            } else {
+                /* TODO: loop through the page table */
+                out_msg("Segment %03o is paged; page table at %06o\n",
+                    segno, sdw.addr);
+            }
+        }
+        if (sdw.addr != 0) {
             get_seg_name(segno);
             out_msg("\n");
         }
