@@ -33,8 +33,6 @@
 #include "sim_tape.h"
 // #include "bits.h"
 
-#define MEM_CHECK_UNINIT 1
-
 //-----------------------------------------------------------------------------
 // *** SIMH specific externs
 
@@ -370,6 +368,7 @@ static void save_PR_registers(void);
 static void restore_PR_registers(void);
 static int write72(FILE* fp, t_uint64 word0, t_uint64 word1);
 static int read72(FILE* fp, t_uint64* word0p, t_uint64* word1p);
+void init_memory_iom();
 
 //=============================================================================
 
@@ -414,6 +413,14 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
 
     // ++ opt_debug; ++ cpu_dev.dctrl;
     if (cpu_dev.dctrl != 0) opt_debug = 1;  // todo: should CPU control all debug settings?
+
+
+    // Initializing memory to reflect the existance of an IOM, not an
+    // IOX.  Using an IOX causes use of the non L68 "ldo" instruction.
+    // The "ldo" instruction was implmented on on the ADP aka ORION aka DPS88.
+    // Also, the IOX has an undocumented mailbox architecture.
+    // init_memory_iox();
+    init_memory_iom();
 
     // Send an interrupt to the IOM -- not to the CPU
     int ret = 0;
@@ -464,7 +471,7 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
 t_stat cpu_reset (DEVICE *dptr)
 {
 
-    log_msg(INFO_MSG, "CPU", "Reset\n");
+    log_msg(INFO_MSG, "CPU::reset", "Running\n");
 
     init_opcodes();
     ic_history_init();
@@ -482,24 +489,23 @@ t_stat cpu_reset (DEVICE *dptr)
 
     set_addr_mode(ABSOLUTE_mode);
 
-    // We'll first generate interrupt #4.  The IOM will have initialized
-    // memory to have a DIS (delay until interrupt set) instruction at the
-    // memory location used to hold the trap words for this interrupt.
-    // Later, after the tape drive has finished transferring the boot record,
-    // we'll receive a terminate interrupt (which has trap words at 030).
-    // Some documents hint that a CPU should perform a startup fault at
-    // reset, but that doesn't match the comments in bootload_tape_label.alm.
-#if 0
-    // Generate a startup fault.
-    cpu.cycle = FETCH_cycle;
-    fault_gen(startup_fault);   // pressing POWER ON button causes this fault
-#endif
-#if 1
-    // cpu.cycle = FETCH_cycle;
-    cpu.cycle = INTERRUPT_cycle;
-    events.int_pending = 1;
-    events.interrupts[4] = 1;
-#endif
+    // We statup with either a fault or an interrupt.  So, a trap pair from the
+    // appropriate location will end up being the first instructions executed.
+    if (sys_opts.startup_interrupt) {
+        // We'll first generate interrupt #4.  The IOM will have initialized
+        // memory to have a DIS (delay until interrupt set) instruction at the
+        // memory location used to hold the trap words for this interrupt.
+        cpu.cycle = INTERRUPT_cycle;
+        events.int_pending = 1;
+        events.interrupts[4] = 1;
+    } else {
+        // Generate a startup fault.
+        // We'll end up in a loop of trouble faults for opcode zero until the IOM
+        // finally overwites the trouble fault vector with a DIS from the tape
+        // label.
+        cpu.cycle = FETCH_cycle;
+        fault_gen(startup_fault);   // pressing POWER ON button causes this fault
+    }
 
     calendar_a = 0xdeadbeef;
     calendar_q = 0xdeadbeef;
@@ -559,6 +565,174 @@ t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
 }
 
 
+//=============================================================================
+
+/*
+ * init_memory_iom()
+ *
+ * Load a few words into memory.   Simulates pressing the BOOTLOAD button
+ * on an IOM or equivalent.
+ *
+ * All values are from bootload_tape_label.alm.  See the comments at the
+ * top of that file.  See also doc #43A239854.
+ *
+ * NOTE: The values used here are for an IOM, not an IOX.
+ * See init_memory_iox() below.
+ *
+ */
+
+void init_memory_iom()
+{
+    // On the physical hardware, settings of various switchs are reflected
+    // into memory.  We provide no support for simulation of of the physical
+    // switches because there is only one useful value for almost all of the
+    // switches.  So, we hard code the memory values that represent usable
+    // switch settings.
+
+    // The presence of a 0 in the top six bits of word 0 denote an IOM boot
+    // from an IOX boot
+
+    // " The channel number ("Chan#") is set by the switches on the IOM to be
+    // " the channel for the tape subsystem holding the bootload tape. The
+    // " drive number for the bootload tape is set by switches on the tape
+    // " MPC itself.
+
+    log_msg(INFO_MSG, "CPU::IOM", "Performing load of eleven words from IOM bootchanel to memory.\n");
+
+    int base = 014;         // 12 bits; IOM base
+    // bootload_io.alm insists that pi_base match
+    // template_slt_$iom_mailbox_absloc
+    int pi_base = 01200;    // 15 bits; interrupt cells
+    int iom = 0;            // 3 bits; only IOM 0 would use vector 030
+
+    t_uint64 cmd = 5;       // 6 bits; 05 for tape, 01 for cards
+    int dev = 0;            // 6 bits: drive number
+
+    // Maybe an is-IMU flag; IMU is later version of IOM
+    t_uint64 imu = 0;       // 1 bit
+
+    /* Description of the bootload channel from 43A239854
+        Legend
+            BB - Bootload channel #
+            C - Cmd (1 or 5)
+            N - IOM #
+            P - Port #
+            XXXX00 - Base Addr -- 01400
+            XXYYYY0 Program Interrupt Base
+    */
+
+    t_uint64 dis0 = 0616200;
+    /* 1*/ Mem[010 + 2 * iom] = (imu << 34) | dis0;         // system fault vector; DIS 0 instruction (imu bit not mentioned by 43A239854)
+    // Zero other 1/2 of y-pair to avoid msgs re reading uninitialized
+    // memory (if we have that turned on)
+    Mem[010 + 2 * iom + 1] = 0;
+
+    /* 2*/ Mem[030 + 2 * iom] = dis0;                       // terminate interrupt vector (overwritten by bootload)
+    int base_addr = base << 6; // 01400
+
+    /* 3*/ Mem[base_addr + 7] = ((t_uint64) base_addr << 18) | 02000002;    // tally word for sys fault status
+                // ??? Fault channel DCW
+
+    // bootload_tape_label.alm says 04000, 43A239854 says 040000.  Since 43A239854 says
+    // "no change", 40000 is correct; 4000 would be a large tally
+    /* 4*/ Mem[base_addr + 010] = 040000;       // Connect channel LPW; points to PCW at 000000
+    int mbx = base_addr + 4 * sys_opts.tape_chan;
+    /* 5*/ Mem[mbx] = 03020003;             // Boot device LPW; points to IDCW at 000003
+    /* 6*/ Mem[4] = 030 << 18;              // Second IDCW: IOTD to loc 30 (startup fault vector)
+
+    // Default SCW points at unused first mailbox.
+    // T&D tape overwrites this before the first status is savec, though.
+    /* 7*/ Mem[mbx + 2] = ((t_uint64)base_addr << 18);      // SCW
+
+    /* 8*/ Mem[0] = 0720201;                    // 1st word of bootload channel PCW
+
+    // "SCU port" # (deduced as meaning "to which bootload IOM is attached")
+    // int port = iom.scu_port; // 3 bits; 
+
+    // Why does bootload_tape_label.am claim that a port number belongs in the low bits
+    // of the 2nd word of the PCW?  The lower 27 bits of the odd word of a PCW should
+    // be all zero.
+    /* 9*/ Mem[1] = ((t_uint64) sys_opts.tape_chan << 27) /*| port*/;       // 2nd word of PCW pair
+
+    // following verified correct; instr 362 will not yield 1572 with a different shift
+    /*10*/ Mem[2] = ((t_uint64) base_addr << 18) | pi_base | iom;   // word after PCW (used by program)
+
+    /*11*/ Mem[3] = (cmd << 30) | (dev << 24) | 0700000;        // IDCW for read binary
+
+}
+
+//=============================================================================
+
+/*
+ * init_memory_iox()
+ *
+ * Not useful; bootload_tape_label.alm will try to execute an undocumented
+ * ldo instruction if an IOX is detected.
+ *
+ */
+
+#if 0
+
+static void init_memory_iox()
+{
+    int iox_offset = 0;     // 12 bits; not sure what this is...
+
+    int tape_chan = 036;                // 12 bits;
+    int port = iom.scu_port;    // 3 bits;  SCU port (to which bootload IOM is attached (deduced))
+
+    iom.channels[tape_chan] = DEV_TAPE;
+    iom.devices[tape_chan] = &tape_dev;
+
+    int base = 014;         // 12 bits; IOM base
+    int pi_base = 01200;    // 15 bits; interrupt cells; bootload_io.alm insists that we match template_slt_$iom_mailbox_absloc
+    int iom = 0;            // 3 bits; only IOM 0 would use vector 030
+
+    t_uint64 cmd = 5;       // 6 bits; 05 for tape, 01 for cards
+    int dev = 0;            // 6 bits: drive number
+
+
+    t_uint64 imu = 0;       // 1 bit; Maybe an is-IMU flag; IMU is later version of IOM
+
+    //  6/Command, 6/Device#, 6/0, 18/700000
+    Mem[0] = (cmd << 30) | (dev << 24) | 0700000;   // Bootload IDCW
+    Mem[1] = 030 << 18;                         // Second IDCW: IOTD to loc 30 (startup fault vector)
+    // 24/7000000,12/IOXoffset
+    Mem[4] = ((t_uint64)07000000 << 12) | iox_offset;       // A register value for connect
+
+    Mem[010] = (1<<18) | 0612000;                   // System fault vector; a HALT instruction
+    Mem[030] = (010<<18) | 0612000;             // Terminate interrupt vector (overwritten by bootload)
+
+    // IOX Mailbox
+    Mem[001400] = 0;        // base addr 0
+    Mem[001401] = 0;        // base addr 1
+    Mem[001402] = 0;        // base addr 2
+    Mem[001403] = 0;        // base addr 3
+    Mem[001404] = ((t_uint64)0777777<<18);  // bound 0, bound 1
+    Mem[001405] = 0;                // bound 2, bound 3
+    Mem[001406] = 03034;            // channel link word
+    Mem[001407] = (0400 << 9) | 0400;   // lpw
+        // but what the heck lpw is Chan 01 -- [dcw=00 ires=1 hrel=0 ae=0 nc=0 trun=0 srel=0 tally=0400] [lbnd=00 size=05(5) idcw=020001]
+
+    // The following were set by bootload..
+    //Mem[001407] = 001402000002;   // Chan 01 -- [dcw=01402 ires=0 hrel=0 ae=0 nc=0 trun=0 srel=0 tally=02]
+    //Mem[001410] = 000000040000;   // [lbnd=00 size=00(0) idcw=040000]
+    //Mem[001402] = 000000000000;
+    //Mem[001403] = 000000000000;
+    //Mem[040000] = 013732054000;
+
+    /* Described in A43A239854_600B_IOM_Spec_Jul75.pdf */
+    // LPW for connect channel
+    // Mem[001410] = 05040000;  // LPW for connect channel; NC=1; DCW=5
+    Mem[001410] = 05020001; // LPW for connect channel; NC=0, tro=1, tally=1, DCW=5
+    // PCW for connect channel -- we'll arbitrarily use words 5 and 6
+    Mem[5] = 0720201;                   // Bootload channel PCW, word 1 (this is an 18 bit value)
+    Mem[6] = ((t_uint64) tape_chan << 27) | port;       // Bootload channel PCW, word 2
+    // LPW for bootload channel (channel #5) -- BUG, we probably need one...
+    // NOTE: Two DCW words for bootload channel are at location zero
+}
+#endif
+
+//=============================================================================
 //=============================================================================
 
 /*
@@ -643,7 +817,9 @@ t_stat sim_instr(void)
     int prev_seg = PPR.PSR;
     int prev_debug = opt_debug;
     // Loop until it's time to bounce back to SIMH
+//log_msg(DEBUG_MSG, "MAIN::CU", "Starting cycle loop; total cycles %lld; sim time is %f, %d events pending, first event at %d\n", sys_stats.total_cycles, sim_gtime(), sim_qcount(), sim_interval);
     while (reason == 0) {
+//log_msg(DEBUG_MSG, "MAIN::CU", "Starting cycle %lld; sim time is %f, %d events pending, first event at %d\n", sys_stats.total_cycles, sim_gtime(), sim_qcount(), sim_interval);
         if (PPR.PSR != prev_seg) {
             check_seg_debug();
             prev_seg = PPR.PSR;
@@ -735,6 +911,7 @@ t_stat sim_instr(void)
 #endif
         }
     }   // while (reason == 0)
+//log_msg(DEBUG_MSG, "MAIN::CU", "Finished cycle loop; total cycles %lld; sim time is %f, %d events pending, first event at %d\n", sys_stats.total_cycles, sim_gtime(), sim_qcount(), sim_interval);
 
     delta += sim_os_msec() - start;
     uint32 ncycles = sys_stats.total_cycles - start_cycles;
@@ -1161,6 +1338,11 @@ static t_stat control_unit(void)
             // moment, we clear it and find the next pending fault.
             // Above was written before we had FR and scpr; perhaps
             // we need to revist the transitions to/from FAULT cycles.
+            // AL-39, section 1 says that faults and interrupts are
+            // cleared when their trap occurs (that is when the CPU decides
+            // to recognize a perhaps delayed signal).
+            // Morever, AN71-1 says that the SCU clears the interrupt cell after
+            // reporting to the CPU the value of the highest priority interrupt.
 
             int next_fault = 0;
             if (group == 7) {
@@ -1221,7 +1403,8 @@ static t_stat control_unit(void)
                 log_msg(WARN_MSG, "CU", "re-faulted, remaining in fault cycle\n");
             } else {
                 // cycle = FAULT_EXEC_cycle;
-                cpu.cycle = EXEC_cycle;     // NOTE: scu will be in EXEC not FAULT cycle
+                //cpu.cycle = EXEC_cycle;       // NOTE: scu will be in EXEC not FAULT cycle
+                cpu.cycle = FAULT_EXEC_cycle;
                 events.xed = 1;     // BUG: is this a hack?
             }
             } // end case FAULT_cycle
@@ -1287,9 +1470,10 @@ static t_stat control_unit(void)
             // So, now, set the CPU into the EXEC cycle so that the
             // instructions referenced by the XED will be executed.
             // cpu.cycle = FAULT_EXEC_cycle;
-            cpu.cycle = EXEC_cycle;
+            // cpu.cycle = EXEC_cycle;
+            cpu.cycle = FAULT_EXEC_cycle;
             events.xed = 1;     // BUG: is this a hack?
-            events.int_pending = 0;     // BUG: make this a counter
+            events.int_pending = 0;     // FIXME: make this a counter
             for (intr = 0; intr < 32; ++intr)
                 if (events.interrupts[intr]) {
                     events.int_pending = 1;
@@ -1711,10 +1895,14 @@ void fault_gen(enum faults f)
     } else {
         // Groups 1-6 are handled more immediately and there can only be
         // one fault pending within each group
-        if (cpu.cycle == FAULT_cycle) {
+        //if (cpu.cycle == FAULT_cycle)
+        if (cpu.cycle == FAULT_cycle || cpu.cycle == FAULT_EXEC_cycle) {
+// FIXME: || events.xed AND/OR || cpu.cycle == FAULT_EXEC_cycle
             f = trouble_fault;
             group = fault2group[f];
             log_msg(WARN_MSG, "CU::fault", "Double fault:  Recording current fault as a trouble fault (fault # %d in group %d).\n", f, group);
+            cpu.cycle = FAULT_cycle;
+            //cancel_run(STOP_DIS); // BUG: not really
         } else {
             if (events.fault[group]) {
                 // todo: error, unhandled fault

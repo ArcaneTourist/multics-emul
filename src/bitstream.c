@@ -147,8 +147,8 @@ int bitstm_get(bitstream_t *bp, size_t len, t_uint64 *word)
     for (i = 0; i < len / 8; ++ i) {
         //printf("b-debug: consuming next byte %03o\n", *bp->p);
         if (bp->p == bp->head + bp->len) {
-            fflush(stdout); fflush(stderr);
-            fprintf(stderr, "bits.c: bit stream exhausted\n");  // FIXME: remove text msg
+            //fflush(stdout); fflush(stderr);
+            // fprintf(stderr, "bits.c: bit stream exhausted\n");   // FIXME: remove text msg
             return 1;
         }
         // left shift in next byte
@@ -161,8 +161,8 @@ int bitstm_get(bitstream_t *bp, size_t len, t_uint64 *word)
     if (extra != 0) {
         //printf("b-debug: consuming %d bits of next byte %03o\n", *bp->p);
         if (bp->p == bp->head + bp->len) {
-            fflush(stdout); fflush(stderr);
-            fprintf(stderr, "bits.c: bit stream exhausted\n");  // FIXME: remove text msg
+            //fflush(stdout); fflush(stderr);
+            //fprintf(stderr, "bits.c: bit stream exhausted\n");    // FIXME: remove text msg
             return 1;
         }
         bp->byte = *bp->p;

@@ -890,3 +890,5 @@ History of pre-release versions
     Provide the fault register, mode register, and cache mode register.
     Properly handle EIS descriptors in absolute addressing mode.
 
+=== Pre-Version 122, ???
+    Cleanup some code duplication in misc.c.

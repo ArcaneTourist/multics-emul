@@ -95,10 +95,6 @@ void (*sim_vm_init)(void) = hw6180_init;
 int bootimage_loaded = 0;
 sysinfo_t sys_opts;
 
-//-----------------------------------------------------------------------------
-
-static void init_memory_iom(void);
-
 //=============================================================================
 
 /*
@@ -147,11 +143,25 @@ static void hw6180_init(void)
     // result, except that the caller queues an immediate run via
     // sim_activate() and then returns.  The zero wait event(s) will
     // be noticed and handled prior to the next instruction execution.
-    sys_opts.iom_times.connect = 0; // 3    // 10 seconds is too long...
+    sys_opts.iom_times.connect = 3; // 0
     sys_opts.iom_times.chan_activate = -1;  // unimplemented
-    sys_opts.mt_times.read = -1;    // 100; // 1000;
+    sys_opts.mt_times.read = 3; // -1; 100; 1000;
     sys_opts.mt_times.xfer = -1;            // unimplemented
     sys_opts.warn_uninit = 1;
+    sys_opts.startup_interrupt = 1;
+
+
+    // Which controller channel is used for the tape drive would seem to be
+    // arbitrary.  However, the T&D tape actually executes an IMW word.
+    // Perhaps this is due to a bug elsewhere.  If not, our previous
+    // channel choice of 036 caused the instruction word to have an illegal
+    // tag.  The IMW at 00214 is 006715/075000 (lda 06715).  GB61 has an
+    // example of using channel 14; we'll use that which just happens to
+    // leave the 006715 value unchanged
+    //
+    // Channels range from 1 to 037; the first several channels are
+    // reserved.
+    sys_opts.tape_chan = 14;        // 12 bits or 6 bits; controller channel
 
     // Hardware config -- todo - should be based on config cards!
     // BUG/TODO: need to write config deck at 012000 ? Probably not
@@ -207,16 +217,6 @@ static void hw6180_init(void)
     memset(Mem, 0, MAXMEMSIZE*sizeof(Mem[0]));
 #endif
 
-    // TODO: init_memory_iom() should probably be called by boot()
-
-    // Initializing memory to reflect the existance of an IOM, not an
-    // IOX.  Using an IOX causes use of the non L68 "ldo" instruction.
-    // The "ldo" instruction was implmented on on the ADP aka ORION aka DPS88.
-    // Also, the IOX has an undocumented mailbox architecture.
-
-    //init_memory_iox();
-    init_memory_iom();
-
     // CPU port 'd' (1) connected to port '0' of SCU
     // scas_init's call to make_card seems to require that the CPU be connected
     // to SCU port zero.
@@ -262,188 +262,14 @@ static void hw6180_init(void)
     iom.channels[disk_chan].type = DEV_DISK;
     iom.channels[disk_chan].dev = &disk_dev;
 
-    log_msg(DEBUG_MSG, "SYS::init", "Once-only initialization complete.\n");
-    log_msg(DEBUG_MSG, "SYS::init", "Activity queue has %d entries.\n", sim_qcount());
+    /* Tape */
+    iom.channels[sys_opts.tape_chan].type = DEV_TAPE;
+    iom.channels[sys_opts.tape_chan].dev = &tape_dev;
+
+    log_msg(INFO_MSG, "SYS::init", "Once-only initialization complete.\n");
+    log_msg(INFO_MSG, "SYS::init", "Activity queue has %d entries.\n", sim_qcount());
 }
 
-
-//=============================================================================
-
-/*
- * init_memory_iom()
- *
- * Load a few words into memory.   Simulates pressing the BOOTLOAD button
- * on an IOM or equivalent.
- *
- * All values are from bootload_tape_label.alm.  See the comments at the
- * top of that file.  See also doc #43A239854.
- *
- * NOTE: The values used here are for an IOM, not an IOX.
- * See init_memory_iox() below.
- *
- */
-
-static void init_memory_iom()
-{
-    // On the physical hardware, settings of various switchs are reflected
-    // into memory.  We provide no support for simulation of of the physical
-    // switches because there is only one useful value for almost all of the
-    // switches.  So, we hard code the memory values that represent usable
-    // switch settings.
-
-    // The presence of a 0 in the top six bits of word 0 denote an IOM boot
-    // from an IOX boot
-
-    // " The channel number ("Chan#") is set by the switches on the IOM to be
-    // " the channel for the tape subsystem holding the bootload tape. The
-    // " drive number for the bootload tape is set by switches on the tape
-    // " MPC itself.
-
-    // Which controller channel is used for the tape drive would seem to be
-    // arbitrary.  However, the T&D tape actually executes an IMW word.
-    // Perhaps this is due to a bug elsewhere.  If not, our previous
-    // channel choice of 036 caused the instruction word to have an illegal
-    // tag.  The IMW at 00214 is 006715/075000 (lda 06715).  GB61 has an
-    // example of using channel 14; we'll use that which just happens to
-    // leave the 006715 value unchanged
-    //
-    // Channels range from 1 to 037; the first several channels are
-    // reserved.
-    int tape_chan = 14;     // 12 bits or 6 bits; controller channel
-    // "SCU port" # (deduced as meaning "to which bootload IOM is attached")
-    int port = iom.scu_port;    // 3 bits; 
-
-    iom.channels[tape_chan].type = DEV_TAPE;
-    iom.channels[tape_chan].dev = &tape_dev;
-
-    int base = 014;         // 12 bits; IOM base
-    // bootload_io.alm insists that pi_base match
-    // template_slt_$iom_mailbox_absloc
-    int pi_base = 01200;    // 15 bits; interrupt cells
-    int iom = 0;            // 3 bits; only IOM 0 would use vector 030
-
-    t_uint64 cmd = 5;       // 6 bits; 05 for tape, 01 for cards
-    int dev = 0;            // 6 bits: drive number
-
-    // Maybe an is-IMU flag; IMU is later version of IOM
-    t_uint64 imu = 0;       // 1 bit
-
-    /* Description of the bootload channel from 43A239854
-        Legend
-            BB - Bootload channel #
-            C - Cmd (1 or 5)
-            N - IOM #
-            P - Port #
-            XXXX00 - Base Addr -- 01400
-            XXYYYY0 Program Interrupt Base
-    */
-
-    t_uint64 dis0 = 0616200;
-    /* 1*/ Mem[010 + 2 * iom] = (imu << 34) | dis0;         // system fault vector; DIS 0 instruction (imu bit not mentioned by 43A239854)
-    // Zero other 1/2 of y-pair to avoid msgs re reading uninitialized
-    // memory (if we have that turned on)
-    Mem[010 + 2 * iom + 1] = 0;
-
-    /* 2*/ Mem[030 + 2 * iom] = dis0;                       // terminate interrupt vector (overwritten by bootload)
-    int base_addr = base << 6; // 01400
-
-    /* 3*/ Mem[base_addr + 7] = ((t_uint64) base_addr << 18) | 02000002;    // tally word for sys fault status
-                // ??? Fault channel DCW
-
-    // bootload_tape_label.alm says 04000, 43A239854 says 040000.  Since 43A239854 says
-    // "no change", 40000 is correct; 4000 would be a large tally
-    /* 4*/ Mem[base_addr + 010] = 040000;       // Connect channel LPW; points to PCW at 000000
-    int mbx = base_addr + 4 * tape_chan;
-    /* 5*/ Mem[mbx] = 03020003;             // Boot device LPW; points to IDCW at 000003
-    /* 6*/ Mem[4] = 030 << 18;              // Second IDCW: IOTD to loc 30 (startup fault vector)
-
-    // Default SCW points at unused first mailbox.
-    // T&D tape overwrites this before the first status is savec, though.
-    /* 7*/ Mem[mbx + 2] = ((t_uint64)base_addr << 18);      // SCW
-
-    /* 8*/ Mem[0] = 0720201;                    // 1st word of bootload channel PCW
-
-    // Why are we putting a port # in the 2nd word of the PCW?  The lower 27
-    // bits of the odd word of a PCW should be all zero.
-    /* 9*/ Mem[1] = ((t_uint64) tape_chan << 27) | port;        // 2nd word of PCW pair
-
-    // following verified correct; instr 362 will not yield 1572 with a different shift
-    /*10*/ Mem[2] = ((t_uint64) base_addr << 18) | pi_base | iom;   // word after PCW (used by program)
-
-    /*11*/ Mem[3] = (cmd << 30) | (dev << 24) | 0700000;        // IDCW for read binary
-
-}
-
-//=============================================================================
-
-/*
- * init_memory_iox()
- *
- * Not useful; bootload_tape_label.alm will try to execute an undocumented
- * ldo instruction if an IOX is detected.
- *
- */
-
-#if 0
-
-static void init_memory_iox()
-{
-    int iox_offset = 0;     // 12 bits; not sure what this is...
-
-    int tape_chan = 036;                // 12 bits;
-    int port = iom.scu_port;    // 3 bits;  SCU port (to which bootload IOM is attached (deduced))
-
-    iom.channels[tape_chan] = DEV_TAPE;
-    iom.devices[tape_chan] = &tape_dev;
-
-    int base = 014;         // 12 bits; IOM base
-    int pi_base = 01200;    // 15 bits; interrupt cells; bootload_io.alm insists that we match template_slt_$iom_mailbox_absloc
-    int iom = 0;            // 3 bits; only IOM 0 would use vector 030
-
-    t_uint64 cmd = 5;       // 6 bits; 05 for tape, 01 for cards
-    int dev = 0;            // 6 bits: drive number
-
-
-    t_uint64 imu = 0;       // 1 bit; Maybe an is-IMU flag; IMU is later version of IOM
-
-    //  6/Command, 6/Device#, 6/0, 18/700000
-    Mem[0] = (cmd << 30) | (dev << 24) | 0700000;   // Bootload IDCW
-    Mem[1] = 030 << 18;                         // Second IDCW: IOTD to loc 30 (startup fault vector)
-    // 24/7000000,12/IOXoffset
-    Mem[4] = ((t_uint64)07000000 << 12) | iox_offset;       // A register value for connect
-
-    Mem[010] = (1<<18) | 0612000;                   // System fault vector; a HALT instruction
-    Mem[030] = (010<<18) | 0612000;             // Terminate interrupt vector (overwritten by bootload)
-
-    // IOX Mailbox
-    Mem[001400] = 0;        // base addr 0
-    Mem[001401] = 0;        // base addr 1
-    Mem[001402] = 0;        // base addr 2
-    Mem[001403] = 0;        // base addr 3
-    Mem[001404] = ((t_uint64)0777777<<18);  // bound 0, bound 1
-    Mem[001405] = 0;                // bound 2, bound 3
-    Mem[001406] = 03034;            // channel link word
-    Mem[001407] = (0400 << 9) | 0400;   // lpw
-        // but what the heck lpw is Chan 01 -- [dcw=00 ires=1 hrel=0 ae=0 nc=0 trun=0 srel=0 tally=0400] [lbnd=00 size=05(5) idcw=020001]
-
-    // The following were set by bootload..
-    //Mem[001407] = 001402000002;   // Chan 01 -- [dcw=01402 ires=0 hrel=0 ae=0 nc=0 trun=0 srel=0 tally=02]
-    //Mem[001410] = 000000040000;   // [lbnd=00 size=00(0) idcw=040000]
-    //Mem[001402] = 000000000000;
-    //Mem[001403] = 000000000000;
-    //Mem[040000] = 013732054000;
-
-    /* Described in A43A239854_600B_IOM_Spec_Jul75.pdf */
-    // LPW for connect channel
-    // Mem[001410] = 05040000;  // LPW for connect channel; NC=1; DCW=5
-    Mem[001410] = 05020001; // LPW for connect channel; NC=0, tro=1, tally=1, DCW=5
-    // PCW for connect channel -- we'll arbitrarily use words 5 and 6
-    Mem[5] = 0720201;                   // Bootload channel PCW, word 1 (this is an 18 bit value)
-    Mem[6] = ((t_uint64) tape_chan << 27) | port;       // Bootload channel PCW, word 2
-    // LPW for bootload channel (channel #5) -- BUG, we probably need one...
-    // NOTE: Two DCW words for bootload channel are at location zero
-}
-#endif
 
 //=============================================================================
 

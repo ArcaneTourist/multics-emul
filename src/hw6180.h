@@ -606,7 +606,17 @@ typedef struct {
         int read;
         int xfer;
     } mt_times;
-    int warn_uninit;    // Warn when reading uninitialized memory
+    flag_t warn_uninit; // Warn when reading uninitialized memory
+    flag_t startup_interrupt;
+        // The CPU is supposed to start with a startup fault.  This will cause
+        // a series of trouble faults until the IOM finally writes a DIS from
+        // the tape label onto the troube fault vector location.  In order to
+        // reduce debugging clutter, the emulator allows starting the CPU off
+        // with an interrupt that we know has a  DIS instruction trap.  This
+        // interrupt is hinted at in AN70.  This will cause the CPU to wait for
+        // the next interrupt (from the IOM after it loads the first tape record
+        // and sends a terminate interrupt.
+    int tape_chan;  // Which channel of the IOM is the tape drive attached to?
 } sysinfo_t;
 
 // Statistics

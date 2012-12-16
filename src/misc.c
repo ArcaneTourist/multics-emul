@@ -15,6 +15,7 @@ extern FILE *sim_deb, *sim_log;
 static void msg(enum log_level level, const char *who, const char* format, va_list ap);
 static int _scan_seg(uint segno, int msgs);
 static int scan_seg_defs(uint segno, AR_PR_t *defsp, int name_only, int msgs);
+static int get_linkage(int msgs, uint segno, AR_PR_t *linkagep, uint *first_linkp, uint *last_linkp, AR_PR_t *defsp);
 uint ignore_IC = 0;
 uint last_IC;
 uint last_IC_seg;
@@ -266,6 +267,70 @@ int scan_seg(uint segno, int msgs)
 }
 
 
+static int get_linkage(int msgs, uint segno, AR_PR_t *linkagep, uint *first_linkp, uint *last_linkp, AR_PR_t *defsp)
+{
+    // Dump the linkage info for an in-memory segment.
+
+    t_uint64 word0, word1;
+
+    /* Read LOT */
+
+    TPR.TSR = 015;
+
+    if (fetch_word(segno, &word0) != 0) {
+        if (msgs)
+            out_msg("xseginfo: Error reading LOT entry 15|%o\n", segno);
+        return 1;
+    }
+    if (word0 == 0) {
+        if (msgs)
+            out_msg("LOT entry for seg %#o is empty.\n", segno);
+        return -1;
+    }
+    word2pr(word0, linkagep);
+    if (msgs)
+        out_msg("LOT entry for seg %#o is %o|%#o linkage pointer.\n", segno, linkagep->PR.snr, linkagep->wordno);
+
+    /* Read definitions pointer from linkage section */
+
+    TPR.TSR = linkagep->PR.snr;
+    memset(defsp, 0, sizeof(defsp));
+    if (fetch_pair(linkagep->wordno, &word0, &word1) != 0)
+        return 2;
+    if (word0 == 0 && word1 == 0) {
+        if (msgs)
+            out_msg("Seg %#o has a linkage section at %o|%o with no ITS pointer to definitions.\n", segno, linkagep->PR.snr, linkagep->wordno);
+        return 1;
+    }
+    words2its(word0, word1, defsp);
+    if (defsp->PR.snr == 0 && defsp->wordno == 0) {
+        if (msgs)
+            out_msg("Seg %#o has a linkage section at %o|%o with no ITS pointer to definitions.\n", segno, linkagep->PR.snr, linkagep->wordno);
+        return 1;
+    }
+    if (msgs)
+        out_msg("Linkage section has ITS to defs at %o|%o\n", defsp->PR.snr, defsp->wordno);
+
+#if 1
+    /* Read link pair info from Linkage section */
+
+    if (fetch_word(linkagep->wordno + 6, &word1) != 0)
+        return 2;
+    *first_linkp = word1 >> 18;
+    *last_linkp = word1 & MASK18;
+    if (msgs) {
+        if (word1 == 0)
+            out_msg("Linkage section has no references to other segments.\n");
+        else {
+            out_msg("Linkage section has %d references to other segments at entry #s %#o .. %#o.\n", (*last_linkp - *first_linkp) / 2 + 1, *first_linkp, *last_linkp);
+        }
+    }
+#endif
+
+    return 0;
+}
+
+
 static int _scan_seg(uint segno, int msgs)
 {
 
@@ -315,60 +380,23 @@ static int _scan_seg(uint segno, int msgs)
             }
         }
     }
-
-    /* Read LOT */
-
-    TPR.TSR = 015;
-
-    if (fetch_word(segno, &word0) != 0) {
-        if (msgs)
-            out_msg("xseginfo: Error reading LOT entry 15|%o\n", segno);
-        return 1;
-    }
-    if (word0 == 0) {
-        if (msgs)
-            out_msg("LOT entry for seg %#o is empty.\n", segno);
-        return 0;
-    }
+    
+    /* Read LOT, definitions pointer from linkage section, link pair info */
     AR_PR_t linkage;
-    word2pr(word0, &linkage);
-    if (msgs)
-        out_msg("LOT entry for seg %#o is %o|%#o linkage pointer.\n", segno, linkage.PR.snr, linkage.wordno);
-
-    /* Read definitions pointer from linkage section */
-
-    TPR.TSR = linkage.PR.snr;
-    AR_PR_t defs = { 0, { 0, 0, 0 }, { 0, 0} };
-    if (fetch_pair(linkage.wordno, &word0, &word1) != 0)
-        return 2;
-    if (word0 == 0 && word1 == 0) {
-        if (msgs)
-            out_msg("Seg %#o has a linkage section at %o|%o with no ITS pointer to definitions.\n", segno, linkage.PR.snr, linkage.wordno);
-        return 1;
-    }
-    words2its(word0, word1, &defs);
-    if (msgs)
-        out_msg("Linkage section has ITS to defs at %o|%o\n", defs.PR.snr, defs.wordno);
-
-    /* Read link pair info from Linkage section */
-
-    if (fetch_word(linkage.wordno + 6, &word1) != 0)
-        return 2;
-    uint first_link = word1 >> 18;
-    uint last_link = word1 & MASK18;
-    if (msgs) {
-        if (word1 == 0)
-            out_msg("Linkage section has no references to other segments.\n");
-        else {
-            out_msg("Linkage section has %d references to other segments at entry #s %#o .. %#o.\n", (last_link - first_link) / 2 + 1, first_link, last_link);
-        }
-    }
+    uint first_link;
+    uint last_link;
+    AR_PR_t defs;
+    int ret = get_linkage(msgs, segno, &linkage, &first_link, &last_link, &defs);
+    if (ret == -1)
+        return 0;
+    if (ret != 0)
+        return ret;
 
     TPR.TSR = defs.PR.snr;
 
     /* Definitions */
 
-    int ret = scan_seg_defs(segno, &defs, 0, msgs);
+    ret = scan_seg_defs(segno, &defs, 0, msgs);
     if (ret != 0)
         return ret;
 
@@ -475,73 +503,26 @@ int get_seg_name(uint segno)
 
 static int _get_seg_name(uint segno)
 {
-
-    // Hack: copied from _scan_seg()
-
-    t_uint64 word0, word1;
     int msgs = 1;
 
-
-    /* Read LOT */
-
-    TPR.TSR = 015;
-
-    if (fetch_word(segno, &word0) != 0) {
-        if (msgs)
-            out_msg("xseginfo: Error reading LOT entry 15|%o\n", segno);
-        return 1;
-    }
-    if (word0 == 0) {
-        if (msgs)
-            out_msg("LOT entry for seg %#o is empty.\n", segno);
-        return 0;
-    }
+    /* Read LOT, definitions pointer from linkage section, link pair info */
     AR_PR_t linkage;
-    word2pr(word0, &linkage);
-    if (msgs)
-        out_msg("LOT entry for seg %#o is %o|%#o linkage pointer.\n", segno, linkage.PR.snr, linkage.wordno);
-
-    /* Read definitions pointer from linkage section */
-
-    TPR.TSR = linkage.PR.snr;
-    AR_PR_t defs = { 0, { 0, 0, 0 }, { 0, 0} };
-    if (fetch_pair(linkage.wordno, &word0, &word1) != 0)
-        return 2;
-    if (word0 == 0 && word1 == 0) {
-        if (msgs)
-            out_msg("Seg %#o has a linkage section at %o|%o with no ITS pointer to definitions.\n", segno, linkage.PR.snr, linkage.wordno);
-        return 1;
-    }
-    words2its(word0, word1, &defs);
-    if (defs.PR.snr == 0 && defs.wordno == 0) {
-        if (msgs)
-            out_msg("Seg %#o has a linkage section at %o|%o with no ITS pointer to definitions.\n", segno, linkage.PR.snr, linkage.wordno);
-        return 1;
-    }
-    if (msgs)
-        out_msg("Linkage section has ITS to defs at %o|%o\n", defs.PR.snr, defs.wordno);
-
-#if 1
-    /* Read link pair info from Linkage section */
-
-    if (fetch_word(linkage.wordno + 6, &word1) != 0)
-        return 2;
-    uint first_link = word1 >> 18;
-    uint last_link = word1 & MASK18;
-    if (msgs) {
-        if (word1 == 0)
-            out_msg("Linkage section has no references to other segments.\n");
-        else {
-            out_msg("Linkage section has %d references to other segments at entry #s %#o .. %#o.\n", (last_link - first_link) / 2 + 1, first_link, last_link);
-        }
-    }
-#endif
+    uint first_link;
+    uint last_link;
+    AR_PR_t defs;
+    int ret = get_linkage(msgs, segno, &linkage, &first_link, &last_link, &defs);
+    if (ret == -1)
+        return 0;
+    if (ret != 0)
+        return ret;
 
     TPR.TSR = defs.PR.snr;
 
     /* Definitions */
 
-    int ret = scan_seg_defs(segno, &defs, 1, 0);
+    // much gunk; "xseginfo" also provides defs
+    //ret = scan_seg_defs(segno, &defs, 1, 0);
+
     return ret;
 }
 
@@ -1005,7 +986,7 @@ int cmd_symtab_parse(int32 arg, char *buf)
         } else if (sscanf(buf, "find %i|%i %c", &seg, &first, &dummy) == 2) {
             seginfo_show_all(seg,first);
         } else
-            fprintf(stderr, "procs: cannot parse '%s'\n", buf);
+            fprintf(stderr, "xsymtab: cannot parse '%s'\n", buf);
     }
     return 0;
 }

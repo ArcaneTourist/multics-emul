@@ -1698,14 +1698,25 @@ static void dump_descriptor_table()
         if (sdw.addr != 0) {
             out_msg("Descriptor entry at %06o for segment %03o:\n",
                 sdw_addr, segno);
+            out_msg("SDW: %s\n", sdw2text(&sdw));
             if (sdw.u) {
                 uint bound = 16 * (sdw.bound + 1);
                 out_msg("Segment %03o is unpaged and ranges from absolute %06o .. %06o\n",
                     segno, sdw.addr, sdw.addr + sdw.bound - 1);
             } else {
                 /* TODO: loop through the page table */
-                out_msg("Segment %03o is paged; page table at %06o\n",
-                    segno, sdw.addr);
+                uint bound = 16 * (sdw.bound + 1);
+                out_msg("Segment %03o is paged; %u words, page table at %06o\n",
+                    segno, bound, sdw.addr);
+                for (uint pageno = 0; pageno < bound / page_size; ++ pageno) {
+                    t_uint64 word;
+                    if (fetch_abs_word(sdw.addr + pageno, &word) != 0)
+                        break;
+                    PTW_t ptw;
+                    decode_PTW(word, &ptw);
+                    uint lo = (ptw.addr << 6);
+                    out_msg("   page %d: %06o .. %06o\n", pageno, lo, lo + page_size - 1);
+                }
             }
         }
         if (sdw.addr != 0) {
