@@ -197,8 +197,21 @@ UNIT cpu_unit = {
     UDATA (NULL, UNIT_FIX|UNIT_BINK|UNIT_IDLE, MAXMEMSIZE)
 };
 
+extern int iom_show_mbx(FILE *st, UNIT *uptr, int val, void *desc);
 static MTAB cpu_mod[] = {
-    // for SIMH "show" and "set" commands; Todo: fill in MTAB
+    // for SIMH "show" and "set" commands
+    { MTAB_XTD | MTAB_VDV | MTAB_NMO | MTAB_SHP | MTAB_NC,
+      0, "HISTORY", "HISTORY",
+      cpu_set_history, cpu_show_history, NULL },
+    { MTAB_XTD | MTAB_VDV | MTAB_NMO | MTAB_NC,
+      0, "STACK", NULL,
+      NULL, cpu_show_stack, NULL },
+    { MTAB_XTD | MTAB_VDV | MTAB_NMO | MTAB_NC,
+      0, "VM", NULL,
+      NULL, apu_show_vm, NULL },
+    { MTAB_XTD | MTAB_VDV | MTAB_NMO | MTAB_SHP | MTAB_NC,
+      0, "SEG", NULL,
+      NULL, apu_show_seg, NULL },
     { 0 }
 };
 
@@ -287,9 +300,15 @@ DEVICE opcon_dev = {
 extern t_stat iom_svc(UNIT* up);
 extern t_stat iom_reset(DEVICE *dptr);
 UNIT iom_unit = { UDATA(&iom_svc, 0, 0) };
+MTAB iom_mod[] = {
+    { MTAB_XTD | MTAB_VDV | MTAB_NMO | MTAB_NC,
+      0, "MBX", NULL,
+      NULL, iom_show_mbx, NULL },
+    { 0 }
+};
 DEVICE iom_dev = {
-    "IOM", &iom_unit, NULL, NULL, 1,
-    10, 8, 1, 8, 8,
+    "IOM", &iom_unit, NULL, iom_mod,
+    1, 10, 8, 1, 8, 8,
     NULL, NULL, &iom_reset,
     NULL, NULL, NULL,
     NULL, DEV_DEBUG
@@ -497,7 +516,7 @@ t_stat cpu_reset (DEVICE *dptr)
         // memory location used to hold the trap words for this interrupt.
         cpu.cycle = INTERRUPT_cycle;
         events.int_pending = 1;
-        events.interrupts[4] = 1;
+        events.interrupts[4] = 1;   // system fault, IOM zero, channels 0-31 -- MDD-005
     } else {
         // Generate a startup fault.
         // We'll end up in a loop of trouble faults for opcode zero until the IOM

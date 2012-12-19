@@ -153,7 +153,13 @@ int mt_iom_cmd(chan_devinfo* devinfop)
                 }
             t_mtrlnt tbc = 0;
             int ret;
-            if ((ret = sim_tape_rdrecf(unitp, tape_statep->bufp, &tbc, bufsz)) != 0) {
+#if 0
+            if (! (unitp->flags & UNIT_ATT))
+                ret = MTSE_UNATT;
+            else
+#endif
+                ret = sim_tape_rdrecf(unitp, tape_statep->bufp, &tbc, bufsz);
+            if (ret != 0) {
                 if (ret == MTSE_TMK || ret == MTSE_EOM) {
                     log_msg(NOTIFY_MSG, "MT::iom_cmd", "EOF: %s\n", simh_tape_msg(ret));
                     devinfop->have_status = 1;
@@ -278,7 +284,7 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
         if (bitstm_get(tape_statep->bitsp, 36, wordp) != 0) {
             // BUG: There isn't another word to be read from the tape buffer,
             // but the IOM wants  another word.
-            // BUG: How did this tape hardare handle an attempt to read more
+            // BUG: How did this tape hardware handle an attempt to read more
             // data than was present?
             // One answer is in bootload_tape_label.alm which seems to assume
             // a 4000 all-clear status.

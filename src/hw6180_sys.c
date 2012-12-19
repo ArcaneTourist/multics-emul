@@ -70,15 +70,18 @@ const char *sim_stop_messages[] = {
 
 extern CTAB *sim_vm_cmd;
 static struct sim_ctab sim_cmds[] =  {
-    { "XDEBUG",   cmd_xdebug, 0,       "xdebug seg <#> {on|default_off}  finer grained debugging\n" },
+    { "XDEBUG",   cmd_xdebug, 0,       "xdebug seg <#> {on|default|off}  finer grained debugging\n" },
     { "XFIND",    cmd_find, 0,         "xfind <string> <range>           search memory for string\n" },
-    { "XHISTORY", cmd_dump_history, 0, "xhistory                         display recent instruction counter values\n" },
     { "XLIST",    cmd_load_listing, 0, "xlist <addr> <source>            load pl1 listing\n" },
-    { "XSEGINFO", cmd_seginfo, 0,      "xseginfo <seg>                   walk segment linkage table\n" },
-    { "XSTACK",   cmd_stack_trace, 0,  "xstack                           dump Multics procedure call stack\n" },
-    { "XSTATS",   cmd_stats, 0,  "xstats                           display statistics\n" },
     { "XSYMTAB",  cmd_symtab_parse, 0, "xsymtab [...]                    define symtab entries\n" },
+    { "XSTATS",   cmd_stats, 0,        "xstats                           display statistics\n" },
+#if 0
+    // replaced by "show" modifiers
+    { "XHISTORY", cmd_dump_history, 0, "xhistory                         display recent instruction counter values\n" },
+    { "XSTACK",   cmd_stack_trace, 0,  "xstack                           dump Multics procedure call stack\n" },
+    { "XSEGINFO", cmd_seginfo, 0,      "xseginfo <seg>                   walk segment linkage table\n" },
     { "XVMDUMP",  cmd_dump_vm, 0,      "xvmdump                          dump virtual memory caches\n" },
+#endif
     { 0, 0, 0, 0}
 };
 
@@ -316,7 +319,7 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
             const char* line;
             int lineno;
             seginfo_find_line(segno, offset, &line, &lineno);
-            if (line == NULL && prior_lineno != lineno && prior_line != line) {
+            if (line != NULL && prior_lineno != lineno && prior_line != line) {
                 fprintf(ofile, "\r\n");
                 fprint_addr(ofile, NULL, simh_addr);    // UNIT doesn't include a reference to a DEVICE
                 fprintf(ofile, ":\t");
@@ -332,7 +335,7 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
         t_addr alow = abs_addr;
         t_addr ahi = abs_addr;
         fprintf(ofile, "%012llo", Mem[abs_addr]);
-        if (sw & SWMASK('S')) {
+        if (sw & SWMASK('S') || (sw & SWMASK('X'))) {
             // SDWs are two words
             ++ ahi;
             fprintf(ofile, " %012llo", Mem[ahi]);
@@ -361,12 +364,12 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
         } else if (sw & SWMASK('L')) {
             // L -> LPW
             fprintf(ofile, " %s", print_lpw(abs_addr));
-        } else if (sw & SWMASK('P')) {
-            // P -> PTW
+        } else if (sw & SWMASK('P') || (sw & SWMASK('Y'))) {
+            // P/Y -> PTW
             char *s = print_ptw(Mem[abs_addr]);
             fprintf(ofile, " %s", s);
-        } else if (sw & SWMASK('S')) {
-            // S -> SDW
+        } else if (sw & SWMASK('S') || (sw & SWMASK('X'))) {
+            // S/X -> SDW
             char *s = print_sdw(Mem[abs_addr], Mem[abs_addr+1]);
             fprintf(ofile, " %s", s);
         } else if (sw & SWMASK('A')) {

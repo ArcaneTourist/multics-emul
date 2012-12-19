@@ -217,10 +217,17 @@ void ic2text(char *icbuf, addr_modes_t addr_mode, uint seg, uint ic)
 
 //=============================================================================
 
-#define ic_hist_max 60
+/*
+    ic_hist - Circular queue of instruction history
+    Used for display via cpu_show_history()
+*/
+
+// FIXME: Now that this is C++, we could switch to a STL container
+
+static int ic_hist_max = 0;
 static int ic_hist_ptr;
 static int ic_hist_wrapped;
-static struct ic_hist_t {
+struct ic_hist_t {
     addr_modes_t addr_mode;
     uint seg;
     uint ic;
@@ -230,17 +237,23 @@ static struct ic_hist_t {
         int fault;
         instr_t instr;
     } detail;
-} ic_hist[ic_hist_max];
+};
+static ic_hist_t *ic_hist;
 
 void ic_history_init()
 {
     ic_hist_wrapped = 0;
     ic_hist_ptr = 0;
+    if (ic_hist != NULL) 
+        free(ic_hist);
+    if (ic_hist_max < 30)
+        ic_hist_max = 30;
+    ic_hist = (ic_hist_t*) malloc(sizeof(*ic_hist) * ic_hist_max);
 }
 
 //=============================================================================
 
-ic_hist_t& ic_history_append()
+static ic_hist_t& ic_history_append()
 {
 
     ic_hist_t& ret =  ic_hist[ic_hist_ptr];
@@ -259,6 +272,8 @@ ic_hist_t& ic_history_append()
 
 void ic_history_add()
 {
+    if (ic_hist_max == 0)
+        return;
     ic_hist_t& hist = ic_history_append();
     hist.htype = ic_hist_t::instruction;
     hist.addr_mode = get_addr_mode();
@@ -271,6 +286,8 @@ void ic_history_add()
 
 void ic_history_add_fault(int fault)
 {
+    if (ic_hist_max == 0)
+        return;
     ic_hist_t& hist = ic_history_append();
     hist.htype = ic_hist_t::fault;
     hist.detail.fault = fault;
@@ -280,6 +297,8 @@ void ic_history_add_fault(int fault)
 
 void ic_history_add_intr(int intr)
 {
+    if (ic_hist_max == 0)
+        return;
     ic_hist_t& hist = ic_history_append();
     hist.htype = ic_hist_t::intr;
     hist.detail.intr = intr;
@@ -287,11 +306,17 @@ void ic_history_add_intr(int intr)
 
 //=============================================================================
 
-int cmd_dump_history(int32 arg, char *buf)
+int cmd_dump_history(int32 arg, char *buf, int nshow)
     // Dumps the queue of instruction history
 {
+    if (ic_hist_max == 0) {
+        out_msg("History is disabled.\n");
+        return SCPE_NOFNC;
+    }
     // The queue is implemented via an array and is circular,
-    // so we make two passes through the array.
+    // so we make up to two passes through the array.
+    int n = (ic_hist_wrapped) ? ic_hist_max : ic_hist_ptr;
+    int n_ignore = (nshow < n) ? n - nshow : 0;
     for (int wrapped = ic_hist_wrapped; wrapped >= 0; --wrapped) {
         int start, end;
         if (wrapped) {
@@ -302,6 +327,8 @@ int cmd_dump_history(int32 arg, char *buf)
             end = ic_hist_ptr;
         }
         for (int i = start; i < end; ++i) {
+            if (n_ignore-- > 0)
+                continue;
             switch(ic_hist[i].htype) {
                 case ic_hist_t::instruction: {
                     int segno = (ic_hist[i].addr_mode == APPEND_mode) ? (int) ic_hist[i].seg: -1;
@@ -320,6 +347,119 @@ int cmd_dump_history(int32 arg, char *buf)
     return 0;
 }
 
+//=============================================================================
+
+int cpu_show_history(FILE *st, UNIT *uptr, int val, void *desc)
+{
+    // FIXME: use FILE *st
+
+    if (ic_hist_max == 0) {
+        out_msg("History is disabled.\n");
+        return SCPE_NOFNC;
+    }
+
+    char* cptr = (char *) desc;
+    int n;
+    if (cptr == NULL)
+        n = ic_hist_max;
+    else {
+        char c;
+        if (sscanf(cptr, "%d %c", &n, &c) != 1) {
+            out_msg("Error, expecting a number.\n");
+            return SCPE_ARG;
+        }
+    }
+
+    return cmd_dump_history(0, NULL, n);
+}
+
+//=============================================================================
+
+int cpu_set_history (UNIT *uptr, int32 val, char *cptr, void *desc)
+{
+    if (cptr == NULL) {
+        out_msg("Error, usage is set cpu history=<n>\n");
+        return SCPE_ARG;
+    }
+    char c;
+    int n;
+    if (sscanf(cptr, "%d %c", &n, &c) != 1) {
+        out_msg("Error, expecting a number.\n");
+        return SCPE_ARG;
+    }
+
+    if (n <= 0) {
+        if (ic_hist != NULL)
+            free(ic_hist);
+        ic_hist = NULL;
+        ic_hist_wrapped = 0;
+        ic_hist_ptr = 0;
+        ic_hist_max = 0;
+        out_msg("History disabled\n");
+        return 0;
+    }
+
+    ic_hist_t* new_hist = (ic_hist_t*) malloc(sizeof(*ic_hist) * n);
+
+    int old_n;
+    int old_head_loc;
+    int old_nhead;  // amount at ptr..end
+    int old_ntail;  // amount at 0..ptr (or all if never wrapped)
+    int old_tail_loc = 0;
+    if (ic_hist_wrapped)  {
+        // data order is ptr..(max-1), 0..ptr-1
+        old_n = ic_hist_max;
+        old_head_loc = ic_hist_ptr;
+        old_nhead = ic_hist_max - ic_hist_ptr;
+        old_ntail = ic_hist_ptr;
+    } else {
+        // data is 0..(ptr-1)
+        old_n = ic_hist_ptr;
+        // old_head_loc = "N/A";
+        old_head_loc = -123;
+        old_nhead = 0;
+        old_ntail = ic_hist_ptr;
+    }
+    int nhead = old_nhead;
+    int ntail = old_ntail;
+    if (old_n > n) {
+        nhead -= old_n - n; // lose some of the earlier stuff
+        if (nhead < 0) {
+            // under flow, use none of ptr..end and lose some of 0..ptr
+            ntail += nhead;
+            old_tail_loc -= nhead;
+            nhead = 0;
+        } else
+            old_head_loc += old_n - n;
+    }
+    if (nhead != 0)
+        memcpy(new_hist, ic_hist + old_head_loc, sizeof(*new_hist) * nhead);
+    if (ntail != 0)
+        memcpy(new_hist + nhead, ic_hist, sizeof(*new_hist) * ntail);
+    if (ic_hist != 0)
+        free(ic_hist);
+    ic_hist = new_hist;
+
+    if (n <= old_n)  {
+        ic_hist_ptr = 0;
+        ic_hist_wrapped = 1;
+    } else {
+        ic_hist_ptr = old_n;
+        ic_hist_wrapped = 0;
+    }
+
+    if (n >= ic_hist_max)
+        if (ic_hist_max == 0)
+            out_msg("History enabled.\n");
+        else
+            out_msg("History increased from %d entries to %d.\n", ic_hist_max, n);
+    else
+        out_msg("History reduced from %d entries to %d.\n", ic_hist_max, n);
+
+    ic_hist_max = n;
+
+    return 0;
+}
 
 //=============================================================================
 
@@ -646,6 +786,14 @@ int cmd_stack_trace(int32 arg, char *buf)
         secs, sys_stats.total_cycles, sys_stats.total_cycles/secs, sys_stats.total_instr, sys_stats.total_instr/secs);
 
     return 0;
+}
+
+//=============================================================================
+
+int cpu_show_stack(FILE *st, UNIT *uptr, int val, void *desc)
+{
+    // FIXME: use FILE *st
+    return cmd_stack_trace(0, NULL);
 }
 
 //=============================================================================

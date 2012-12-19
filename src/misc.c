@@ -241,6 +241,26 @@ t_stat cmd_seginfo(int32 arg, char *buf)
     return scan_seg(segno, 1);
 }
 
+// ============================================================================
+
+int apu_show_seg(FILE *st, UNIT *uptr, int val, void *desc)
+{
+    // FIXME: use FILE *st
+
+    const char* bufp = desc;
+    if (bufp == NULL) {
+        out_msg("Error, segment number required\n");
+        return SCPE_ARG;
+    }
+    unsigned segno;
+    char c;
+    int n;
+    if (sscanf(bufp, "%o %c", &segno, &c) != 1) {
+        out_msg("Error, expecting an octal segment number.\n");
+        return SCPE_ARG;
+    }
+    return scan_seg(segno, 1);
+}
 
 // ============================================================================
 

@@ -596,8 +596,13 @@ typedef struct {
 
 // System-wide info and options not tied to a specific CPU, IOM, or SCU
 typedef struct {
-    int clock_speed;    // 0 for realtime; otherwise instructions/sec
-    // delay times are in cycles; negative for immediate
+    int clock_speed;
+        // Instructions rccl and rscr allow access to a hardware clock.
+        // If zero, the hardware clock returns the real time of day.
+        // If non-zero, the clock starts at an arbitrary date and ticks at
+        // a rate approximately equal to the given number of instructions
+        // per second.
+    // Delay times are in cycles; negative for immediate
     struct {
         int connect;    // Delay between CIOC instr & connect channel operation
         int chan_activate;  // Time for a list service to send a DCW
@@ -612,10 +617,10 @@ typedef struct {
         // a series of trouble faults until the IOM finally writes a DIS from
         // the tape label onto the troube fault vector location.  In order to
         // reduce debugging clutter, the emulator allows starting the CPU off
-        // with an interrupt that we know has a  DIS instruction trap.  This
-        // interrupt is hinted at in AN70.  This will cause the CPU to wait for
-        // the next interrupt (from the IOM after it loads the first tape record
-        // and sends a terminate interrupt.
+        // with an interrupt that we know has a DIS instruction trap.  This
+        // interrupt is hinted at in AN70.  This will cause the CPU to start off
+        // waiting for the next interrupt (from the IOM after it loads the first
+        // tape record and sends a terminate interrupt).
     int tape_chan;  // Which channel of the IOM is the tape drive attached to?
 } sysinfo_t;
 
@@ -678,6 +683,7 @@ extern void log_forget_ic(void);
 extern void log_msg(enum log_level, const char* who, const char* format, ...);
 extern void out_msg(const char* format, ...);
 extern t_stat cmd_seginfo(int32 arg, char *buf);    // display segment info
+extern int apu_show_seg(FILE *st, UNIT *uptr, int val, void *desc); // display segment info
 extern int scan_seg(uint segno, int msgs);  // scan definitions section for procedure entry points
 extern int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp);
 extern int cmd_find(int32 arg, char *buf);
@@ -695,10 +701,13 @@ extern void ic_history_add(void);
 extern void ic_history_add_fault(int fault);
 extern void ic_history_add_intr(int intr);
 extern int cmd_dump_history(int32 arg, char *buf);
+extern int cpu_set_history(UNIT *uptr, int32 val, char* cptr, void *desc);
+extern int cpu_show_history(FILE *st, UNIT *uptr, int val, void *desc);
 extern int show_location(int show_source_lines);
 extern int cmd_xdebug(int32 arg, char *buf);
 extern char *ir2text(const IR_t *irp);
 extern int cmd_stack_trace(int32 arg, char *buf);
+extern int cpu_show_stack(FILE *st, UNIT *uptr, int val, void *desc);
 extern void show_variables(unsigned segno, int ic);
 extern int seginfo_show_all(int seg, int first);
 extern int cmd_stats(int32 arg, char *buf);
@@ -776,6 +785,7 @@ extern void reg_mod(uint td, int off);          // FIXME: might be performance b
 extern int fetch_appended(uint addr, t_uint64 *wordp);
 extern int store_appended(uint offset, t_uint64 word);
 extern int cmd_dump_vm(int32 arg, char *buf);
+extern int apu_show_vm(FILE *st, UNIT *uptr, int val, void *desc);
 extern SDW_t* get_sdw();
 extern int addr_any_to_abs(uint *addrp, addr_modes_t mode, int segno, int offset);
 extern int convert_address(uint* addrp, int seg, int offset, int fault);
@@ -798,6 +808,7 @@ extern int activate_timer();
 extern void iom_init(void);
 extern void iom_interrupt(void);
 extern t_stat channel_svc(UNIT *up);
+extern int iom_show_mbx(FILE *st, UNIT *uptr, int val, void *desc);
 
 /* math.c */
 extern void mpy(t_uint64 a, t_uint64 b, t_uint64* hip, t_uint64 *lowp);

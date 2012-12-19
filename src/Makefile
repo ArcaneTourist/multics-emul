@@ -14,7 +14,7 @@ CFLAGS += -D_GNU_SOURCE	# (SIMH uses this)
 CFLAGS += -U__STRICT_ANSI__	# we want some exensions (and SIMH uses this)
 CFLAGS += -g
 ifneq ($(DEBUG),)
-CFLAGS += -O0
+CFLAGS += -O0 -g
 else
 CFLAGS += -O3
 endif

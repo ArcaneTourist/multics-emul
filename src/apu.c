@@ -1478,6 +1478,14 @@ int cmd_dump_vm(int32 arg, char *buf)
 
 //=============================================================================
 
+int apu_show_vm(FILE *st, UNIT *uptr, int val, void *desc)
+{
+    // FIXME: use FILE *st
+    return cmd_dump_vm(0, NULL);
+}
+
+//=============================================================================
+
 SDW_t* get_sdw()
 {
     // Get SDW for TPR.TSR

@@ -890,5 +890,13 @@ History of pre-release versions
     Provide the fault register, mode register, and cache mode register.
     Properly handle EIS descriptors in absolute addressing mode.
 
-=== Pre-Version 122, ???
+=== Pre-Version 122, Dec 15, 2012
     Cleanup some code duplication in misc.c.
+    Document options for startup fault versus startup interrupt.
+    Display page tables for command xdumpvm.
+    Correct IOM bootchannel load to memory to occur at "boot", not "init".
+    Use a FAULT_EXEC cycle to handle execution of trap pairs so that we
+    can trouble fault during the trap pair execution if needed.
+=== Pre-Version 123
+    Switch some x* commands to more SIMH-style "show <dev> <special>" commands.
+    Add "show iom mbx".

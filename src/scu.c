@@ -635,14 +635,16 @@ int scu_get_calendar(t_uint64 addr)
 
     t_uint64 now;
     if (sys_opts.clock_speed != 0) {
+        // Clock starts at an arbitrary date and ticks at a rate of 
+        // approximaetly sys_opts.clock_speed instructions per second.
+
         t_uint64 i_cycles = sys_stats.total_cycles * 2 / 3; // fetch, exec, exec
-        //t_uint64 e_sec = i_cycles / sys_opts.clock_speed;
-        //int e_us = 1000000 * (i_cycles % sys_opts.clock_speed) / sys_opts.clock_speed;
         t_uint64 elapsed = i_cycles * 1000000 / sys_opts.clock_speed;
 
         // returned time is since epoch of 00:00:00 UTC, Jan 1, 1970
         //t_uint64 epoch = (t_uint64) 69 * 365 * 24 * 3600;
 
+        // returned time is since 2009...
         now = (t_uint64) (2009 - 1901) * 365 * 24 * 3600;
         now = now * 1000000 + elapsed;
     } else {

@@ -29,10 +29,38 @@
     the CPU's appending hardware.)
 */
 
+
+/*
+    NOTES on data structures
+
+    SIMH has DEVICES.
+    DEVICES have UNITs.
+    UNIT member u3 holds the channel number.  Used by channel service routine
+    which is called only with a UNIT ptr.
+
+    The iom_t IOM struct includes an array of channels:
+        type
+        DEVICE *dev; // ptr into sim_devices[]
+        UNIT *board
+
+    The above provides a channel_t per channel and a way to find it
+    given only a UNIT ptr.
+    The channel_t:
+        Includes list-service flag/count, state info, major/minor status,
+        most recent dcw, handle for sim-activate
+        Includes IDCW/PCW info: cmd, code, chan-cmd, chan-data, etc
+        Includes ptr to devinfo
+            Another copy of IDCW/PCW stuff: dev-cmd, dev-code, chan-data
+            Includes status major/minor & have-status flag
+            Includes read/write flag
+            Includes time for queuing
+*/
+        
 /*
     TODO -- partially done
 
     Following is prep for async...
+
     Have list service update DCW in mbx (and not just return *addrp)
     Note that we do write LPW in list_service().
     [done] Give channel struct a "scratchpad" LPW
@@ -127,7 +155,7 @@ static char* dcw2text(const dcw_t *p);
 static void parse_lpw(lpw_t *p, int addr, int is_conn);
 //static void parse_pcw(pcw_t *p, int addr, int ext);
 static void decode_idcw(pcw_t *p, flag_t is_pcw, t_uint64 word0, t_uint64 word1);
-static void parse_dcw(int chan, dcw_t *p, int addr);
+static void parse_dcw(int chan, dcw_t *p, int addr, int read_only);
 static int dev_send_idcw(int chan, pcw_t *p);
 static int status_service(int chan);
 //static int send_chan_flags();
@@ -140,6 +168,12 @@ static int run_channel(int chan);
 
 // ============================================================================
 
+/*
+ * iom_svc()
+ *
+ *    Service routine for SIMH events for the IOM itself
+ */
+
 t_stat iom_svc(UNIT *up)
 {
     log_msg(INFO_MSG, "IOM::service", "Starting!\n");
@@ -148,6 +182,12 @@ t_stat iom_svc(UNIT *up)
 }
 
 // ============================================================================
+
+/*
+ * channel_svc()
+ *
+ *    Service routine for devices such as tape drives that may be connected to the IOM
+ */
 
 t_stat channel_svc(UNIT *up)
 {
@@ -505,7 +545,7 @@ static int activate_chan(int chan, pcw_t* pcwp)
 /*
  * do_channel()
  *
- * Runs all the phases of a channels operation back-to-back.  Terminates
+ * Runs all the phases of a channel's operation back-to-back.  Terminates
  * when the channel is finished or when the channel queues an activity
  * via sim_activate().
  *
@@ -590,15 +630,15 @@ static void print_chan_state(const char* moi, channel_t* chanp)
  * of the channel's cycle of operations.  This function will need to be called
  * several times before a channel is finished with a task.
  *
- * Normal usage is for the channel flags to be set for indication of
- * a PCW being send from the IOM central (via the connect channel).
- * On the first call, run_channel() will send the PCW to the device.
- * Sending the PCW and various other operations invoked may not complete
- * immediately.  On the second and subsequent calls, run_channel() will
- * first check the status of any previously queued but now complete 
- * device operation.  After the first call, the next few calls will perform
- * list services, and dispatching DCWs.  The last call will be for a status
- * service, after which the channel will revert to an idle state.
+ * Normal usage is for the channel flags to be set for notificaton of a PCW
+ * being sent from the IOM central (via the connect channel).  On the first
+ * call, run_channel() will send the PCW to the device.
+ * The sending of the PCW and various other invoked operations may not complete
+ * immediately.  On the second and subsequent calls, run_channel() will first
+ * check the status of any previously queued but now complete device operation.
+ * After the first call, the next few calls will perform list services and
+ * dispatch DCWs.  The last call will be for a status service, after which the
+ * channel will revert to an idle state.
  *
  * Called both by activate_channel->do_channel() just after a CIOC instruction
  * and also called by channel_svc()->do_channel() as queued operations
@@ -1089,7 +1129,7 @@ static int do_dcw(int chan, int addr, int *controlp, flag_t *need_indir_svc)
         return 1;
     }
     dcw_t dcw;
-    parse_dcw(chan, &dcw, addr);
+    parse_dcw(chan, &dcw, addr, 0);
 
     if (dcw.type == idcw) {
         // instr dcw
@@ -1102,9 +1142,8 @@ static int do_dcw(int chan, int addr, int *controlp, flag_t *need_indir_svc)
         if (dcw.fields.instr.chan_cmd != 02) {
             channel_t* chanp = get_chan(chan);
             if (chanp != NULL && dcw.fields.instr.control == 0 && chanp->have_status && Mem[addr+1] == 0) {
-                // log_msg(ERR_MSG, "IOM::dcw", "Ignoring need to set need-indirect service flag because next dcw is zero.\n");
+                log_msg(WARN_MSG, "IOM::dcw", "Ignoring need to set need-indirect service flag because next dcw is zero.\n");
                 // cancel_run(STOP_BUG);
-                log_msg(WARN_MSG, "IOM::dcw", "Next dcw is zero.\n");
                 cancel_run(STOP_IBKPT);
             } else
                 *need_indir_svc = 1;
@@ -1487,7 +1526,7 @@ static char* pcw2text(const pcw_t *p)
  * Parse word at "addr" into a dcw_t.
  */
 
-static void parse_dcw(int chan, dcw_t *p, int addr)
+static void parse_dcw(int chan, dcw_t *p, int addr, int read_only)
 {
     t_uint64 word;
     (void) fetch_abs_word(addr, &word);
@@ -1499,7 +1538,7 @@ static void parse_dcw(int chan, dcw_t *p, int addr)
         decode_idcw(&p->fields.instr, 0, word, 0);
         // p->fields.instr.chan = chan; // Real HW would not populate
         p->fields.instr.chan = -1;
-        if (p->fields.instr.mask) {
+        if (p->fields.instr.mask && ! read_only) {
             // Bit 21 is extension control (EC), not a mask
             channel_t* chanp = get_chan(chan);
             if (! chanp)
@@ -1557,7 +1596,7 @@ static char* dcw2text(const dcw_t *p)
             (dtype == 2) ? "transfer" :
             (dtype == 3) ? "IONTP" :
             "<illegal>";
-        sprintf(buf, "D-DCW: type=%d(%s), addr=0%o, cp=0%o, tally=0%o(%d) tally-ctl=%d",
+        sprintf(buf, "D-DCW: type=%d(%s), addr=%06o, cp=0%o, tally=0%o(%d) tally-ctl=%d",
             dtype, type, p->fields.ddcw.daddr, p->fields.ddcw.cp, p->fields.ddcw.tally,
             p->fields.ddcw.tally, p->fields.ddcw.tctl);
     }
@@ -1642,7 +1681,7 @@ char* print_lpw(t_addr addr)
     lpw_t temp;
     int chan = (addr - IOM_A_MBX) / 4;
     parse_lpw(&temp, addr, chan == IOM_CONNECT_CHAN);
-    static char buf[80];
+    static char buf[160];
     sprintf(buf, "Chan 0%o -- %s", chan, lpw2text(&temp, chan == IOM_CONNECT_CHAN));
     return buf;
 }
@@ -1712,7 +1751,7 @@ static int send_chan_flags()
  * Write status info into a status mailbox.
  *
  * BUG: Only partially implemented.
- * WARNING: The diag tape will crash because don't write a non-zero
+ * WARNING: The diag tape will crash because we don't write a non-zero
  * value to the low 4 bits of the first status word.  See comments
  * at the top of mt.c.
  *
@@ -1950,4 +1989,68 @@ static int send_general_interrupt(int chan, int pic)
     (void) store_abs_word(imw_addr, imw);
 
     return scu_set_interrupt(interrupt_num);
+}
+
+// ============================================================================
+
+int iom_show_mbx(FILE *st, UNIT *uptr, int val, void *desc)
+{
+    const char* moi = "IOM::show";
+    if (desc != NULL)
+        log_msg(NOTIFY_MSG, moi, "FILE=%p, uptr=%p, val=%d, desc=%p\n",
+            st, uptr, val, desc);
+    else
+        log_msg(NOTIFY_MSG, moi, "FILE=%p, uptr=%p, val=%d, desc=%p %s\n",
+            st, uptr, val, desc, desc);
+
+    // show connect channel
+    // show list
+    //  ret = list_service(IOM_CONNECT_CHAN, 1, &ptro, &addr);
+    //      ret = send_channel_pcw(IOM_CONNECT_CHAN, addr);
+
+    int chan = IOM_CONNECT_CHAN;
+    int chanloc = IOM_A_MBX + chan * 4;
+    out_msg("Connect channel is channel %d at %#06o\n", chan, chanloc);
+    lpw_t lpw;
+    parse_lpw(&lpw, chanloc, chan == IOM_CONNECT_CHAN);
+    lpw.hrel = lpw.srel;
+    out_msg("LPW at %#06o: %s\n", chanloc, lpw2text(&lpw, chan == IOM_CONNECT_CHAN));
+
+    int addr = lpw.dcw;
+    pcw_t pcw;
+    t_uint64 word0, word1;
+    (void) fetch_abs_pair(addr, &word0, &word1);
+    decode_idcw(&pcw, 1, word0, word1);
+    out_msg("PCW at %#06o: %s\n", addr, pcw2text(&pcw));
+    chan = pcw.chan;
+    out_msg("Channel %#o (%d):\n", chan, chan);
+    addr += 2;  // skip PCW
+    
+    // This isn't quite right, but sufficient for debugging
+    int control = 2;
+    for (int i = 0; i < lpw.tally || control == 2; ++i) {
+        if (i > 4096) break;
+        dcw_t dcw;
+        parse_dcw(chan, &dcw, addr, 1);
+        if (dcw.type == idcw) {
+            //dcw.fields.instr.chan = chan; // Real HW would not populate
+            out_msg("DCW %d at %06o : %s\n", i, addr, dcw2text(&dcw));
+            control = dcw.fields.instr.control;
+        } else if (dcw.type == tdcw) {
+            out_msg("DCW %d at %06o: <transfer> -- not implemented\n", i, addr);
+            break;
+        } else if (dcw.type == ddcw) {
+            out_msg("DCW %d at %06o: %s\n", i, addr, dcw2text(&dcw));
+            if (dcw.fields.ddcw.type == 0)
+                control = 0;
+        }
+        ++addr;
+        if (control != 2)
+            if (i == lpw.tally)
+                out_msg("-- end of list --\n");
+            else
+                out_msg("-- end of list (because dcw control != 2) --\n");
+    }
+
+    return 0;
 }
