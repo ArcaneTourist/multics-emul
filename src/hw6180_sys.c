@@ -357,13 +357,15 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
             }
         }
         /* See if any other format was requested (but don't bother honoring multiple formats */
-        if (sw & SWMASK('M')) {
-            // M -> instr
-            char *instr = print_instr(Mem[abs_addr]);
-            fprintf(ofile, " %s", instr);
+        if (sw & SWMASK('A')) {
+            // already done
         } else if (sw & SWMASK('L')) {
             // L -> LPW
             fprintf(ofile, " %s", print_lpw(abs_addr));
+        } else if (sw & SWMASK('M')) {
+            // M -> instr
+            char *instr = print_instr(Mem[abs_addr]);
+            fprintf(ofile, " %s", instr);
         } else if (sw & SWMASK('P') || (sw & SWMASK('Y'))) {
             // P/Y -> PTW
             char *s = print_ptw(Mem[abs_addr]);
@@ -372,8 +374,10 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
             // S/X -> SDW
             char *s = print_sdw(Mem[abs_addr], Mem[abs_addr+1]);
             fprintf(ofile, " %s", s);
-        } else if (sw & SWMASK('A')) {
-            // already done
+        } else if (sw & SWMASK('W')) {
+            // W -> DCW
+            char *s = print_dcw(abs_addr);
+            fprintf(ofile, " %s", s);
         } else if (sw) {
             return SCPE_ARG;
         } else {

@@ -17,6 +17,7 @@ extern iom_t iom;
 
 void disk_init()
 {
+    // Nothing needed
 }
 
 /*
@@ -73,15 +74,30 @@ int disk_iom_cmd(chan_devinfo* devinfop)
     // TODO: handle cmd etc for given unit
 
     switch(dev_cmd) {
-        // disk_init: idcw.command values:
-        //  042 restore access arm
-        //  022 read status register
-        //  000 request status
+        // idcw.command values:
+        //  000 request status -- from disk_init
+        //  022 read status register -- from disk_init
+        //  023 read ascii
+        //  025 read -- disk_control.list
+        //  030 seek512 -- disk_control.list
+        //  031 write -- disk_control.list
+        //  033 write ascii
+        //  042 restore access arm -- from disk_init
+        //  051 write alert
+        //  057 maybe read id
+        //  072 unload -- disk_control.list
         case 040:       // CMD 40 -- Reset Status
             log_msg(NOTIFY_MSG, moi, "Reset Status.\n");
-            devinfop->have_status = 1;
             *majorp = 0;
             *subp = 0;
+            //
+            //devinfop->time = -1;
+            //devinfop->have_status = 1;
+            //
+            devinfop->time = 4;
+            //devinfop->time = 10000;
+            devinfop->have_status = 0;
+            //
             return 0;
         default: {
             log_msg(ERR_MSG, moi, "DISK devices not implemented.\n");

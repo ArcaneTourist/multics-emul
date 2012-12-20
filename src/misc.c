@@ -292,12 +292,14 @@ static int get_linkage(int msgs, uint segno, AR_PR_t *linkagep, uint *first_link
     // Dump the linkage info for an in-memory segment.
 
     t_uint64 word0, word1;
+    int saved_seg = TPR.TSR;
 
     /* Read LOT */
 
     TPR.TSR = 015;
-
-    if (fetch_word(segno, &word0) != 0) {
+    int ret = fetch_word(segno, &word0);
+    TPR.TSR = saved_seg;
+    if (ret != 0) {
         if (msgs)
             out_msg("xseginfo: Error reading LOT entry 15|%o\n", segno);
         return 1;
@@ -313,9 +315,11 @@ static int get_linkage(int msgs, uint segno, AR_PR_t *linkagep, uint *first_link
 
     /* Read definitions pointer from linkage section */
 
-    TPR.TSR = linkagep->PR.snr;
     memset(defsp, 0, sizeof(defsp));
-    if (fetch_pair(linkagep->wordno, &word0, &word1) != 0)
+    TPR.TSR = linkagep->PR.snr;
+    ret = fetch_pair(linkagep->wordno, &word0, &word1);
+    TPR.TSR = saved_seg;
+    if (ret != 0)
         return 2;
     if (word0 == 0 && word1 == 0) {
         if (msgs)
@@ -359,6 +363,8 @@ static int _scan_seg(uint segno, int msgs)
     // Also invoked by the CPU to discover entrypoint names and locations so
     // that the CPU can display location information.
     // Any entrypoints found are passed to seginfo_add_linkage().
+    //
+    // Caller should preserve TPR.TSR -- only scan_seg() should call _scan_seg()
 
     t_uint64 word0, word1;
 

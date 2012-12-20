@@ -13,6 +13,7 @@
 // Per-instruction statistics
 // Counts may be interesting, but wall-clock timings may be inaccurate
 #define FEAT_INSTR_STATS 1
+#define FEAT_INSTR_STATS_TIMING 0
 
 // Memory is represented via 64 bit integers representing the 36bit words. If
 // this #define is true, memory is initialized to all ones and every memory read

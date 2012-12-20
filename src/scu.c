@@ -622,6 +622,9 @@ int scu_get_mask(t_uint64 addr, int port)
 
 int scu_get_calendar(t_uint64 addr)
 {
+    // 52 bit clock
+    // microseconds since 0000 GMT, Jan 1, 1901 // not 1900 which was a per century exception to leap years
+
     // BUG: addr should determine which SCU is selected
 
     if (scu_hw_arg_check("get-calendar", addr, 0) != 0)
@@ -630,8 +633,6 @@ int scu_get_calendar(t_uint64 addr)
     // int cpu_no = scu.ports[rcv_port].idnum;  // CPU 0->'A', 1->'B', etc
     // int cpu_port = scu.ports[rcv_port].devnum    // which port on the CPU?
 
-    // 52 bit clock
-    // microseconds since 0000 GMT, Jan 1, 1901 // not 1900 which was a per century exception to leap years
 
     t_uint64 now;
     if (sys_opts.clock_speed != 0) {
@@ -641,32 +642,17 @@ int scu_get_calendar(t_uint64 addr)
         t_uint64 i_cycles = sys_stats.total_cycles * 2 / 3; // fetch, exec, exec
         t_uint64 elapsed = i_cycles * 1000000 / sys_opts.clock_speed;
 
-        // returned time is since epoch of 00:00:00 UTC, Jan 1, 1970
-        //t_uint64 epoch = (t_uint64) 69 * 365 * 24 * 3600;
-
         // returned time is since 2009...
         now = (t_uint64) (2009 - 1901) * 365 * 24 * 3600;
         now = now * 1000000 + elapsed;
     } else {
         // Use real time
-        // sim_os_msec() gives elapsed time in microseconds; But does it return an OS agnositic value?
-        // BUG: yes it does ... and uses gettimeofday under UNIX .. need to use it!
 
-        // gettimeofday() is POSIX complient
-        struct timeval tv;
-        struct timezone tz;
-        if (gettimeofday(&tv, &tz) != 0) {
-            log_msg(ERR_MSG, "SCU::getcal", "Error from OS gettimeofday\n");
-            reg_A = 0;
-            reg_Q = 0;
-            return 1;
-        }
-        t_uint64 seconds = tv.tv_sec;
-        seconds += (t_uint64) 69 * 365 * 24 * 3600; // returned time is since epoch of 00:00:00 UTC, Jan 1, 1970
-        now = seconds * 1000000 + tv.tv_usec;
-        // reg_Q = now & MASK36;
-        // reg_A = (now >> 36) & MASK36;
-        // log_msg(INFO_MSG, "calendar", "UNIX time %ld; multics time {%012llo, %012llo}\n", tv.tv_sec, reg_A, reg_Q);
+        uint32 msec = sim_os_msec();
+        t_uint64 seconds = msec / 1000;
+        msec -= seconds * 1000;
+        seconds += (t_uint64) 69 * 365 * 24 * 3600;     // UNIX epoch is 1970, but Multics epoch is 1901
+        now = seconds * 1000000 + msec * 1000;
     }
 
     reg_Q = now & MASK36;
@@ -722,7 +708,7 @@ int scu_cioc(t_uint64 addr)
         iom_interrupt();
     else {
         extern DEVICE iom_dev;
-        log_msg(INFO_MSG, "SCU::cioc", "Queuing an IOM run for %p in %d cycles\n", &iom_dev.units[0], sys_opts.iom_times.connect);
+        log_msg(INFO_MSG, "SCU::cioc", "Queuing an IOM in %d cycles (for the connect channel)\n", sys_opts.iom_times.connect);
         if (sim_activate(&iom_dev.units[0], sys_opts.iom_times.connect) != SCPE_OK) {
             cancel_run(STOP_SIMH);
             ret = 1;

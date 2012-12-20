@@ -98,7 +98,9 @@ static int do_op(instr_t *ip)
     ++ sys_stats.n_instr;
 #if FEAT_INSTR_STATS
     ++ sys_stats.instr[ip->opcode].nexec;
+#if FEAT_INSTR_STATS_TIMING
     uint32 start = sim_os_msec();
+#endif
 #endif
 
     do_18bit_math = 0;
@@ -138,7 +140,9 @@ static int do_op(instr_t *ip)
     }
 
 #if FEAT_INSTR_STATS
+#if FEAT_INSTR_STATS_TIMING
     sys_stats.instr[ip->opcode].nmsec += sim_os_msec() - start;
+#endif
 #endif
 
     return ret;

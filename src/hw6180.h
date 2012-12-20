@@ -1,5 +1,5 @@
 #ifndef _HW6180_H
-#define _HW6180_H   // HACK
+#define _HW6180_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,7 +42,7 @@ typedef enum { NORMAL_mode, PRIV_mode } instr_modes_t;
 typedef enum {
     ABORT_cycle, FAULT_cycle, EXEC_cycle, FAULT_EXEC_cycle, INTERRUPT_cycle,
     FETCH_cycle,
-    DIS_cycle   // A pseudo cycle for handling the DIS instruction
+    DIS_cycle  // A pseudo cycle for handling the DIS instruction
 // CA FETCH OPSTORE, DIVIDE_EXEC
 } cycles_t;
 
@@ -78,14 +78,14 @@ typedef enum {
 } fault_cond_t;
 
 // Simulator stop codes (as returned by sim_instr to SIMH)
-//      Zero and values above 63 reserved by SIMH
+//     Zero and values above 63 reserved by SIMH
 enum sim_stops {
-    STOP_MEMCLEAR = 1,  // executing empty memory; zero reserved by SIMH
-    STOP_BUG,           // impossible conditions, coding error, etc
-    STOP_WARN,          // something odd or interesting; further exec might possible
-    STOP_IBKPT,         // breakpoint, possibly auto-detected by emulator
-    STOP_DIS,           // executed a "delay until interrupt set"
-    STOP_SIMH           // A simh routine returned non zero
+    STOP_MEMCLEAR = 1, // executing empty memory; zero reserved by SIMH
+    STOP_BUG,          // impossible conditions, coding error, etc
+    STOP_WARN,         // something odd or interesting; further exec might possible
+    STOP_IBKPT,        // breakpoint, possibly auto-detected by emulator
+    STOP_DIS,          // executed a "delay until interrupt set"
+    STOP_SIMH          // A simh routine returned non zero
 };
 
 // Devices connected to a SCU
@@ -105,7 +105,7 @@ enum log_level { DEBUG_MSG, INFO_MSG, NOTIFY_MSG, WARN_MSG, ERR_MSG };
 // === Misc constants and macros
 
 // Clocks
-#define CLK_TR_HZ (512*1)   // should be 512 kHz, but we'll use 512 Hz for now
+#define CLK_TR_HZ (512*1)  // should be 512 kHz, but we'll use 512 Hz for now
 #define TR_CLK 1 /* SIMH allows clock ids 0..7 */
 
 // Memory
@@ -117,11 +117,11 @@ enum log_level { DEBUG_MSG, INFO_MSG, NOTIFY_MSG, WARN_MSG, ERR_MSG };
 #define ARRAY_SIZE(a) ( sizeof(a) / sizeof((a)[0]) )
 
 enum { seg_bits = 15};  // number of bits in a segment number
-enum { n_segments = 1 << seg_bits} ;    // why does c89 treat enums as more constant than consts?
+enum { n_segments = 1 << seg_bits};  // why does c89 treat enums as more constant than consts?
 
 // Constants and a function for ordinary masking of low (rightmost) bits.
-static const t_uint64 MASK36 = ~(~((t_uint64)0)<<36);   // lower 36 bits all on
-static const t_uint64 MASK18 = ~(~((t_uint64)0)<<18);   // lower 18 bits all on
+static const t_uint64 MASK36 = ~(~((t_uint64)0)<<36);  // lower 36 bits all on
+static const t_uint64 MASK18 = ~(~((t_uint64)0)<<18);  // lower 18 bits all on
 #define MASKBITS(x) ( ~(~((t_uint64)0)<<x) )    // lower (x) bits all ones
 
 // ============================================================================
@@ -148,22 +148,22 @@ typedef struct {
     flag_t ar;
     flag_t rl;
     flag_t id;
-    uint reg;   // 4 bits
+    uint reg;  // 4 bits
 } eis_mf_t;
 
 /* Format of a 36 bit instruction word */
 typedef struct {
-    uint addr;  // 18 bits at 0..17; 18 bit offset or seg/offset pair
-    uint opcode;    /* 10 bits at 18..27 */
-    uint inhibit;   /* 1 bit at 28 */
+    uint addr;    // 18 bits at  0..17; 18 bit offset or seg/offset pair
+    uint opcode;  // 10 bits at 18..27
+    uint inhibit; //  1 bit  at 28
     union {
         struct {
-            uint pr_bit;    // 1 bit at 29; use offset[0..2] as pointer reg
-            uint tag;       /* 6 bits at 30..35 */
+            uint pr_bit;  // 1 bit at 29; use offset[0..2] as pointer reg
+            uint tag;     // 6 bits at 30..35 */
         } single;
-        eis_mf_t mf1;       // from bits 29..35 of EIS instructions
+        eis_mf_t mf1;     // from bits 29..35 of EIS instructions
     } mods;
-    flag_t is_eis_multiword;    // set true for relevent opcodes
+    flag_t is_eis_multiword;  // set true for relevent opcodes
 } instr_t;
 
 /* Indicator register (14 bits [only positions 18..32 have meaning]) */

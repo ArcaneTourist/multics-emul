@@ -246,8 +246,8 @@ void ic_history_init()
     ic_hist_ptr = 0;
     if (ic_hist != NULL) 
         free(ic_hist);
-    if (ic_hist_max < 30)
-        ic_hist_max = 30;
+    if (ic_hist_max < 60)
+        ic_hist_max = 60;
     ic_hist = (ic_hist_t*) malloc(sizeof(*ic_hist) * ic_hist_max);
 }
 

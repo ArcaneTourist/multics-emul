@@ -199,6 +199,10 @@ t_stat channel_svc(UNIT *up)
     if (chanp->devinfop == NULL) {
         log_msg(WARN_MSG, "IOM::channel-svc", "No context info for channel %d.\n", chan);
     } else {
+        // FIXME: It might be more realistic for the service routine to to call
+        // device specific routines.  However, instead, we have the device do 
+        // all the work ahead of time and the queued service routine is just
+        // reporting that the work is done.
         chanp->status.major = chanp->devinfop->major;
         chanp->status.substatus = chanp->devinfop->substatus;
         chanp->status.rcount = chanp->devinfop->chan_data;
@@ -630,9 +634,10 @@ static void print_chan_state(const char* moi, channel_t* chanp)
  * of the channel's cycle of operations.  This function will need to be called
  * several times before a channel is finished with a task.
  *
- * Normal usage is for the channel flags to be set for notificaton of a PCW
- * being sent from the IOM central (via the connect channel).  On the first
- * call, run_channel() will send the PCW to the device.
+ * Normal usage is for the channel flags to initially be set for notificaton of
+ * a PCW being sent from the IOM central (via the connect channel).  On the
+ * first call, run_channel() will send the PCW to the device.
+ *
  * The sending of the PCW and various other invoked operations may not complete
  * immediately.  On the second and subsequent calls, run_channel() will first
  * check the status of any previously queued but now complete device operation.
@@ -657,7 +662,7 @@ static int run_channel(int chan)
     const char* moi = "IOM::channel";
 
     log_msg(DEBUG_MSG, NULL, "\n");
-    log_msg(INFO_MSG, moi, "Starting for channel %d (%o)\n", chan, chan);
+    log_msg(INFO_MSG, moi, "Starting for channel %d (%#o)\n", chan, chan);
 
     channel_t* chanp = get_chan(chan);
     if (chanp == NULL)
@@ -671,7 +676,83 @@ static int run_channel(int chan)
     }
 
     int first_list = chanp->n_list == 0;
-    // log_msg(DEBUG_MSG, moi, "First list is %c\n", first_list ? 'Y' : 'N');
+
+    // =========================================================================
+
+    /*
+     * First, check the status of any prior command
+     */
+
+    if (chanp->state == chn_pcw_rcvd) {
+        // Channel was idle and this is the initial call to send the PCW
+        chanp->have_status = 0;
+    } else {
+        // Channel is busy.
+
+        // We should not still be waiting on the attached device (we're not
+        // re-invoked until status is available).
+        // Nor should we be invoked for an idle channel.
+        if (! chanp->have_status && chanp->state != chn_err && ! chanp->err) {
+            log_msg(WARN_MSG, moi, "Channel %d activated, but still waiting on device.\n", chan);
+            cancel_run(STOP_WARN);
+            return 0;
+        }
+
+        // If the attached device has terminated operations, we'll need
+        // to do a status service and finish off the current connection
+
+        flag_t do_status_svc = 0;
+        if (chanp->status.major != 0) {
+            // Both failed DCW loops or a failed initial PCW are caught here
+            log_msg(INFO_MSG, moi, "Channel %d reports non-zero major status; terminating DCW loop and performing status service.\n", chan);
+            do_status_svc = 1;
+        }
+        if (chanp->err || chanp->state == chn_err) {
+            log_msg(NOTIFY_MSG, moi, "Channel %d reports internal error; doing status.\n", chanp->chan);
+            do_status_svc = 1;
+        }
+        if (! do_status_svc)
+            if (chanp->control == 0 && ! chanp->need_indir_svc && ! first_list) {
+                log_msg(INFO_MSG, moi, "Channel %d out of work; doing status.\n", chanp->chan);
+                do_status_svc = 1;  // no work left
+            }
+    
+        // BUG: enable.   BUG: enabling kills the boot...
+        // chanp->have_status = 0;  // we just processed it
+    
+        // FIXME: Instead of doing the status here, add a state for need-status-svc
+        // and perhaps for status-svc-done
+
+        if (do_status_svc) {
+            int ret = 0;
+            if (chanp->err || chanp->state == chn_err)
+                ret = 1;
+            /*
+             * Third of four phases -- request a status service
+             */
+            // BUG: skip status service if system fault exists
+            log_msg(DEBUG_MSG, moi, "Requesting Status service\n");
+            status_service(chan);
+    
+            /*
+             * Fourth of four phases
+             *
+             * 3.0 -- Following the status service, the channel will request the
+             * IOM to do a multiplex interrupt service.
+             *
+             *
+             */
+            log_msg(INFO_MSG, moi, "Sending terminate interrupt.\n");
+            if (send_terminate_interrupt(chan))
+                ret = 1;
+            chanp->state = chn_idle;
+            // BUG: move have_status=0 to after setting do_status_svc
+            chanp->have_status = 0; // we just processed it
+            return ret;
+        }
+    }
+
+    // =========================================================================
 
     /*
      * First of four phases -- send any PCW command to the device
@@ -683,7 +764,7 @@ static int run_channel(int chan)
         pcw_t *p = &chanp->dcw.fields.instr;
         chanp->have_status = 0;
         int ret = dev_send_idcw(chan, p);
-        // Note: dev_send_idcw will either set chn_cmd_sent or do iom_fault()
+        // Note: dev_send_idcw will either set state=chn_cmd_sent or do iom_fault()
         if (ret != 0) {
             log_msg(NOTIFY_MSG, moi, "Device on channel %d did not like our PCW -- non zero return.\n", chan);
             // dev_send_idcw() will have done an iom_fault() or gotten
@@ -705,66 +786,6 @@ static int run_channel(int chan)
             // The PCW resulted in a call to sim_activate().
             return 0;
         }
-    }
-
-    /*
-     * Handle results from attached device (and make new requests)
-     */
-
-    // We should not still be waiting on the attached device
-    if (! chanp->have_status && chanp->state != chn_err && ! chanp->err) {
-        log_msg(WARN_MSG, moi, "Channel %d activated, but still waiting on device.\n", chan);
-        cancel_run(STOP_WARN);
-        return 0;
-    }
-
-    // If the attached device has terminated operations, we'll need
-    // to do a status service and finish off the current connection
-
-    flag_t do_status_svc = 0;
-    if (chanp->status.major != 0) {
-        log_msg(INFO_MSG, moi, "Channel %d reports non-zero major status; terminating DCW loop and performing status service.\n", chan);
-        do_status_svc = 1;
-    }
-    if (chanp->err || chanp->state == chn_err) {
-        log_msg(NOTIFY_MSG, moi, "Channel %d reports internal error; doing status.\n", chanp->chan);
-        do_status_svc = 1;
-    }
-    if (! do_status_svc)
-        if (chanp->control == 0 && ! chanp->need_indir_svc && ! first_list) {
-            log_msg(INFO_MSG, moi, "Channel %d out of work; doing status.\n", chanp->chan);
-            do_status_svc = 1;  // no work left
-        }
-
-    // BUG: enable.   BUG: enabling kills the boot...
-    // chanp->have_status = 0;  // we just processed it
-
-    if (do_status_svc) {
-        int ret = 0;
-        if (chanp->err || chanp->state == chn_err)
-            ret = 1;
-        /*
-         * Third of four phases -- request a status service
-         */
-        // BUG: skip status service if system fault exists
-        log_msg(DEBUG_MSG, moi, "Requesting Status service\n");
-        status_service(chan);
-
-        /*
-         * Fourth of four phases
-         *
-         * 3.0 -- Following the status service, the channel will request the
-         * IOM to do a multiplex interrupt service.
-         *
-         *
-         */
-        log_msg(INFO_MSG, moi, "Sending terminate interrupt.\n");
-        if (send_terminate_interrupt(chan))
-            ret = 1;
-        chanp->state = chn_idle;
-        // BUG: move have_status=0 to after setting do_status_svc
-        chanp->have_status = 0; // we just processed it
-        return ret;
     }
 
     /*
@@ -792,6 +813,7 @@ static int run_channel(int chan)
     int ret = 0;
 
     log_msg(DEBUG_MSG, moi, "In channel loop.\n");
+    // log_msg(DEBUG_MSG, moi, "In channel loop for state %d\n", chanp->state);
 
     if (chanp->control == 2 || chanp->need_indir_svc || first_list) {
         // Do a list service
@@ -901,22 +923,11 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
     lpw_t* lpwp = &chanp->lpw;
 
     *addrp = -1;
-    // FIXME: Maybe we should not load LPW from mem unless first_list ?
     log_msg(DEBUG_MSG, moi, "Starting %s list service for LPW for channel %0o(%d dec) at addr %0o\n",
         (first_list) ? "first" : "another", chan, chan, chanloc);
-    lpw_t tmp_lpw = *lpwp;
-    if (first_list) {
+    // Load LPW from main memory on first list, otherwise continue to use scratchpad
+    if (first_list)
         parse_lpw(lpwp, chanloc, chan == IOM_CONNECT_CHAN);
-    } else {
-#if 0
-        if (memcmp(&tmp_lpw, lpwp, sizeof(*lpwp)) != 0) {
-            log_msg(ERR_MSG, moi, "Stomping scratchpad LPW for channel %0o(%d dec) at addr %0o:\n", chan, chan, chanloc);
-            log_msg(ERR_MSG, moi, "OLD LPW: %s\n", lpw2text(&tmp_lpw, chan == IOM_CONNECT_CHAN));
-            log_msg(ERR_MSG, moi, "NEW LPW: %s\n", lpw2text(lpwp, chan == IOM_CONNECT_CHAN));
-            cancel_run(STOP_BUG);
-        }
-#endif
-    }
     log_msg(DEBUG_MSG, moi, "LPW: %s\n", lpw2text(lpwp, chan == IOM_CONNECT_CHAN));
 
     if (lpwp->srel) {
@@ -1260,7 +1271,7 @@ static int dev_send_idcw(int chan, pcw_t *p)
         case DEV_CON: {
             int ret = con_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chanp->status.major, &chanp->status.substatus);
             chanp->state = chn_cmd_sent;
-            chanp->have_status = 1;
+            chanp->have_status = 1;     // FIXME: con_iom_cmd should set this
             chanp->status.rcount = p->chan_data;
             log_msg(DEBUG_MSG, moi, "CON returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             return ret; // caller must choose between our return and the chan_status.{major,substatus}
@@ -1607,6 +1618,23 @@ static char* dcw2text(const dcw_t *p)
     else
         strcpy(buf, "<not a dcw>");
     return buf;
+}
+
+// ============================================================================
+
+/*
+ * print_dcw()
+ *
+ * Display a DCS
+ *
+ */
+
+char* print_dcw(t_addr addr)
+{
+    // WARNING: returns single static buffer
+    dcw_t dcw;
+    parse_dcw(-1, &dcw, addr, 1);
+    return dcw2text(&dcw);
 }
 
 // ============================================================================
@@ -2045,11 +2073,12 @@ int iom_show_mbx(FILE *st, UNIT *uptr, int val, void *desc)
                 control = 0;
         }
         ++addr;
-        if (control != 2)
+        if (control != 2) {
             if (i == lpw.tally)
                 out_msg("-- end of list --\n");
             else
                 out_msg("-- end of list (because dcw control != 2) --\n");
+        }
     }
 
     return 0;

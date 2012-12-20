@@ -17,7 +17,7 @@ class ptr_t {
 private:
     // For compability with prior debug messages we defer real initialization
     struct mf_y_addr_t {
-        bool abs;           // absolute mode or appending? (BAR not supported)
+        bool abs; // absolute mode or appending? (BAR not supported)
         bool ar;
         int reg;
         int width;
@@ -52,7 +52,7 @@ private:
 public:
     ptr_t() {}
     //ptr_t(bool ar, unsigned reg, int nbits, unsigned y) {
-    //  set(ar, reg, nbits, y);
+    //set(ar, reg, nbits, y);
     //}
     void set(bool ar, unsigned reg, int nbits, unsigned y);
     int init();
@@ -85,12 +85,12 @@ public:
 class desc_t {
 protected:
     eis_mf_t _mf;
-    int _addr;          // original raw address
-    int _width;         // "character" size in bits
-    unsigned _count;    // initial number of characters (pre MF fixup)
-    unsigned _n;                // current character count
+    int _addr;  // original raw address
+    int _width;  // "character" size in bits
+    unsigned _count;  // initial number of characters (pre MF fixup)
+    unsigned _n;  // current character count
     struct {
-        int cn; 
+        int cn;
         int bitno;
     } first_char;
     int ta() const {
@@ -102,7 +102,7 @@ protected:
 private:
     void *dummyp;
     int ptr_init;
-    // t_uint64 buf[8]; // EIS instructions use a buffer
+    // t_uint64 buf[8];  // EIS instructions use a buffer
     // ptr_t _base;
     ptr_t _curr;
     // bool _is_read;
@@ -120,19 +120,19 @@ private:
 public:
     // desc_t(); -- no constructor for abstract base class; use init()
     void init(const eis_mf_t& mf, int y_addr, int width, int cn, int bit_offset, int nchar, int is_fwd);
-    void mod64() {      // adjust length to be modulo 64
+    void mod64() {          // adjust length to be modulo 64
         _n %= 64; /* _mod64 = 1 */; }
     int n() const { return _n; }
     int width() const { return _width; }
-    int put(unsigned val)       // write, advance forward or backwards
+    int put(unsigned val)  // write, advance forward or backwards
         { return _put(val, 1); }
-    int set(unsigned val)       // write, no advance
+    int set(unsigned val)  // write, no advance
         { return _put(val, 0); }
-    int get(unsigned* valp)     // read, advance forward or backwards
+    int get(unsigned* valp)  // read, advance forward or backwards
         { return _get(valp, 1); }
-    int val(unsigned* valp)     // read, no advance
+    int val(unsigned* valp)  // read, no advance
         { return _get(valp, 0); }
-    int flush(int verbose = 1);         // write buffer to main memory
+    int flush(int verbose = 1);  // write buffer to main memory
     virtual char* to_text(char *buf) const = 0;
     int init_ptr();
     int valid() const { return _curr.valid(); }
@@ -152,8 +152,8 @@ public:
 
 class num_desc_t : public desc_t {
 private:
-    int _s;     // sign and type: 00b floating with leading sign; 01b-11b scaled fixed point, 01 leading sign, 10 trailing, 11 unsigned
-    int _sf;    // scaling factor
+    int _s;  // sign and type: 00b floating with leading sign; 01b-11b scaled fixed point, 01 leading sign, 10 trailing, 11 unsigned
+    int _sf;  // scaling factor
 public:
     num_desc_t(const eis_mf_t& mf, t_uint64 word, int is_fwd);
     // num_desc_t(const eis_mf_t& mf, int addr, int width, int cn, int bit_offset, int nchar, int is_read, int is_fwd, int stype, int sf);
@@ -164,7 +164,7 @@ public:
     int ndigits() const {
         // Returns number of coefficient aka "integer" digits
         int ncoe = n();
-        if (s() != 3) ncoe -= 1;    // sign byte 
+        if (s() != 3) ncoe -= 1;  // sign byte 
         if (s() == 0) ncoe -= (width() == 4) ? 2 : 1;  // exp byte(s)
         return ncoe;
     }

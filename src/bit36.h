@@ -180,7 +180,7 @@ static inline t_int64 negate36(t_uint64 x)
 {
     // overflow not detected
     if (bit36_is_neg(x))
-        return ((~x & MASK36) + 1) & MASK36;    // todo: only one mask needed?
+        return ((~x & MASK36) + 1) & MASK36;
     else
         return (- x) & MASK36;
 }
@@ -198,7 +198,7 @@ static inline int32 negate18(t_uint64 x)
 {
     // overflow not detected
     if (bit18_is_neg(x))
-        return ((~x & MASK18) + 1) & MASK18;    // todo: only one mask needed?
+        return ((~x & MASK18) + 1) & MASK18;
     else
         return (- x) & MASK18;
 }
