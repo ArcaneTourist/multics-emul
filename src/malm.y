@@ -12,7 +12,7 @@ extern char* yytext;
 
 static instr_t instr;
 static char* operand;
-static int is_eis[1024];	// hack
+static int is_eis[1024];    // hack
 static int lookup_mod(const char *s, int *tm, int *td);
 %}
 
@@ -54,7 +54,7 @@ stmt : eol
 #endif
 #if 0
 		t_uint64 word;
-		encode_instr(&instr, &word);	
+		encode_instr(&instr, &word);    
 		printf("Got a stmt on line %d: %012llo  %s\n\n",
 			yylineno - 1,
 			word,
@@ -256,12 +256,12 @@ void reg2text(char* buf, uint r)
 	switch(r) {
 		case 0: *buf = 0; return;
 		case 1: strcpy(buf, "au"); return;
-		case 2:	strcpy(buf, "qu"); return;
-		case 3:	strcpy(buf, "du"); return;
-		case 4:	strcpy(buf, "ic"); return;
+		case 2: strcpy(buf, "qu"); return;
+		case 3: strcpy(buf, "du"); return;
+		case 4: strcpy(buf, "ic"); return;
 		case 5: strcpy(buf, "al"); return;
 		case 6: strcpy(buf, "ql"); return;
-		case 7:	strcpy(buf, "dl"); return;
+		case 7: strcpy(buf, "dl"); return;
 		case 010: strcpy(buf, "x0"); return;
 		case 011: strcpy(buf, "x1"); return;
 		case 012: strcpy(buf, "x2"); return;

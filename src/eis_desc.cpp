@@ -21,6 +21,14 @@
         both put() a get() for the same descriptor might be undefined
         behavior.
 */
+/*
+   Copyright (c) 2007-2013 Michael Mondy
+
+   This software is made available under the terms of the
+   ICU License -- ICU 1.8.1 and later.     
+   See the LICENSE file at the top-level directory of this distribution and
+   at http://example.org/project/LICENSE.
+*/
 
 /*
     OLD:
@@ -478,7 +486,7 @@ static void fix_mf_len(uint *np, const eis_mf_t* mfp, int nbits)
     if (mfp->rl) {
         switch(*np) {
             // case 0: // illegal
-             case 1:    // au
+            case 1:    // au
                 *np = reg_A >> 18;  // AL39 shows extended range for "a", but not "au"
                 return;
             case 05: // a

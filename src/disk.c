@@ -1,8 +1,18 @@
 /*
     disk.c -- disk drives
 
+    This is just a sketch; the emulator does not yet handle disks.
+
     See manual AN87
 
+*/
+/*
+   Copyright (c) 2007-2013 Michael Mondy
+
+   This software is made available under the terms of the
+   ICU License -- ICU 1.8.1 and later.     
+   See the LICENSE file at the top-level directory of this distribution and
+   at http://example.org/project/LICENSE.
 */
 
 #include "hw6180.h"

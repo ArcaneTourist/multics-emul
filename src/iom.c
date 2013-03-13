@@ -18,6 +18,14 @@
         Move the few non extern globals into iom_t.  This includes the
         one hidden in get_chan().
 */
+/*
+   Copyright (c) 2007-2013 Michael Mondy
+
+   This software is made available under the terms of the
+   ICU License -- ICU 1.8.1 and later.     
+   See the LICENSE file at the top-level directory of this distribution and
+   at http://example.org/project/LICENSE.
+*/
 
 /*
 
@@ -591,7 +599,9 @@ int do_channel(channel_t *chanp)
             log_msg(WARN_MSG, moi, "Channel has error flag set.\n");
             ret = 1;
             // Don't break -- we need to get status
-        } else if (chanp->have_status)
+        } else if (chanp->state == chn_need_status)
+            log_msg(INFO_MSG, moi, "Channel needs to do a status service.\n");
+        else if (chanp->have_status)
             log_msg(INFO_MSG, moi, "Channel has status from device.\n");
         else {
             // activity should be pending
@@ -611,13 +621,9 @@ int do_channel(channel_t *chanp)
 
 static void print_chan_state(const char* moi, channel_t* chanp)
 {
-    static const char* states[] = {
-        "idle", "pcw rcvd", "pcw sent", "pcw done", "cmd sent", "io sent", 
-        "err" };
     log_msg(DEBUG_MSG, moi, "Channel %d: state = %s (%d), have status = %c, err = %c; n-svcs = %d.\n",
         chanp->chan,
-        (chanp->state >= 0 && chanp->state < ARRAY_SIZE(states)) ?
-            states[chanp->state] : "unknown",
+        chn_state_text(chanp->state),
         chanp->state,
         chanp->have_status ? 'Y' : 'N',
         chanp->err ? 'Y' : 'N',
@@ -680,20 +686,17 @@ static int run_channel(int chan)
     // =========================================================================
 
     /*
-     * First, check the status of any prior command
+     * First, check the status of any prior command for error conditions
      */
 
-    if (chanp->state == chn_pcw_rcvd) {
-        // Channel was idle and this is the initial call to send the PCW
-        chanp->have_status = 0;
-    } else {
+    if (chanp->state == chn_cmd_sent || chanp->state == chn_err) {
         // Channel is busy.
 
         // We should not still be waiting on the attached device (we're not
         // re-invoked until status is available).
         // Nor should we be invoked for an idle channel.
         if (! chanp->have_status && chanp->state != chn_err && ! chanp->err) {
-            log_msg(WARN_MSG, moi, "Channel %d activated, but still waiting on device.\n", chan);
+            log_msg(WARN_MSG, moi, "Channel %d activate, but still waiting on device.\n", chan);
             cancel_run(STOP_WARN);
             return 0;
         }
@@ -701,57 +704,30 @@ static int run_channel(int chan)
         // If the attached device has terminated operations, we'll need
         // to do a status service and finish off the current connection
 
-        flag_t do_status_svc = 0;
         if (chanp->status.major != 0) {
             // Both failed DCW loops or a failed initial PCW are caught here
             log_msg(INFO_MSG, moi, "Channel %d reports non-zero major status; terminating DCW loop and performing status service.\n", chan);
-            do_status_svc = 1;
-        }
-        if (chanp->err || chanp->state == chn_err) {
+            chanp->state = chn_need_status;
+        } else if (chanp->err || chanp->state == chn_err) {
             log_msg(NOTIFY_MSG, moi, "Channel %d reports internal error; doing status.\n", chanp->chan);
-            do_status_svc = 1;
+            chanp->state = chn_need_status;
+        } else if (chanp->control == 0 && ! chanp->need_indir_svc && ! first_list) {
+            // no work left
+            // FIXME: Should we handle this case in phase two below (may affect marker
+            // interrupts) ?
+            log_msg(INFO_MSG, moi, "Channel %d out of work; doing status.\n", chanp->chan);
+            chanp->state = chn_need_status;
         }
-        if (! do_status_svc)
-            if (chanp->control == 0 && ! chanp->need_indir_svc && ! first_list) {
-                log_msg(INFO_MSG, moi, "Channel %d out of work; doing status.\n", chanp->chan);
-                do_status_svc = 1;  // no work left
-            }
     
         // BUG: enable.   BUG: enabling kills the boot...
         // chanp->have_status = 0;  // we just processed it
-    
-        // FIXME: Instead of doing the status here, add a state for need-status-svc
-        // and perhaps for status-svc-done
 
-        if (do_status_svc) {
-            int ret = 0;
-            if (chanp->err || chanp->state == chn_err)
-                ret = 1;
-            /*
-             * Third of four phases -- request a status service
-             */
-            // BUG: skip status service if system fault exists
-            log_msg(DEBUG_MSG, moi, "Requesting Status service\n");
-            status_service(chan);
-    
-            /*
-             * Fourth of four phases
-             *
-             * 3.0 -- Following the status service, the channel will request the
-             * IOM to do a multiplex interrupt service.
-             *
-             *
-             */
-            log_msg(INFO_MSG, moi, "Sending terminate interrupt.\n");
-            if (send_terminate_interrupt(chan))
-                ret = 1;
-            chanp->state = chn_idle;
-            // BUG: move have_status=0 to after setting do_status_svc
-            chanp->have_status = 0; // we just processed it
-            return ret;
-        }
+        // If we reach this point w/o resetting the state to chn_need_status,
+        // we're busy and the channel hasn't terminated operations, so we don't
+        // need to do a status service.  We'll handle the non-terminal pcw/dcw
+        // completion in phase two below.
     }
-
+    
     // =========================================================================
 
     /*
@@ -773,6 +749,7 @@ static int run_channel(int chan)
             chanp->state = chn_err;
             return 1;
         }
+        // FIXME: we could probably just do a return(0) here and skip the code below
         if (chanp->have_status) {
             log_msg(INFO_MSG, moi, "Device took PCW instantaneously...\n");
             if (chanp->state != chn_cmd_sent) {
@@ -805,64 +782,91 @@ static int run_channel(int chan)
      *      of lists?)
      */
 
-    extern DEVICE cpu_dev;
-    if (iom.channels[chan].type == DEV_CON) {
-        ++ opt_debug; ++ cpu_dev.dctrl;
-    }
 
-    int ret = 0;
 
-    log_msg(DEBUG_MSG, moi, "In channel loop.\n");
-    // log_msg(DEBUG_MSG, moi, "In channel loop for state %d\n", chanp->state);
-
-    if (chanp->control == 2 || chanp->need_indir_svc || first_list) {
-        // Do a list service
-        chanp->need_indir_svc = 0;
-        int addr;
-        log_msg(DEBUG_MSG, moi, "Asking for %s list service (svc # %d).\n", first_list ? "first" : "another", chanp->n_list + 1);
-        if (list_service(chan, first_list, NULL, &addr) != 0) {
-            ret = 1;
-            log_msg(WARN_MSG, moi, "List service indicates failure\n");
-        } else {
-            ++ chanp->n_list;
-            log_msg(DEBUG_MSG, moi, "List service yields DCW at addr 0%o\n", addr);
-            chanp->control = -1;
-            // Send request to device
-            ret = do_dcw(chan, addr, &chanp->control, &chanp->need_indir_svc);
-            log_msg(DEBUG_MSG, moi, "Back from latest do_dcw (at %0o); control = %d; have-status = %d\n", addr, chanp->control, chanp->have_status);
-            if (ret != 0) {
-                log_msg(NOTIFY_MSG, moi, "do_dcw returns non-zero.\n");
+    if (chanp->state == chn_cmd_sent) {
+        log_msg(DEBUG_MSG, moi, "In channel loop for state %s\n", chn_state_text(chanp->state));
+        int ret = 0;
+    
+        if (chanp->control == 2 || chanp->need_indir_svc || first_list) {
+            // Do a list service
+            chanp->need_indir_svc = 0;
+            int addr;
+            log_msg(DEBUG_MSG, moi, "Asking for %s list service (svc # %d).\n", first_list ? "first" : "another", chanp->n_list + 1);
+            if (list_service(chan, first_list, NULL, &addr) != 0) {
+                ret = 1;
+                log_msg(WARN_MSG, moi, "List service indicates failure\n");
+            } else {
+                ++ chanp->n_list;
+                log_msg(DEBUG_MSG, moi, "List service yields DCW at addr 0%o\n", addr);
+                chanp->control = -1;
+                // Send request to device
+                ret = do_dcw(chan, addr, &chanp->control, &chanp->need_indir_svc);
+                log_msg(DEBUG_MSG, moi, "Back from latest do_dcw (at %0o); control = %d; have-status = %d\n", addr, chanp->control, chanp->have_status);
+                if (ret != 0) {
+                    log_msg(NOTIFY_MSG, moi, "do_dcw returns non-zero.\n");
+                }
             }
-        }
-    } else if (chanp->control == 3) {
-        // BUG: set marker interrupt and proceed (list service)
-        // Marker interrupts indicate normal completion of
-        // a PCW or IDCW
-        // PCW control == 3
-        // See also: 3.2.7, 3.5.2, 4.3.6
-        // See also 3.1.3
+        } else if (chanp->control == 3) {
+            // BUG: set marker interrupt and proceed (list service)
+            // Marker interrupts indicate normal completion of
+            // a PCW or IDCW
+            // PCW control == 3
+            // See also: 3.2.7, 3.5.2, 4.3.6
+            // See also 3.1.3
 #if 1
-        log_msg(ERR_MSG, moi, "Set marker not implemented\n");
-        ret = 1;
+            log_msg(ERR_MSG, moi, "Set marker not implemented\n");
+            ret = 1;
 #else
-        // Boot tape never requests marker interrupts...
-        ret = send_marker_interrupt(chan);
-        if (ret == 0) {
-            log_msg(NOTIFY_MSG, moi, "Asking for a list service due to set-marker-interrupt-and-proceed.\n");
-            chanp->control = 2;
-        }
+            // Boot tape never requests marker interrupts...
+            ret = send_marker_interrupt(chan);
+            if (ret == 0) {
+                log_msg(NOTIFY_MSG, moi, "Asking for a list service due to set-marker-interrupt-and-proceed.\n");
+                chanp->control = 2;
+            }
 #endif
-    } else {
-        log_msg(ERR_MSG, moi, "Bad PCW/DCW control, %d\n", chanp->control);
-        cancel_run(STOP_BUG);
-        ret = 1;
+        } else {
+            log_msg(ERR_MSG, moi, "Bad PCW/DCW control, %d\n", chanp->control);
+            cancel_run(STOP_BUG);
+            ret = 1;
+        }
+        return ret;
     }
 
-    if (iom.channels[chan].type == DEV_CON) {
-        -- opt_debug; -- cpu_dev.dctrl;
+    // =========================================================================
+
+    /*
+     * Third and Fourth phases
+     */
+
+    if (chanp->state == chn_need_status) {
+        int ret = 0;
+        if (chanp->err || chanp->state == chn_err)
+            ret = 1;
+        /*
+         * Third of four phases -- request a status service
+         */
+        // BUG: skip status service if system fault exists
+        log_msg(DEBUG_MSG, moi, "Requesting Status service\n");
+        status_service(chan);
+
+        /*
+         * Fourth of four phases
+         *
+         * 3.0 -- Following the status service, the channel will request the
+         * IOM to do a multiplex interrupt service.
+         *
+         */
+        log_msg(INFO_MSG, moi, "Sending terminate interrupt.\n");
+        if (send_terminate_interrupt(chan))
+            ret = 1;
+        chanp->state = chn_idle;
+        // BUG: move setting have_status=0 to after early check for err
+        chanp->have_status = 0; // we just processed it
+        return ret;
     }
 
-    return ret;
+    return 0;
 }
 
 // ============================================================================

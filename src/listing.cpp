@@ -16,6 +16,14 @@
             ENTRY TO (may next in proc)
             END PROCEDURE (may nest)
 */
+/*
+   Copyright (c) 2007-2013 Michael Mondy
+
+   This software is made available under the terms of the
+   ICU License -- ICU 1.8.1 and later.     
+   See the LICENSE file at the top-level directory of this distribution and
+   at http://example.org/project/LICENSE.
+*/
 
 using namespace std;
 #include "seginfo.hpp"
@@ -487,7 +495,7 @@ static int listing_parse(FILE *f, source_file &src)
                 // fprintf(stderr, "%s: Found name %s at loc %#o with info %s\n", 
                     // section, dcl_name, dcl_loc, s);
             } else {
-                 // fprintf(stderr, "%s: Found name %s at unspecified loc with info %s\n", section, dcl_name, s);
+                // fprintf(stderr, "%s: Found name %s at unspecified loc with info %s\n", section, dcl_name, s);
             }
             vars[dcl_name] = var_info(dcl_name, t, sz, sz2);
         }

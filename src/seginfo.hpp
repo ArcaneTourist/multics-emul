@@ -1,6 +1,14 @@
 /*
  * Support for symbolic debugging -- information about segments
 */
+/*
+   Copyright (c) 2007-2013 Michael Mondy
+
+   This software is made available under the terms of the
+   ICU License -- ICU 1.8.1 and later.     
+   See the LICENSE file at the top-level directory of this distribution and
+   at http://example.org/project/LICENSE.
+*/
 
 #ifndef _SEGINFO_H
 #define _SEGINFO_H

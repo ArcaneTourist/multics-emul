@@ -6,6 +6,14 @@
     The main difference between settings in sys_opts and the #defines here is
     that the #defines here are expected to have noticable performance impact.
 */
+/*
+   Copyright (c) 2007-2013 Michael Mondy
+
+   This software is made available under the terms of the
+   ICU License -- ICU 1.8.1 and later.     
+   See the LICENSE file at the top-level directory of this distribution and
+   at http://example.org/project/LICENSE.
+*/
 
 #ifndef _OPTIONS_H
 #define _OPTIONS_H

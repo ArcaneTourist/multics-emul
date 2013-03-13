@@ -900,3 +900,5 @@ History of pre-release versions
 === Pre-Version 123
     Switch some x* commands to more SIMH-style "show <dev> <special>" commands.
     Add "show iom mbx".
+=== Pre-Version 124
+    Minor code cleanup

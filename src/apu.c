@@ -15,6 +15,14 @@
         recognition.  We handle recognition in the CPU source file in
         the cycle loop.
 */
+/*
+   Copyright (c) 2007-2013 Michael Mondy
+
+   This software is made available under the terms of the
+   ICU License -- ICU 1.8.1 and later.     
+   See the LICENSE file at the top-level directory of this distribution and
+   at http://example.org/project/LICENSE.
+*/
 
 
 #include "hw6180.h"
@@ -847,7 +855,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 if (opt_debug>0) {
                     log_msg(DEBUG_MSG, "APU",
                         "RI for repeated instr: Setting X[%d] to CA 0%o(%d).\n",
-                         n, reg_X[n], reg_X[n]);
+                        n, reg_X[n], reg_X[n]);
                     log_msg(DEBUG_MSG, "APU",
                         "RI for repeated instr: Not doing address appending on CA.\n");
                 }

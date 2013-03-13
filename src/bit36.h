@@ -1,5 +1,3 @@
-// ============================================================================
-// === Operations on 36-bit pseudo words
 /*
     Operations on 36-bit pseudo words
 
@@ -17,6 +15,14 @@
 
     The following macros support operating on 64bit words as though the
     right-most bit were bit 35.
+*/
+/*
+   Copyright (c) 2007-2013 Michael Mondy
+
+   This software is made available under the terms of the
+   ICU License -- ICU 1.8.1 and later.     
+   See the LICENSE file at the top-level directory of this distribution and
+   at http://example.org/project/LICENSE.
 */
 
 
@@ -156,7 +162,7 @@ static inline int bits2num(unsigned nbits, unsigned x)
 #if 1
     // make compiler happer about nbits - 1
     if (nbits < 2 || nbits >= (8*sizeof(int)))
-         return ~0;
+        return ~0;
 #endif
 
     unsigned nb = nbits - 1;

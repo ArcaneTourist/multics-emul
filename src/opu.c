@@ -15,6 +15,14 @@
     BUG: Create a "store_op" that checks TPR.is_value before storing 
     against TPR.CA.   This should handle most illegal modifier issues.
 */
+/*
+   Copyright (c) 2007-2013 Michael Mondy
+
+   This software is made available under the terms of the
+   ICU License -- ICU 1.8.1 and later.     
+   See the LICENSE file at the top-level directory of this distribution and
+   at http://example.org/project/LICENSE.
+*/
 
 #include <ctype.h>  // for isprint
 #include "hw6180.h"
@@ -3622,7 +3630,7 @@ static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest)
                     IR.neg = is_neg;
                 }
                 if (get_addr_mode() != ABSOLUTE_mode)
-                     cancel_run(STOP_WARN);
+                    cancel_run(STOP_WARN);
             }
             if ((result >> 18) != 0 && ! IR.carry) {
                 log_msg(WARN_MSG, "OPU::add36", "Carry is probably wrong for ,dl operand.\n");

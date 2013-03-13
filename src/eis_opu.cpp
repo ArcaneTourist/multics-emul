@@ -7,6 +7,14 @@
     and fetches/puts.
 
 */
+/*
+   Copyright (c) 2007-2013 Michael Mondy
+
+   This software is made available under the terms of the
+   ICU License -- ICU 1.8.1 and later.     
+   See the LICENSE file at the top-level directory of this distribution and
+   at http://example.org/project/LICENSE.
+*/
 
 using namespace std;
 #include <iostream>
@@ -334,6 +342,7 @@ int op_btd(const instr_t* ip)
     t_uint64 word1, word2;
     if (fetch_mf_ops(&ip->mods.mf1, &word1, &mf2, &word2, NULL, NULL) != 0)
         return 1;
+    log_msg(INFO_MSG, moi, "sign-ctl=%d\n", sign_ctl);
 
     alpha_desc_t desc1(ip->mods.mf1, word1, 1); // will be 9bit
     num_desc_t desc2(mf2, word2, 1);
@@ -1837,7 +1846,7 @@ static int _op_dv3d(const instr_t* ip)
     flag_t trunc = (ip->addr >> 8) & 1; // "T"
     flag_t round = (ip->addr >> 7) & 1; // "R"
 
-    log_msg(DEBUG_MSG, moi, "P(4-bit sign ctl) = %c, T(trunc flt enable) = %c, R(rounding) = %c.\n",
+    log_msg(INFO_MSG, moi, "P(4-bit sign ctl) = %c, T(trunc flt enable) = %c, R(rounding) = %c.\n",
         sign_ctl ? 'Y' : 'N',
         trunc ? 'Y' : 'N',
         round ? 'Y' : 'N');
