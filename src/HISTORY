@@ -897,8 +897,17 @@ History of pre-release versions
     Correct IOM bootchannel load to memory to occur at "boot", not "init".
     Use a FAULT_EXEC cycle to handle execution of trap pairs so that we
     can trouble fault during the trap pair execution if needed.
-=== Pre-Version 123
+
+=== Pre-Version 123, Dec 19, 2012
     Switch some x* commands to more SIMH-style "show <dev> <special>" commands.
     Add "show iom mbx".
-=== Pre-Version 124
+
+=== Pre-Version 124, Dec 19, 2012
     Minor code cleanup
+
+=== Pre-Version 125, Feb 28, 2013
+    Add copyright notices.
+    Rearrangement of some code in the IOM.
+
+=== Pre-Version 126, Feb 28, 2013
+    Cleanup white space in sources.

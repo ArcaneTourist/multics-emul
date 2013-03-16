@@ -19,6 +19,7 @@
 
 #include <ctype.h>
 #include <time.h>
+#include <unistd.h>
 #include "hw6180.h"
 
 extern iom_t iom;
@@ -321,7 +322,7 @@ int con_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
                 time_t now = time(NULL);
                 while (time(NULL) < now + 30 && ! con_statep->have_eol) {
                     check_keyboard(chan);
-                    sleep(1);       // FIXME: blocking
+                    usleep(100000);       // FIXME: blocking
                 }
                 // Impossible to both have EOL and have buffer overflow
                 if (con_statep->tailp >= con_statep->buf + sizeof(con_statep->buf)) {

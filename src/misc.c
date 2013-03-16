@@ -13,9 +13,10 @@
    at http://example.org/project/LICENSE.
 */
 
-#include "hw6180.h"
 #include <stdio.h>
 #include <stdarg.h>
+#include "hw6180.h"
+#include "seginfo.hpp"
 
 extern DEVICE cpu_dev;
 extern FILE *sim_deb, *sim_log;

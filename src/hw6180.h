@@ -694,6 +694,7 @@ extern void out_msg(const char* format, ...);
 extern t_stat cmd_seginfo(int32 arg, char *buf);    // display segment info
 extern int apu_show_seg(FILE *st, UNIT *uptr, int val, void *desc); // display segment info
 extern int scan_seg(uint segno, int msgs);  // scan definitions section for procedure entry points
+extern int get_seg_name(uint segno);
 extern int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp);
 extern int cmd_find(int32 arg, char *buf);
 extern int cmd_symtab_parse(int32 arg, char *buf);
@@ -778,6 +779,7 @@ extern int scu_get_config_switches(t_uint64 addr);
 extern int scu_set_config_switches(t_uint64 addr);
 extern void scu_clock_service(void);
 extern int scu_get_calendar(t_uint64 addr);
+extern int scu_set_interrupt(int inum);
 
 /* apu.c */
 extern void set_addr_mode(addr_modes_t mode);
@@ -818,6 +820,7 @@ extern void iom_init(void);
 extern void iom_interrupt(void);
 extern t_stat channel_svc(UNIT *up);
 extern int iom_show_mbx(FILE *st, UNIT *uptr, int val, void *desc);
+extern char* print_dcw(t_addr addr);
 
 /* math.c */
 extern void mpy(t_uint64 a, t_uint64 b, t_uint64* hip, t_uint64 *lowp);

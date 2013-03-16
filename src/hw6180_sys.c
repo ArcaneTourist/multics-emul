@@ -11,6 +11,7 @@
 */
 
 #include "hw6180.h"
+#include "seginfo.hpp"
 #include <ctype.h>
 
 #define MEM_CHECK_UNINIT 1
