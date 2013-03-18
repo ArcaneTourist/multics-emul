@@ -1,0 +1,67 @@
+# This makfile is essentially a wrapper for the original SIMH makefile.
+# The goal is to allow incremental compilation and using SIMH as a
+# library while making few or no changes to the original SIMH makefile.
+
+# Rename the original makefile to makefile.simh and use this file as
+# Makefile or makefile.
+
+# These are the compiler flags (CFLAGS) that need to be passed to SIMH builds
+# for 64bit support.  You can modify the LIB64_CFLAGS to hold whatever
+# additional options you want to see passed into SIMH builds.  Already included
+# is 64bit support.  Examples of other settings to add might include the "-pg"
+# option option (for profiling support).  See below for flags to pass to "make"
+# itself.
+LIB64_CFLAGS = -DUSE_INT64 -DUSE_ADDR64
+# LIB64_CFLAGS += -pg -O1
+
+# These are the options passed to "make" itself for SIMH builds.
+# The cleanest way to pass our CFLAGS to makefile.simh seems to be
+# by overriding (and subverting) the CFLAGS_G var.
+#
+# Note that you should probably always use NO_LTO=1 for a library build.
+SIMH_MAKE = NO_LTO=1 CFLAGS_G="$(LIB64_CFLAGS)"
+# You might want to add DEBUG=1 here.
+# SIMH_MAKE += DEBUG=1
+
+# Note that scp.o is excluded from $(SIM_LIB); we don't want main() in an
+# archive.  Instead, specify the path to scp.o in your link command.
+SIM_LIB = sim_console.o sim_fio.o sim_timer.o sim_sock.o sim_tmxr.o sim_ether.o sim_tape.o sim_disk.o
+
+all: scp.o simh.a
+
+.DEFAULT:
+	$(MAKE) -f makefile.simh $(SIMH_MAKE) $@
+
+scp.o $(SIM_LIB) : %.o : %.c
+	$(MAKE) --always-make -f makefile.simh $(SIMH_MAKE) $@
+
+# SIMH's makefile doesn't provide *.h dependencies, so we'll provide that
+scp.o $(SIM_LIB) : *.h
+
+simh.a: $(SIM_LIB)
+	ar cr $@ $?
+
+clean:
+	$(MAKE) --always-make -f makefile.simh $(SIMH_MAKE) $@
+	rm -f *.o *.a
+
+# Optional - dump of variables defined by SIMH's makefile (raw version)
+dump-settings-raw:
+	$(MAKE) -f makefile.simh $(SIMH_MAKE) -pn > .tmp.raw
+	egrep '^[ 	]*(CC|CXX|CFLAGS|[A-Z_]*LDFLAGS|GCC|CC_STD|OS_CCDEFS|LIBEXT)' .tmp.raw
+	@rm -f .tmp.raw
+
+# Optional - dump of variables defined by SIMH's makefile (cooked version)
+dump-settings-cooked:
+	@cp makefile.simh makefile.tmp
+	@echo >> makefile.tmp
+	@echo 'dump-settings:' >> makefile.tmp
+	@echo '\techo DEF: CXX = $$(CXX)' >> makefile.tmp
+	@echo '\techo DEF: CC = $$(CC)' >> makefile.tmp
+	@echo '\techo DEF: CFLAGS = $$(CFLAGS)' >> makefile.tmp
+	@echo '\techo "DEF: # LD = $$(LD)"' >> makefile.tmp
+	@echo '\techo DEF: LDFLAGS = $$(LDFLAGS)' >> makefile.tmp
+	@$(MAKE) -f makefile.tmp $(SIMH_MAKE) dump-settings > .tmp.cooked
+	@sed -n -e 's/^DEF: //p' .tmp.cooked
+	@rm -f makefile.tmp .tmp.cooked
+

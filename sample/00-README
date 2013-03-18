@@ -1,0 +1,13 @@
+The Makefile.decNumber file is provided because the decNumber sources
+do not include a makefile.
+
+The *.ini files are for use with the emulator.
+
+The run.sh is a sample driver script.  The author usually creates ini files
+in .../multics-emul/etc/, a copy of the run.sh in .../multics-emul/bin/, and
+then, from .../multics-emul/ runs "bin/run.sh etc/multics.run.ini".  See the
+wiki for more about running the emulator.
+
+The patch.* files are optional patches against SIMH.  Each patch
+includes commentary on what the patch does.  Apply with the "patch"
+command.

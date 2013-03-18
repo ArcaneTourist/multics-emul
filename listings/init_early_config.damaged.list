@@ -1,0 +1,139 @@
+THIS FILE IS DAMAGED
+
+          internal static fixed bin(4,0)           initial dcl 14-43
+msu0450devt                            internal static fixed bin(4,0)           initial dcl 14-43
+msu0451devt                            internal static fixed bin(4,0)           initial dcl 14-43
+msu0500devt                            internal static fixed bin(4,0)           initial dcl 14-43
+msu0501devt                            internal static fixed bin(4,0)           initial dcl 14-43
+needs_alt_part                         internal static bit(1)                   initial array packed unaligned dcl 14-81
+number_of_sv                           internal static fixed bin(17,0)          initial array dcl 14-93
+prph_dsk_card_array                    based           structure                level 1 dcl 11-21
+prph_tap_card_array                    based           structure                level 1 dcl 10-21
+rec_per_cyl                            internal static fixed bin(17,0)          initial array dcl 14-108
+rec_per_dev                            internal static fixed bin(21,0)          initial array dcl 14-87
+rec_per_sv                             internal static fixed bin(17,0)          initial array dcl 14-90
+root_card_array                        based           structure                level 1 dcl 13-29
+sect_per_cyl                           internal static fixed bin(17,0)          initial array dcl 15-15
+sect_per_rec                           internal static fixed bin(17,0)          initial array dcl 15-21
+sect_per_sv                            internal static fixed bin(24,0)          initial array dcl 15-18
+sect_per_track                         internal static fixed bin(17,0)          initial array dcl 15-33
+sect_per_vtoc                          internal static fixed bin(17,0)          initial array dcl 15-26
+tracks_per_cyl                         internal static fixed bin(17,0)          initial array dcl 14-111
+valid_sv_string                        internal static char(3)                  initial packed unaligned dcl 14-96
+vtoc_per_rec                           internal static fixed bin(17,0)          initial array dcl 15-29
+words_per_sect                         internal static fixed bin(17,0)          initial array dcl 15-36
+
+NAMES DECLARED BY EXPLICIT CONTEXT.
+IS_FIPS_DEVICE                  001677 constant        entry                    internal dcl 331 ref 255
+add_card                        001457 constant        entry                    internal dcl 294 ref 198 206 207 208 209 210
+disk                            001034 constant        entry                    external dcl 222
+init_early_config               000346 constant        entry                    external dcl 13
+make_card                       001574 constant        entry                    internal dcl 316 ref 150 156 165 169 179 182 187 190
+                                                                                  201 211 265 269 278 282
+
+THERE WERE NO NAMES DECLARED BY CONTEXT OR IMPLICATION.
+
+STORAGE REQUIREMENTS FOR THIS PROGRAM.
+
+	Object	Text	Link	Symbol	Defs	Static
+Start          0       0      2502        2574    2152        2512
+Length      3420    2152        72         607     327           0
+
+BLOCK NAME	         STACK SIZE     TYPE		WHY NONQUICK/WHO SHARES STACK FRAME
+init_early_config                   205 external procedure  is an external procedure.  
+add_card                                internal procedure  shares stack frame of external procedure init_early_config.  
+IS_FIPS_DEVICE                          internal procedure  shares stack frame of external procedure init_early_config.  
+
+STORAGE FOR AUTOMATIC VARIABLES.
+
+STACK FRAME                 LOC IDENTIFIER                  BLOCK NAME
+init_early_config        000100 idx                         init_early_config
+                         000101 card_image                  init_early_config
+                         000121 disk_iom                    init_early_config
+                         000122 disk_channel                init_early_config
+                         000123 disk_num                    init_early_config
+                         000124 sub_num                     init_early_config
+                         000125 part                        init_early_config
+                         000126 lowest_dev_number           init_early_config
+                         000130 clok_cardp                  init_early_config
+                         000132 iom_cardp                   init_early_config
+                         000134 cpu_cardp                   init_early_config
+                         000136 mem_cardp                   init_early_config
+                         000140 part_cardp                  init_early_config
+                         000142 prph_opc_cardp              init_early_config
+                         000144 prph_tap_cardp              init_early_config
+                         000146 prph_dsk_cardp              init_early_config
+                         000150 root_cardp                  init_early_config
+                         000152 seek_command                init_early_config
+                         000170 code                        add_card
+                         000200 i                           IS_FIPS_DEVICE
+
+THE FOLLOWING EXTERNAL OPERATORS ARE USED BY THIS PROGRAM.
+alloc_char_temp     call_ext_out_desc   call_ext_out        return_mac          shorten_stack       ext_entry
+round_fx1
+
+THE FOLLOWING EXTERNAL ENTRIES ARE CALLED BY THIS PROGRAM.
+config_$add                   config_$clear                 config_$delete                config_$find
+config_$find_2                cv_config_card_               io_chnl_util$name_to_iom      syserr
+
+THE FOLLOWING EXTERNAL VARIABLES ARE USED BY THIS PROGRAM.
+config_data_$disk_drive_model_names                         sys_boot_info$bootload_mem_size
+sys_boot_info$console_channel_number                        sys_boot_info$console_iom_number
+sys_boot_info$console_model   sys_boot_info$default_time_zone
+sys_boot_info$disk_device_has_sv                            sys_boot_info$disk_device_number
+sys_boot_info$disk_device_sv  sys_boot_info$disk_model_number                             sys_boot_info$disk_mpc_chanid
+sys_boot_info$imu_style_iom   sys_boot_info$iom_port_table  sys_boot_info$tape_channel_number
+sys_boot_info$tape_device_number                            sys_boot_info$tape_iom_number
+sys_boot_info$tape_mpc_fw_name
+
+
+
+
+   LINE    LOC      LINE    LOC      LINE    LOC      LINE    LOC      LINE    LOC      LINE    LOC      LINE    LOC   
+14   84 000254        13 000345       148 000354       150 000361       151 000371       153 000404       154 000411
+    156 000415       157 000425       158 000430       159 000434       161 000440       163 000452       165 000454
+    166 000464       167 000471       169 000503       171 000513       172 000517       173 000521       175 000523
+    177 000535       179 000544       182 000557       183 000567       185 000573       187 000574       190 000607
+    191 000617       194 000624       195 000630       196 000632       198 000644       201 000654       202 000664
+    203 000670       206 000702       207 000712       208 000722       209 000732       210 000742       211 000752
+    212 000762       213 000775       214 001001       215 001004       216 001017       217 001032       222 001033
+    225 001042       226 001044       227 001055       228 001060       229 001062       231 001106       233 001122
+    234 001126       235 001130       236 001143       238 001171       239 001205       241 001225       242 001227
+    244 001246       246 001255       252 001273       253 001305       254 001307       255 001312       257 001321
+    261 001323       263 001330       265 001335       266 001345       267 001351       269 001352       270 001362
+    272 001375       274 001377       276 001400       278 001404       279 001414       280 001420       282 001421
+    283 001431       284 001436       287 001440       288 001442       289 001444       291 001456       294 001457
+    307 001470       308 001525       311 001556       313 001573       316 001574       321 001605       322 001642
+    325 001673       326 001676       331 001677       340 001701       341 001711       343 001730       344 001732
+
+
+                                          -----------------------------------------------------------
+
+
+Historical Background
+
+This edition of the Multics software materials and documentation is provided and donated
+to Massachusetts Institute of Technology by Group BULL including BULL HN Information Systems Inc. 
+as a contribution to computer science knowledge.  
+This donation is made also to give evidence of the common contributions of Massachusetts Institute of Technology,
+Bell Laboratories, General Electric, Honeywell Information Systems Inc., Honeywell BULL Inc., Groupe BULL
+and BULL HN Information Systems Inc. to the development of this operating system. 
+Multics development was initiated by Massachusetts Institute of Technology Project MAC (1963-1970),
+renamed the MIT Laboratory for Computer Science and Artificial Intelligence in the mid 1970s, under the leadership
+of Professor Fernando Jose Corbato. Users consider that Multics provided the best software architecture 
+for managing computer hardware properly and for executing programs. Many subsequent operating systems 
+incorporated Multics principles.
+Multics was distributed in 1975 to 2000 by Group Bull in Europe , and in the U.S. by Bull HN Information Systems Inc., 
+as successor in interest by change in name only to Honeywell Bull Inc. and Honeywell Information Systems Inc. .
+
+                                          -----------------------------------------------------------
+
+Permission to use, copy, modify, and distribute these programs and their documentation for any purpose and without
+fee is hereby granted,provided that the below copyright notice and historical background appear in all copies
+and that both the copyright notice and historical background and this permission notice appear in supporting
+documentation, and that the names of MIT, HIS, BULL or BULL HN not be used in advertising or publicity pertaining
+to distribution of the programs without specific prior written permission.
+    Copyright 1972 by Massachusetts Institute of Technology and Honeywell Information Systems Inc.
+    Copyright 2006 by BULL HN Information Systems Inc.
+    Copyright 2006 by Bull SAS
+    All Rights Reserved

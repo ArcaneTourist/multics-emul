@@ -1,0 +1,24 @@
+OBJS = decContext.o decDouble.o decNumber.o decPacked.o decQuad.o decSingle.o decimal128.o decimal32.o decimal64.o
+
+CFLAGS=-g -I. -std=c99 -O3 -pedantic -Wall -march=native
+
+LDLIBS=decNumber.a
+
+decNumber.a: ${OBJS}
+	ar cr $@ $?
+
+test: decNumber.a example1 example2 example3 example4 example5 example6 example7 example8
+	./example1 4 5
+	./example2 1 2 3
+	./example3 4 5 6
+	./example4 7 8
+	./example5 35
+	./example6
+	./example7 21 29
+	./example8 3 2
+
+clean:
+	rm -f example?
+	rm -f *.o
+	rm -f *.a
+
