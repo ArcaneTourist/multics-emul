@@ -21,11 +21,13 @@ LIB64_CFLAGS = -DUSE_INT64 -DUSE_ADDR64
 # Note that you should probably always use NO_LTO=1 for a library build.
 SIMH_MAKE = NO_LTO=1 CFLAGS_G="$(LIB64_CFLAGS)"
 # You might want to add DEBUG=1 here.
-# SIMH_MAKE += DEBUG=1
+SIMH_MAKE += DEBUG=1
+# SIMH's async seems broken on Linux at the moment.
+SIMH_MAKE += NOASYNCH=1
 
 # Note that scp.o is excluded from $(SIM_LIB); we don't want main() in an
 # archive.  Instead, specify the path to scp.o in your link command.
-SIM_LIB = sim_console.o sim_fio.o sim_timer.o sim_sock.o sim_tmxr.o sim_ether.o sim_tape.o sim_disk.o
+SIM_LIB = sim_console.o sim_fio.o sim_timer.o sim_sock.o sim_tmxr.o sim_ether.o sim_tape.o sim_disk.o sim_serial.o
 
 all: scp.o simh.a
 

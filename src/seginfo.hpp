@@ -13,7 +13,7 @@
 #ifndef _SEGINFO_H
 #define _SEGINFO_H
 
-#ifndef _SIM_DEFS_H_
+#if !defined(SIM_DEFS_H_) && !defined(_SIM_DEFS_H_)
 #include <stdint.h>
 typedef uint64_t t_uint64;
 #endif

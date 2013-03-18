@@ -266,16 +266,16 @@ static void hw6180_init(void)
 
     /* Console */
     int con_chan = 012; // channels 010 and higher are probed for an operators console
-    iom.channels[con_chan].type = DEV_CON;
+    iom.channels[con_chan].type = DEVT_CON;
     iom.channels[con_chan].dev = &opcon_dev;
 
     /* Disk */
     const int disk_chan = 20;
-    iom.channels[disk_chan].type = DEV_DISK;
+    iom.channels[disk_chan].type = DEVT_DISK;
     iom.channels[disk_chan].dev = &disk_dev;
 
     /* Tape */
-    iom.channels[sys_opts.tape_chan].type = DEV_TAPE;
+    iom.channels[sys_opts.tape_chan].type = DEVT_TAPE;
     iom.channels[sys_opts.tape_chan].dev = &tape_dev;
 
     log_msg(INFO_MSG, "SYS::init", "Once-only initialization complete.\n");

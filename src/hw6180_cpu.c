@@ -290,7 +290,7 @@ DEVICE disk_dev = {
 
 
 MTAB opcon_mod[] = {
-    { MTAB_XTD | MTAB_VDV | MTAB_VAL | MTAB_NC,
+    { MTAB_XTD | MTAB_VDV | MTAB_VALO | MTAB_NC,
         0, NULL, "AUTOINPUT",
         opcon_autoinput_set, opcon_autoinput_show, NULL },
     { 0 }
@@ -707,7 +707,7 @@ static void init_memory_iox()
     int tape_chan = 036;                // 12 bits;
     int port = iom.scu_port;    // 3 bits;  SCU port (to which bootload IOM is attached (deduced))
 
-    iom.channels[tape_chan] = DEV_TAPE;
+    iom.channels[tape_chan] = DEVT_TAPE;
     iom.devices[tape_chan] = &tape_dev;
 
     int base = 014;         // 12 bits; IOM base

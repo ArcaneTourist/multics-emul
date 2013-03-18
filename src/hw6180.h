@@ -101,7 +101,7 @@ enum sim_stops {
 enum active_dev { ADEV_NONE, ADEV_CPU, ADEV_IOM };
 
 // Devices connected to an IOM (I/O multiplexer)
-enum dev_type { DEV_NONE, DEV_TAPE, DEV_CON, DEV_DISK };
+enum dev_type { DEVT_NONE, DEVT_TAPE, DEVT_CON, DEVT_DISK };
 
 // Logging levels.  Messages at level "debug" and level "info" may be re-routed
 // to a file via the debug log command (messages at all levels may be

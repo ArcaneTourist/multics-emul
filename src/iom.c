@@ -238,7 +238,7 @@ void iom_init()
         iom.ports[i] = -1;
     }
     for (int i = 0; i < ARRAY_SIZE(iom.channels); ++i) {
-        iom.channels[i].type = DEV_NONE;
+        iom.channels[i].type = DEVT_NONE;
     }
 
     for (int chan = 0; chan < max_channels; ++chan) {
@@ -1236,7 +1236,7 @@ static int dev_send_idcw(int chan, pcw_t *p)
     enum dev_type type = iom.channels[chan].type;
 
     chan_devinfo* devinfop = NULL;
-    if (type == DEV_TAPE || type == DEV_DISK) {
+    if (type == DEVT_TAPE || type == DEVT_DISK) {
         // FIXME: devinfo probably needs to partially be per UNIT, not per channel
         devinfop = devp->ctxt;
         if (devinfop == NULL) {
@@ -1262,17 +1262,17 @@ static int dev_send_idcw(int chan, pcw_t *p)
 
     int ret;
     switch(type) {
-        case DEV_NONE:
+        case DEVT_NONE:
             // BUG: no device connected; what's the appropriate fault code(s) ?
             chanp->status.power_off = 1;
             log_msg(WARN_MSG, moi, "Device on channel %#o (%d) is missing.\n", chan, chan);
             iom_fault(chan, moi, 0, 0);
             cancel_run(STOP_WARN);
             return 1;
-        case DEV_TAPE:
+        case DEVT_TAPE:
             ret = mt_iom_cmd(devinfop);
             break;
-        case DEV_CON: {
+        case DEVT_CON: {
             int ret = con_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chanp->status.major, &chanp->status.substatus);
             chanp->state = chn_cmd_sent;
             chanp->have_status = 1;     // FIXME: con_iom_cmd should set this
@@ -1280,7 +1280,7 @@ static int dev_send_idcw(int chan, pcw_t *p)
             log_msg(DEBUG_MSG, moi, "CON returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             return ret; // caller must choose between our return and the chan_status.{major,substatus}
         }
-        case DEV_DISK:
+        case DEVT_DISK:
             ret = disk_iom_cmd(devinfop);
             log_msg(INFO_MSG, moi, "DISK returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             break;
@@ -1369,26 +1369,26 @@ static int dev_io(int chan, t_uint64 *wordp)
     chanp->status.power_off = 0;
 
     switch(iom.channels[chan].type) {
-        case DEV_NONE:
+        case DEVT_NONE:
             // BUG: no device connected, what's the fault code(s) ?
             chanp->status.power_off = 1;
             iom_fault(chan, moi, 0, 0);
             log_msg(WARN_MSG, "IOM::dev-io", "Device on channel %#o (%d) is missing.\n", chan, chan);
             cancel_run(STOP_WARN);
             return 1;
-        case DEV_TAPE: {
+        case DEVT_TAPE: {
             int ret = mt_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
             if (ret != 0 || chanp->status.major != 0)
                 log_msg(DEBUG_MSG, "IOM::dev-io", "MT returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             return ret; // caller must choose between our return and the status.{major,substatus}
         }
-        case DEV_CON: {
+        case DEVT_CON: {
             int ret = con_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
             if (ret != 0 || chanp->status.major != 0)
                 log_msg(DEBUG_MSG, "IOM::dev-io", "CON returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             return ret; // caller must choose between our return and the status.{major,substatus}
         }
-        case DEV_DISK: {
+        case DEVT_DISK: {
             int ret = disk_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
             // TODO: uncomment & switch to DEBUG: if (ret != 0 || chanp->status.major != 0)
                 log_msg(INFO_MSG, "IOM::dev-io", "DISK returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
