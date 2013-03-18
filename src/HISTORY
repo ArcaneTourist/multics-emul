@@ -910,4 +910,4 @@ History of pre-release versions
     Rearrangement of some code in the IOM.
 
 === Pre-Version 126, Feb 28, 2013
-    Cleanup white space in sources.
+    Cleanup white space in sources.  Updates for compiler warnings.
