@@ -60,7 +60,7 @@ static int seg_debug_init_done = 0;
 static void print_src_loc(const char *prefix, addr_modes_t addr_mode, int segno, int ic, const instr_t* instrp);
 static void check_autos(int segno, int ic);
 static void dump_autos(void);
-static void out_auto(ostringstream& obuf, const var_info& v, int addr, int is_initialized);
+static int out_auto(ostringstream& obuf, const var_info& v, int addr, int is_initialized);
 static void frame_trace(void);
 static int walk_stack(int output, list<seg_addr_t>* frame_listp);
 // static int push_frame(const seg_addr_t& framep, const linkage_info* lip);
@@ -1663,16 +1663,18 @@ void multics_stack_frame::dump_autos() const
             ((string) seg_addr_t(segno, _offset + soffset)).c_str(),
             v.name.c_str());
         ostringstream obuf;
-        out_auto(obuf, v, sp_addr + soffset, autov.is_initialized());
+        (void) out_auto(obuf, v, sp_addr + soffset, autov.is_initialized());
         out_msg("%s\n", obuf.str().c_str());
     }
 }
 
 //=============================================================================
 
-static void out_auto(ostringstream& obuf, const var_info& v, int addr, int is_initialized)
+static int out_auto(ostringstream& obuf, const var_info& v, int addr, int is_initialized)
 {
+    // Returns non zero if an automatic holds an illegal ptr value
     ostringstream buf;
+    int ret = 0;
     if (v.type == var_info::ptr && v.size == 72) {
         t_uint64 curr1 = Mem[addr];
         t_uint64 curr2 = Mem[addr + 1];
@@ -1691,8 +1693,8 @@ static void out_auto(ostringstream& obuf, const var_info& v, int addr, int is_in
             if (is_initialized) {
                 buf << " <invalid ptr>";
                 // temp
-                log_msg(NOTIFY_MSG, "automatic vars", "Autobreakpoint on bad ptr val.\n");
-                cancel_run(STOP_IBKPT);
+                // log_msg(NOTIFY_MSG, "automatic vars", "Autobreakpoint on bad ptr val.\n");
+                ret = 1;
             } else {
                 buf << " <uninitialized invalid ptr>";
             }
@@ -1708,6 +1710,7 @@ static void out_auto(ostringstream& obuf, const var_info& v, int addr, int is_in
             buf << " (uninitialized)";
     }
     obuf << buf.str();
+    return ret;
 }
 
 //=============================================================================
@@ -1792,7 +1795,10 @@ void multics_stack_frame::update_autos(
                 buf << entry()->name << "::";
 #endif
             buf << v.name << " = ";
-            out_auto(buf, v, sp_addr + soffset, autov.is_initialized());
+            if (out_auto(buf, v, sp_addr + soffset, autov.is_initialized()) != 0) {
+                log_msg(NOTIFY_MSG, "automatic vars", "Autobreakpoint on bad ptr val for %s.\n", v.name.c_str());
+                cancel_run(STOP_IBKPT);
+            }
             if (chg == initial_change)
                 buf << " -- initial value";
             buf << "\n";
@@ -1834,7 +1840,7 @@ int cmd_stats(int32 arg, char *buf)
         secs, sys_stats.total_cycles, sys_stats.total_cycles/secs, sys_stats.total_instr, sys_stats.total_instr/secs);
 
 #if FEAT_INSTR_STATS
-    out_msg("Per-instruction statistics:\n");
+    out_msg("Per-instruction statistics (excluding time used to fetch, decode, etc):\n");
     out_msg("   %-20s  %8s  %7s  %s\n", "Opcode", "Count", "Seconds", "Instr/Sec");
     uint tot_nexec = 0;
     uint tot_msec = 0;

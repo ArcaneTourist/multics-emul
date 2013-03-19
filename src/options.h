@@ -29,6 +29,6 @@
 // value is still returned to the emulator as if all memory had been initialized
 // to zero.  Note that normal operation can only write values with the lower 36
 // bits set on but not the remaining 26 of 64 bits.
-#define MEM_CHECK_UNINIT 1
+#define FEAT_MEM_CHECK_UNINIT 0
 
 #endif  // _OPTIONS_H

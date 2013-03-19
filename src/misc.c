@@ -82,7 +82,7 @@ void log_msg(enum log_level level, const char* who, const char* format, ...)
         // out_msg("%s: %*s IC: %s\n", tag, 7-strlen(tag), "", icbuf);
         msg(DEBUG_MSG, NULL, "\n", NULL);
         char buf[80];
-        sprintf(buf, "%s: %*s IC: %s\n", tag, 7-strlen(tag), "", icbuf);
+        sprintf(buf, "%s: %*s IC: %s\n", tag, 7 - (int) strlen(tag), "", icbuf);
         msg(DEBUG_MSG, NULL, buf, NULL);
     }
 
@@ -145,15 +145,24 @@ static void crnl_out(FILE *stream, const char *format, va_list ap)
             *(f + len - 1) = '\r';
             *(f + len) = '\n';
             *(f + len + 1) = 0;
-            vfprintf(stream, f, ap);
+            if (ap == NULL)
+                fprintf(stream, "%s", f);
+            else
+                vfprintf(stream, f, ap);
             free(f);
         } else {
-            vprintf(format, ap);
+            if (ap == NULL)
+                printf("%s", format);
+            else
+                vprintf(format, ap);
             if (*(format + strlen(format) - 1) == '\n')
                 fprintf(stream, "\r");
         }
     } else {
-        vfprintf(stream, format, ap);
+        if (ap == NULL)
+            fprintf(stream, "%s", format);
+        else
+            vfprintf(stream, format, ap);
         if (*(format + strlen(format) - 1) == '\n')
             fprintf(stream, "\r");
     }
@@ -168,8 +177,12 @@ void out_msg(const char* format, ...)
 
     FILE *stream = (sim_log != NULL) ? sim_log : stdout;
     crnl_out(stream, format, ap);
-    if (sim_deb != NULL)
+    va_end(ap);
+    if (sim_deb != NULL) {
+        va_start(ap, format);
         crnl_out(sim_deb, format, ap);
+        va_end(ap);
+    }
 }
 
 #if 0
@@ -219,9 +232,16 @@ static void msg(enum log_level level, const char *who, const char* format, va_li
         if (stream == NULL)
             continue;
         if (who != NULL)
-            fprintf(stream, "%s: %*s %s: %*s", tag, 7-strlen(tag), "", who, 18-strlen(who), "");
+            fprintf(stream, "%s: %*s %s: %*s", tag, 7 - (int) strlen(tag), "", who, 18 - (int) strlen(who), "");
     
-        crnl_out(stream, format, ap);
+        if (ap == NULL)
+            crnl_out(stream, format, NULL);
+        else {
+            va_list aq;
+            va_copy(aq, ap);
+            crnl_out(stream, format, aq);
+            va_end(aq);
+        }
         if (level != DEBUG_MSG) // BUG: ?
             fflush(stream);
     }

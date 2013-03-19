@@ -190,7 +190,7 @@ void mpy72fract(t_uint64 ahi, t_uint64 alow, t_uint64 b, t_uint64* hip, t_uint64
     mpz_mul(aa, aa, bb);
     
     // Export most significant first because we'll discard all but the first two limbs
-    unsigned int count = 0;
+    size_t count = 0;
     t_uint64 *bits = mpz_export(NULL, &count, 1, sizeof(*bits), 0, 64-36, aa);
     if (bits == NULL) {
         *lowp = 0;

@@ -26,14 +26,14 @@
 */
 
 using namespace std;
-#include "seginfo.hpp"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #include <vector>
-
 #include "sim_defs.h"
+#include "seginfo.hpp"
+
 extern "C" void out_msg(const char* format, ...);
 
 static int listing_parse(FILE *f, source_file &src);
@@ -245,7 +245,7 @@ static int listing_parse(FILE *f, source_file &src)
                             // OK, an empty line that probably represents use of an include file
                             continue;
                         }
-                        fprintf(stderr, "listing_parse: found line %u, expecting line %u\n", lineno, lines.size()+1);
+                        fprintf(stderr, "listing_parse: found line %u, expecting line %lu\n", lineno, (unsigned long) lines.size()+1);
                         errno = EINVAL;
                         return -1;
                     }
@@ -261,10 +261,10 @@ static int listing_parse(FILE *f, source_file &src)
                     } else if (fileno < incl_files.size()+1) {
                         // prior include file was nested
                     } else
-                        fprintf(stderr, "listing_parse: found include file # %u; expecting # %u\n", fileno, incl_files.size()+1);
+                        fprintf(stderr, "listing_parse: found include file # %u; expecting # %lu\n", fileno, (unsigned long) incl_files.size()+1);
                 } else {
                     lbufp[9] = c;
-                    fprintf(stderr, "listing_parse: unexpected source line near line %u: %s\n", lines.size()+1, lbufp + 9);
+                    fprintf(stderr, "listing_parse: unexpected source line near line %lu: %s\n", (unsigned long) lines.size()+1, lbufp + 9);
                 }
             }
             continue;
@@ -310,7 +310,7 @@ static int listing_parse(FILE *f, source_file &src)
                 s += n;
                 if (lineno <= 0 || (unsigned) lineno > lines.size()) {
                     fflush(stdout);
-                    fprintf(stderr, "Found reference to non-existant {line %d, loc %#o} at input line %d.  Expecting line number in range 1..%u\n", lineno, loc, nlines + 1, lines.size());
+                    fprintf(stderr, "Found reference to non-existant {line %d, loc %#o} at input line %d.  Expecting line number in range 1..%lu\n", lineno, loc, nlines + 1, (unsigned long) lines.size());
                     errno = EINVAL;
                     return -1;
                 }
@@ -809,7 +809,7 @@ static int listing_parse(FILE *f, source_file &src)
         if (ep->stack() != NULL)
             continue;
         string name = (*eit).first;
-        unsigned cpos = name.find('$');
+        size_t cpos = name.find('$');
         if (cpos == string::npos) {
             if (src.stack_frames.size() == 0)
                 fprintf(stderr, "LISTING: Entry %s has no stack and neither does anything in this source file.\n", name.c_str());
@@ -826,6 +826,7 @@ static int listing_parse(FILE *f, source_file &src)
                 }
             }
         } else {
+cerr << "DEBUG: erasing at pos " << cpos << " of '" << name << "'" << "\r\n";
             name.erase(cpos);   // cannot just say: name[cpos] = 0;
             entry_point* parent = src.find_entry(name);
 #if 0

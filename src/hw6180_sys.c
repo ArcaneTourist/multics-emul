@@ -14,7 +14,6 @@
 #include "seginfo.hpp"
 #include <ctype.h>
 
-#define MEM_CHECK_UNINIT 1
 
 // The following are assigned to SIMH function pointers
 static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr);
@@ -223,7 +222,7 @@ static void hw6180_init(void)
         log_msg(ERR_MSG, "SYS::init", "Cannot allocate memory.\n");
         return;
     }
-#if MEM_CHECK_UNINIT
+#if FEAT_MEM_CHECK_UNINIT
     memset(Mem, 0xff, MAXMEMSIZE*sizeof(Mem[0]));
 #else
     memset(Mem, 0, MAXMEMSIZE*sizeof(Mem[0]));
