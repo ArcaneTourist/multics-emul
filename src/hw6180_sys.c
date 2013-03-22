@@ -189,11 +189,7 @@ static void hw6180_init(void)
     // AN87, 1-41 claims multics requires faults to be at 100o
     switches.FLT_BASE = 2;  // 2<<5 == 0100
     // At one time, it seemed that the diag tape required using different
-    // fault base switch settings.  However, the diag tape may just choose
-    // different addresses for crashing depending on the setting of FLT_BASE...
-    // switches.FLT_BASE = 0163; // diag tape allows any loc *except* 2->0100
-    // switches.FLT_BASE = 0; // diag tape allows any location *except* 2->0100
-//switches.FLT_BASE = 0;
+    // fault base switch settings.  However, that no longer seems to be the case.
 
     // Only one SCU
     memset(&scu, 0, sizeof(scu));

@@ -1383,10 +1383,11 @@ int fetch_appended(uint offset, t_uint64 *wordp)
         cancel_run(STOP_WARN);
         return fetch_abs_word(offset, wordp);
     }
-    if (addr_mode != APPEND_mode) {
+    if (addr_mode != APPEND_mode)
 #else
-    if (addr_mode != APPEND_mode && addr_mode != BAR_mode) {
+    if (addr_mode != APPEND_mode && addr_mode != BAR_mode)
 #endif
+    {
         // impossible
         log_msg(ERR_MSG, "APU::append", "Unknown mode\n");
         cancel_run(STOP_BUG);

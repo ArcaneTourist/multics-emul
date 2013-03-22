@@ -950,7 +950,13 @@ t_stat sim_instr(void)
 
     save_to_simh();     // pack private variables into SIMH's world
     flush_logs();
-        
+
+    // Test in control_unit() fails during single step due to "step" timer being on the queue
+    if (cpu.cycle == DIS_cycle && ! events.int_pending && sim_qcount() == 0) {
+        log_msg(ERR_MSG, "CU", "DIS instruction running, but no activities are pending.\n");
+        reason = STOP_BUG;
+    }
+
     return reason;
 }
 
@@ -1211,8 +1217,10 @@ static t_stat control_unit(void)
             if (n == 0) {
                 log_msg(ERR_MSG, "CU", "DIS instruction running, but no activities are pending.\n");
                 reason = STOP_BUG;
-            } else
-                log_msg(DEBUG_MSG, "CU", "Delaying until an interrupt is set.\n");
+            } else {
+                // WARNING: The only thing in the queue might be a "step"
+                log_msg(DEBUG_MSG, "CU", "Delaying until an interrupt is set (%d entries are in the SIMH queue).\n", n);
+            }
             break;
         }
             

@@ -1796,8 +1796,16 @@ void multics_stack_frame::update_autos(
 #endif
             buf << v.name << " = ";
             if (out_auto(buf, v, sp_addr + soffset, autov.is_initialized()) != 0) {
-                log_msg(NOTIFY_MSG, "automatic vars", "Autobreakpoint on bad ptr val for %s.\n", v.name.c_str());
-                cancel_run(STOP_IBKPT);
+                if (chg == changed) {
+                    log_msg(NOTIFY_MSG, "automatic vars", "Autobreakpoint on bad ptr val for %s.\n", v.name.c_str());
+                    cancel_run(STOP_IBKPT);
+                } else if (! autov.is_initialized()) {
+                    // ignore it
+                } else if ( chg == initial_change) {
+                    // NOTE: sometimes this apparently just represents garbage on the stack?
+                    log_msg(INFO_MSG, "automatic vars", "Initial value of ptr %s is an invalid value.\n", v.name.c_str());
+                    cancel_run(STOP_IBKPT);
+                }
             }
             if (chg == initial_change)
                 buf << " -- initial value";

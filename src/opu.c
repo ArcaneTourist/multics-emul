@@ -2976,8 +2976,20 @@ static int do_an_op(instr_t *ip)
                     ret = scu_get_mask(TPR.CA, 7);
                 } else if (ea == 0030) {
                     // interrupts
-                    log_msg(WARN_MSG, "OPU::opcode::rscr", "interrupts unimplemented\n");
-                    cancel_run(STOP_BUG);
+                    extern events_t events; // BUG: put in hdr file, or into a pre-SCU structure, or hide behind an access function
+                    log_msg(WARN_MSG, "OPU::opcode::rscr", "AL-39 doesn't specify if non-interrupt bits in regs A and Q should be cleared.\n");
+                    reg_A = setbits36(reg_A, 0, 15, 0);
+                    reg_Q = setbits36(reg_Q, 0, 15, 0);
+                    if (events.int_pending) {
+                        for (int i = 0; i < ARRAY_SIZE(events.interrupts); ++i)
+                            if (events.interrupts[i]) {
+                                if (i <= 15)
+                                    reg_A = setbits36(reg_A, i, 1, 1);
+                                else
+                                    reg_Q = setbits36(reg_Q, 15-i, 1, 1);
+                            }
+                    }
+                    cancel_run(STOP_WARN);
                     ret = 1;
                 } else if (ea == 0040) {
                     ret = scu_get_calendar(TPR.CA);
@@ -3199,6 +3211,7 @@ static int do_an_op(instr_t *ip)
                 // delay until interrupt set
                 if (ip->inhibit) {
                     log_msg(WARN_MSG, "OPU::dis", "DIS with inhibit set\n");
+                    cancel_run(STOP_IBKPT);
                 } else {
                     log_msg(WARN_MSG, "OPU::dis", "DIS\n");
                 }
