@@ -1410,6 +1410,7 @@ static t_stat control_unit(void)
             cu.IR.inhibit = 1;
             cu.IR.mods.single.pr_bit = 0;
             cu.IR.mods.single.tag = 0;
+            cu.IR.is_eis_multiword = 0;
 
             // Maybe instead of calling execute_ir(), we should just set a
             // flag and run the EXEC case?  // Maybe the following increments
