@@ -528,7 +528,14 @@ static int do_an_op(instr_t *ip)
                 return ret;
             }
 
-            // opcode0_stcd unimplemented
+            case opcode0_stcd: {
+                t_uint64 word0 = setbits36(0, 3, 15, PPR.PSR);
+                word0 = setbits36(word0, 16, 3, PPR.PRR);
+                word0 |= 043;
+                t_uint64 word1 = setbits36(0, 0, 18, PPR.IC + 2);
+                cancel_run(STOP_IBKPT);
+                return store_pair(TPR.CA, word0, word1);
+            }
 
             case opcode0_sti: {
                 t_uint64 word;
@@ -2589,9 +2596,9 @@ static int do_an_op(instr_t *ip)
                     return 1;   // faulted
                 }
                 decode_instr(&cu.IR, word0);
+#if 0
                 instr_t i_tmp;
                 decode_instr(&i_tmp, word1);
-#if 0
                 if (cu.IR.opcode != (opcode0_scu << 1) || i_tmp.opcode != (opcode0_tra << 1)) {
                     log_msg(WARN_MSG, "OPU::xed", "Target y-pair at %#o is not SCU/TRA -- found opcodes %03o(%d) and %03o(%d)\n", y, cu.IR.opcode >> 1, cu.IR.opcode & 1, i_tmp.opcode >> 1, i_tmp.opcode & 1);
                 }
@@ -2652,8 +2659,8 @@ static int do_an_op(instr_t *ip)
             // rpl unimplemented -- repeat link
             
             case opcode0_rpt: {
+                extern DEVICE cpu_dev; ++ opt_debug; ++ cpu_dev.dctrl;
                 cu.rpts = 1;
-                // AL39, page 209
                 uint tally = (ip->addr >> 10);
                 uint c = (ip->addr >> 7) & 1;
                 uint term = ip->addr & 0177;
@@ -2666,6 +2673,29 @@ static int do_an_op(instr_t *ip)
                 // until the termination is met.
                 // See cpu.c for the rest of the handling.
                 log_msg(INFO_MSG, "OPU", "RPT instruction found\n");
+                return 0;
+            }
+
+            case opcode0_rpd: {
+                extern DEVICE cpu_dev; ++ opt_debug; if (! cpu_dev.dctrl) ++ cpu_dev.dctrl;
+                if (PPR.IC % 2 == 0) {
+                    fault_gen(illproc_fault);
+                    return 1;
+                }
+                cu.rpts = 1;
+                uint tally = (ip->addr >> 10);
+                uint c = (ip->addr >> 7) & 1;
+                uint term = ip->addr & 0177;
+                cu.delta = ip->mods.single.tag;
+                if (c)
+                    reg_X[0] = ip->addr;    // Entire 18 bits
+                cu.rd = 1;
+                cu.repeat_first = 1;
+                // Setting cu.rpts and cu.rd will cause the instruction to be executed
+                // until the termination is met.
+                // See cpu.c for the rest of the handling.
+                log_msg(NOTIFY_MSG, "OPU", "RPD instruction found\n");
+                cancel_run(STOP_IBKPT);
                 return 0;
             }
 
@@ -2726,7 +2756,7 @@ static int do_an_op(instr_t *ip)
                             word &= MASK36;
                             if (word != 0) {
                                 ret = 1;
-                                log_msg(ERR_MSG, "OPU::opcode::lcpr", "Wrote %#llo to mode reg, but flags are ignored.\n", MR.word);
+                                log_msg(ERR_MSG, "OPU::opcode::lcpr", "Wrote %#llo to mode reg, but mode reg flags are ignored.\n", MR.word);
                             }
                         }
                         break;

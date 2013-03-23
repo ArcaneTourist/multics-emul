@@ -625,7 +625,7 @@ int addr_mod(const instr_t *ip)
 
     ca_temp.tag = ip->mods.single.tag;
 
-    if (cu.rpt) {
+    if (cu.rpt || cu.rd) {
         // Special handling for repeat instructions
         TPR.TBR = 0;
         cu.tag = ca_temp.tag;
@@ -633,8 +633,8 @@ int addr_mod(const instr_t *ip)
         int n = td & 07;
         if (cu.repeat_first) {
             if (opt_debug)
-                log_msg(DEBUG_MSG, moi,
-                    "RPT: First repetition; incr will be 0%o(%d).\n",
+                log_msg((cu.rd) ? INFO_MSG : DEBUG_MSG, moi,
+                    "RP*: First repetition; incr will be 0%o(%d).\n",
                     ip->addr, ip->addr);
             TPR.CA = ip->addr;
             // FIXME: do we need to sign-extend to allow for negative "addresses"?
@@ -647,8 +647,8 @@ int addr_mod(const instr_t *ip)
             TPR.CA = 0;
             ca_temp.soffset = 0;
             if(opt_debug)
-                log_msg(DEBUG_MSG, moi,
-                    "RPT: X[%d] is 0%o(%d).\n", n, reg_X[n], reg_X[n]);
+                log_msg((cu.rd) ? INFO_MSG : DEBUG_MSG, moi,
+                    "RP*: X[%d] is 0%o(%d).\n", n, reg_X[n], reg_X[n]);
         }
     } else if (ptr_reg_flag == 0) {
         ca_temp.soffset = sign18(ip->addr);
@@ -812,7 +812,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
 
     ca_tempp->special = tm;
 
-    if (cu.rpt) {
+    if (cu.rpt || cu.rd) {
         // Check some requirements, but don't generate a fault (AL39 doesn't
         // say whether or not we should fault)
         if (tm != atag_r && tm != atag_ri)
@@ -827,7 +827,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
         // Tm=0 -- register (r)
             if (td != 0)
                 reg_mod(td, ca_tempp->soffset);
-            if (cu.rpt) {
+            if (cu.rpt || cu.rd) {
                 int n = td & 07;
                 reg_X[n] = TPR.CA;
             }
@@ -849,14 +849,14 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                     "RI: pre-fetch:  TPR.CA=0%o <==  TPR.CA=%o + 0%o\n",
                     TPR.CA, ca, TPR.CA - ca);
             t_uint64 word;
-            if (cu.rpt) {
+            if (cu.rpt || cu.rd) {
                 int n = td & 07;
                 reg_X[n] = TPR.CA;
-                if (opt_debug>0) {
-                    log_msg(DEBUG_MSG, "APU",
+                if (opt_debug>0 || cu.rd) {
+                    log_msg((cu.rpt) ? DEBUG_MSG : INFO_MSG, "APU",
                         "RI for repeated instr: Setting X[%d] to CA 0%o(%d).\n",
                         n, reg_X[n], reg_X[n]);
-                    log_msg(DEBUG_MSG, "APU",
+                    log_msg((cu.rpt) ? DEBUG_MSG : INFO_MSG, "APU",
                         "RI for repeated instr: Not doing address appending on CA.\n");
                 }
                 if (fetch_abs_word(TPR.CA, &word) != 0)
@@ -866,7 +866,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                     return 1;
             if(opt_debug>0) log_msg(DEBUG_MSG, "APU",
                 "RI: fetch:  word at TPR.CA=0%o is 0%llo\n", TPR.CA, word);
-            if (cu.rpt) {
+            if (cu.rpt || cu.rd) {
                 // ignore tag and don't allow more indirection
                 return 0;
             }
@@ -1395,9 +1395,11 @@ int fetch_appended(uint offset, t_uint64 *wordp)
     }
 
     t_uint64 simh_addr = addr_emul_to_simh(addr_mode, TPR.TSR, offset);
-    if (sim_brk_summ && sim_brk_test(simh_addr, SWMASK('M'))) {
-        log_msg(WARN_MSG, "APU", "Memory Breakpoint on read.\n");
-        cancel_run(STOP_IBKPT);
+    if (sim_brk_summ) {
+        if (sim_brk_test(simh_addr, SWMASK('M'))) {
+            log_msg(WARN_MSG, "APU", "Memory Breakpoint on read.\n");
+            cancel_run(STOP_IBKPT);
+        }
     }
 
     uint addr;
@@ -1425,9 +1427,11 @@ int store_appended(uint offset, t_uint64 word)
     }
 
     t_uint64 simh_addr = addr_emul_to_simh(addr_mode, TPR.TSR, offset);
-    if (sim_brk_summ && sim_brk_test(simh_addr, SWMASK('W') | SWMASK('M'))) {
-        log_msg(WARN_MSG, "APU", "Memory Breakpoint on write.\n");
-        cancel_run(STOP_IBKPT);
+    if (sim_brk_summ) {
+        if (sim_brk_test(simh_addr, SWMASK('W') | SWMASK('M'))) {
+            log_msg(WARN_MSG, "APU", "Memory Breakpoint on write.\n");
+            cancel_run(STOP_IBKPT);
+        }
     }
 
     uint addr;
@@ -1645,7 +1649,7 @@ static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uin
     }
     int ret = page_in_page(SDWp, offset, perm_mode, addrp, minaddrp, maxaddrp);
     if (ret != 0) {
-        log_msg(WARN_MSG, moi, "page_in_page returned non zero.  Segno 0%o, offset 0%o(%d)\n", segno, offset, offset);
+        log_msg(NOTIFY_MSG, moi, "page_in_page returned non zero.  Segno 0%o, offset 0%o(%d)\n", segno, offset, offset);
     }
     return ret;
 }
@@ -1908,7 +1912,7 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp,
 
     // Following done for either paged or unpaged segments
     if (SDWp->sdw.f == 0) {
-        if (opt_debug>0) log_msg(DEBUG_MSG, "APU::append", "SDW directed fault\n");
+        log_msg(INFO_MSG, "APU::append", "SDW directed fault\n");
         fault_gen(dir_flt0_fault + SDWp->sdw.fc);   // Directed Faults 0..4 use sequential fault numbers
         return 1;
     }

@@ -395,6 +395,7 @@ typedef struct {
     flag_t rpts;        // just executed a repeat instr;  bit 12 in word one of the CU history register
     flag_t repeat_first;        // "RF" flag -- first cycle of a repeat instruction; We also use with xed
     flag_t rpt;     // execute an rpt instruction
+    flag_t rd;      // execute an rpd instruction
     uint CT_HOLD;   // 6 bits at 5[30..35]; contents of the "remember modifier" register
     flag_t xde;     // execute even instr from xed pair
     flag_t xdo;     // execute even instr from xed pair

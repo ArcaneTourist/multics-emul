@@ -1483,6 +1483,7 @@ static t_stat control_unit(void)
             cu.IR.inhibit = 1;
             cu.IR.mods.single.pr_bit = 0;
             cu.IR.mods.single.tag = 0;
+            cu.IR.is_eis_multiword = 0;
 
             // Maybe instead of calling execute_ir(), we should just set a
             // flag and run the EXEC case?  // Maybe the following increments
@@ -1566,14 +1567,8 @@ static t_stat control_unit(void)
                 if (cpu.irodd_invalid) {
                     cpu.irodd_invalid = 0;
                     if (cpu.cycle != FETCH_cycle) {
-                        // Auto-breakpoint for multics, but not the T&D tape.
-                        // The two tapes use different fault vectors.
-                        if (switches.FLT_BASE == 2) {
-                            // Multics boot tape
-                            reason = STOP_IBKPT;    /* stop simulation */
-                            log_msg(NOTIFY_MSG, "CU", "Invalidating cached odd instruction; auto breakpoint\n");
-                        } else
-                            log_msg(NOTIFY_MSG, "CU", "Invalidating cached odd instruction.\n");
+                        reason = STOP_IBKPT;    /* stop simulation */
+                        log_msg(NOTIFY_MSG, "CU", "Invalidating cached odd instruction; auto breakpoint\n");
                         cpu.cycle = FETCH_cycle;
                     }
                     break;
@@ -1621,7 +1616,7 @@ static t_stat control_unit(void)
             // group 7 faults
             flag_t is_fault = events.any && events.low_group && events.low_group < 7;
             if (is_fault) {
-                log_msg(WARN_MSG, "CU", "Probable fault detected after instruction execution\n");
+                log_msg(WARN_MSG, "CU", "Fault detected after instruction execution\n");
                 if (PPR.IC != IC_temp) {
                     // Our OPU always advances the IC, but should not do so
                     // on faults, so we restore it
@@ -1639,14 +1634,16 @@ static t_stat control_unit(void)
                     // cycle next, both flags will be set as part of the fault
                     // handler's xed
                 }
-                if (cu.rpt) {
+                if (cu.rpt || cu.rd) {
                     log_msg(WARN_MSG, "CU", "Repeat instruction terminated by fault.\n");
                     cu.rpt = 0;
+                    cu.rd = 0;
+                    extern DEVICE cpu_dev; if(opt_debug) {-- opt_debug; -- cpu_dev.dctrl;};
                 }
-            }
-            if (! is_fault) {
-                // Special handling for RPT and other "repeat" instructions
-                if (cu.rpt) {
+            } else {
+                /* No Fault */
+                // First, Special handling for RPT and other "repeat" instructions
+                if (cu.rpt || cu.rd) {
                     if (cu.rpts) {
                         // Just executed the RPT instr.  
                         cu.rpts = 0;    // finished "starting"
@@ -1660,65 +1657,102 @@ static t_stat control_unit(void)
                         // log_msg(WARN_MSG, "CU", "Address handing for repeated instr was probably wrong.\n");
                         // Check for tally runout or termination conditions
                         uint t = reg_X[0] >> 10; // bits 0..7 of 18bit register
-                        if (cu.repeat_first && t == 0)
-                            t = 256;
-                        cu.repeat_first = 0;
+                        if (cu.repeat_first) {
+                            if (opt_debug) log_msg(DEBUG_MSG, "CU", "Repeat-first flag is on.\n");
+                            // Instr RD gets two repeat firsts -- one for the even instr and one for the odd
+                            // FIXME: For RPD, should odd addr calc occur before even instr exec?  Guessing not...
+                            if (cu.rpt || (cu.rd && ! do_odd)) {
+                                if (t == 0)
+                                    t = 256;
+                                cu.repeat_first = 0;
+                                if (opt_debug) log_msg(DEBUG_MSG, "CU", "Turning off repeat-first flag.\n");
+                            }
+                        }
                         --t;
                         reg_X[0] = ((t&0377) << 10) | (reg_X[0] & 01777);
                         // Note that we increment X[n] here, not in the APU.
                         // So, for instructions like cmpaq, the index register
                         // points to the entry after the one found.
                         int n = cu.tag & 07;
-                        reg_X[n] += cu.delta;
-                        if (opt_debug) log_msg(DEBUG_MSG, "CU", "Incrementing X[%d] by %#o to %#o.\n", n, cu.delta, reg_X[n]);
+                        if (cu.rpt) {
+                            reg_X[n] += cu.delta;
+                            if (opt_debug) log_msg(DEBUG_MSG, "CU", "Incrementing X[%d] by %#o to %#o.\n", n, cu.delta, reg_X[n]);
+                        } else if (cu.rd) {
+                            if (! do_odd) {
+                                if (((reg_X[0] >> 9) & 1) == 1) {
+                                    reg_X[n] += cu.delta;
+                                    log_msg(INFO_MSG, "CU", "Incrementing X[%d] by %#o to %#o.\n", n, cu.delta, reg_X[n]);
+                                } else
+                                    log_msg(INFO_MSG, "CU", "Not Incrementing X[%d] by %#o; still %#o.\n", n, cu.delta, reg_X[n]);
+                            } else {
+                                if (((reg_X[0] >> 8) & 1) == 1) {
+                                    reg_X[n] += cu.delta;
+                                    log_msg(INFO_MSG, "CU", "Incrementing X[%d] by %#o to %#o.\n", n, cu.delta, reg_X[n]);
+                                } else
+                                    log_msg(INFO_MSG, "CU", "Not Incrementing X[%d] by %#o; still %#o.\n", n, cu.delta, reg_X[n]);
+                            }
+                        }
                         // Note that the code in bootload_tape.alm expects that
                         // the tally runout *not* be set when both the
                         // termination condition is met and bits 0..7 of
                         // reg X[0] hits zero.
+                        const flag_t orig_rpt = cu.rpt;
+                        const flag_t orig_rd = cu.rd;
                         if (t == 0) {
                             IR.tally_runout = 1;
                             cu.rpt = 0;
+                            cu.rd = 0;
                             if (opt_debug) log_msg(DEBUG_MSG, "CU", "Repeated instruction hits tally runout; halting rpt.\n");
+                            extern DEVICE cpu_dev; -- opt_debug; -- cpu_dev.dctrl;
                         }
                         // Check for termination conditions -- even if we hit
                         // the tally runout
                         // Note that register X[0] is 18 bits
                         int terminate = 0;
-                        if (getbit18(reg_X[0], 11))
-                            terminate |= IR.zero;
-                        if (getbit18(reg_X[0], 12))
-                            terminate |= ! IR.zero;
-                        if (getbit18(reg_X[0], 13))
-                            terminate |= IR.neg;
-                        if (getbit18(reg_X[0], 14))
-                            terminate |= ! IR.neg;
-                        if (getbit18(reg_X[0], 15))
-                            terminate |= IR.carry;
-                        if (getbit18(reg_X[0], 16))
-                            terminate |= ! IR.carry;
-                        if (getbit18(reg_X[0], 17)) {
-                            log_msg(DEBUG_MSG, "CU", "Checking termination conditions for overflows.\n");
-                            // Process overflows -- BUG: what are all the
-                            // types of overflows?
-                            if (IR.overflow || IR.exp_overflow) {
-                                if (IR.overflow_mask)
-                                    IR.overflow = 1;
-                                else
-                                    fault_gen(overflow_fault);
-                                terminate = 1;
+                        if (orig_rpt || (orig_rd && do_odd)) {
+                            if (getbit18(reg_X[0], 11))
+                                terminate |= IR.zero;
+                            if (getbit18(reg_X[0], 12))
+                                terminate |= ! IR.zero;
+                            if (getbit18(reg_X[0], 13))
+                                terminate |= IR.neg;
+                            if (getbit18(reg_X[0], 14))
+                                terminate |= ! IR.neg;
+                            if (getbit18(reg_X[0], 15))
+                                terminate |= IR.carry;
+                            if (getbit18(reg_X[0], 16))
+                                terminate |= ! IR.carry;
+                            if (getbit18(reg_X[0], 17)) {
+                                log_msg(DEBUG_MSG, "CU", "Checking termination conditions for overflows.\n");
+                                // Process overflows -- BUG: what are all the
+                                // types of overflows?
+                                if (IR.overflow || IR.exp_overflow) {
+                                    if (IR.overflow_mask)
+                                        IR.overflow = 1;
+                                    else
+                                        fault_gen(overflow_fault);
+                                    terminate = 1;
+                                }
                             }
                         }
                         if (terminate) {
                             cu.rpt = 0;
+                            cu.rd = 0;
                             log_msg(DEBUG_MSG, "CU", "Repeated instruction meets termination condition.\n");
                             IR.tally_runout = 0;
+                            extern DEVICE cpu_dev; if(opt_debug) {-- opt_debug; -- cpu_dev.dctrl;};
                             // BUG: need IC incr, etc
                         } else {
                             if (! IR.tally_runout)
                                 if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Repeated instruction will continue.\n");
                         }
+                        if (cu.rd) {
+                            if (do_odd) {
+                                -- PPR.IC;
+                                if (opt_debug>0) log_msg(DEBUG_MSG, "CU", "Resetting IC to %#o for next loop.\n", PPR.IC);
+                            }
+                        }
                     }
-                    // TODO: if rpt double incr PPR.IC with wrap
                 }
                 // Retest cu.rpt -- we might have just finished repeating
                 if (cu.rpt) {
