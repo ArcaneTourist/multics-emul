@@ -61,7 +61,8 @@ static void print_src_loc(const char *prefix, addr_modes_t addr_mode, int segno,
 static void check_autos(int segno, int ic);
 static void dump_autos(void);
 static int out_auto(ostringstream& obuf, const var_info& v, int addr, int is_initialized);
-static void frame_trace(void);
+static void trace_all_stack_hist(void);
+static void trace_stack_hist(int segno);
 static int walk_stack(int output, list<seg_addr_t>* frame_listp);
 // static int push_frame(const seg_addr_t& framep, const linkage_info* lip);
 static int is_stack_frame(int segno, int offset);
@@ -784,8 +785,9 @@ static void print_frame(
 int cmd_stack_trace(int32 arg, char *buf)
 {
     walk_stack(1, NULL);
-    frame_trace();
-    out_msg("stack trace:\n");
+    out_msg("\n");
+    trace_all_stack_hist();
+    out_msg("\n");
     dump_autos();
     out_msg("\n");
 
@@ -862,7 +864,7 @@ static int walk_stack(int output, list<seg_addr_t>* frame_listp)
     // TODO: sanity check LOT ptr
 
     if (output)
-        out_msg("Stack Trace:\n");
+        out_msg("Stack Trace via back-links in current stack frame:\n");
     int framep = stack_begin_pr.wordno;
     int prev = 0;
     int finished = 0;
@@ -1086,7 +1088,6 @@ public:
 };
 
 
-static multics_stack* m_stackp = NULL;
 
 //=============================================================================
 
@@ -1098,18 +1099,64 @@ multics_stack::multics_stack(int segno)
 
 //=============================================================================
 
+/*
+ * Support for multiple stacks (normal, fault, interrupt, etc)
+ *
+ */
+
+// static multics_stack* m_stackp = NULL;
+
+class m_stacks {
+private:
+    list<multics_stack> _stacks;
+public:
+    multics_stack* get(int segno);
+    multics_stack* push(int segno);
+    const list<multics_stack>& stacks() const
+        { return _stacks; }
+};
+
+//-----------------------------------------------------------------------------
+
+multics_stack* m_stacks::get(int segno)
+{
+    list<multics_stack>::iterator it;
+    for (it = _stacks.begin(); it != _stacks.end(); ++it) {
+        if ((*it).segno() == segno)
+            return &(*it);
+    }
+    return NULL;
+}
+
+
+//-----------------------------------------------------------------------------
+
+multics_stack* m_stacks::push(int segno)
+{
+    _stacks.push_back(multics_stack(segno));
+    return &(_stacks.back());
+}
+
+//-----------------------------------------------------------------------------
+
+m_stacks m_stacks;
+
+//=============================================================================
+
 // TODO: rename
 void state_invalidate_cache()
 {
     if (AR_PR[6].PR.snr == 077777 || AR_PR[6].wordno == 0)
         return;
 
+    multics_stack* m_stackp = m_stacks.get(AR_PR[6].PR.snr);
+
     if (m_stackp == NULL) {
         // log_msg(INFO_MSG, "STACK::invalidate", "Checking frame %#o|%#o.\n", AR_PR[6].PR.snr, AR_PR[6].wordno);
         if (is_stack_frame(AR_PR[6].PR.snr, AR_PR[6].wordno)) {
-            log_msg(NOTIFY_MSG, "STACK::invalidate", "Initializing stack with %#o|%#o.\n",
+            log_msg(NOTIFY_MSG, "STACK::invalidate", "Initializing a stack with %#o|%#o.\n",
                 AR_PR[6].PR.snr, AR_PR[6].wordno);
-            m_stackp = new multics_stack(AR_PR[6].PR.snr);
+            m_stackp = m_stacks.push(AR_PR[6].PR.snr);
             m_stackp->change();
             // cancel_run(STOP_IBKPT);
         } else {
@@ -1124,11 +1171,13 @@ void state_invalidate_cache()
 
 static int have_stack()
 {
+    multics_stack* m_stackp = m_stacks.get(AR_PR[6].PR.snr);
     return m_stackp != NULL && m_stackp->size() != 0;
 }
 
 static int stack_depth()
 {
+    multics_stack* m_stackp = m_stacks.get(AR_PR[6].PR.snr);
     if (m_stackp == NULL)
         return -1;
     else
@@ -1206,13 +1255,24 @@ static int is_stack_frame(int segno, int offset)
 
 //=============================================================================
 
-static void frame_trace()
+static void trace_all_stack_hist()
 {
+    list<multics_stack>::const_iterator it;
+    for (it = m_stacks.stacks().begin(); it != m_stacks.stacks().end(); ++it) {
+        trace_stack_hist((*it).segno());
+    }
+}
+
+//=============================================================================
+
+static void trace_stack_hist(int segno)
+{
+    multics_stack* m_stackp = m_stacks.get(segno);
     if (m_stackp == NULL) {
         out_msg("No stack.\n");
         return;
     }
-    out_msg("trace of PR[6] stack history (%d entries):\n", m_stackp->size());
+    out_msg("Stack Trace via prior history of PR[6] for stack seg %#o (%d entries):\n", segno, m_stackp->size());
 
     list<multics_stack_frame>::const_iterator stackp;
     for (stackp = m_stackp->begin(); stackp != m_stackp->end(); ++ stackp) {
@@ -1580,6 +1640,7 @@ extern "C" void show_variables(unsigned segno, int ic);
     
 void show_variables(unsigned segno, int ic)
 {
+    multics_stack* m_stackp = m_stacks.get(AR_PR[6].PR.snr);
     if (! opt_debug)
         state_invalidate_cache();
     else
@@ -1595,6 +1656,7 @@ static void check_autos(
     int segno,              // Execution segment or -1 if in appending mode
     int ic)                 // Recent IC
 {
+    multics_stack* m_stackp = m_stacks.get(AR_PR[6].PR.snr);
     if (m_stackp == NULL)
         return;
 
@@ -1610,6 +1672,7 @@ static void check_autos(
 
 static void dump_autos()
 {
+    multics_stack* m_stackp = m_stacks.get(AR_PR[6].PR.snr);
     if (m_stackp == NULL)
         return;
 
@@ -1727,6 +1790,7 @@ void multics_stack_frame::update_autos(
         return;
     }
 
+    multics_stack* m_stackp = m_stacks.get(AR_PR[6].PR.snr);
     if (entry() == NULL) {
         if (! m_stackp->unfinished())
             log_msg(INFO_MSG, "update_autos", "sanity check fails -- no entry point for IC %#o|%#o\n", segno, ic);

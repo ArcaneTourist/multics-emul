@@ -826,7 +826,6 @@ static int listing_parse(FILE *f, source_file &src)
                 }
             }
         } else {
-cerr << "DEBUG: erasing at pos " << cpos << " of '" << name << "'" << "\r\n";
             name.erase(cpos);   // cannot just say: name[cpos] = 0;
             entry_point* parent = src.find_entry(name);
 #if 0

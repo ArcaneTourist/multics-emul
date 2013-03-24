@@ -23,6 +23,8 @@ using namespace std;
 #include "hw6180.h"
 #include "eis.hpp"
 
+static int mop_copy(alpha_desc_t *dest_descp, int is_decimal, uint mop_byte);
+
 // ============================================================================
 
 int op_move_alphanum(const instr_t* ip, int fwd)
@@ -1124,72 +1126,16 @@ static int mop_exec_single(alpha_desc_t *mop_descp, alpha_desc_t *dest_descp, in
             break;
         }
         case 006:   // mfls -- move with floating sign insertion
-            if (mop_if == 0)
-                mop_if = 16;
-            log_msg(INFO_MSG, moi, "MFLS %#o(%dd)\n", mop_if, mop_if);
-            for (uint i = 0; i < mop_if; ++i) {
-                if (mopinfo.n_src == 0) {
-                    log_msg(ERR_MSG, moi, "Source exhausted\n");
-                    fault_gen(illproc_fault);
-                    return 1;
-                }
-                unsigned src = *mopinfo.srcp++;
-                --mopinfo.n_src;
-                if (src != 0)
-                    mopinfo.flags.z = 0;
-                log_msg(DEBUG_MSG, moi, "Fetched src %#o\n", src);
-                if (mopinfo.flags.es) {
-                    if (is_decimal && dest_descp->width() == 9) {
-                        src &= 0xf;
-                        src |= mopinfo.eit[8] & 0x1f0;
-                    }
-                } else {
-                    if (src == 0) {
-                        src = mopinfo.eit[1];   // normally " "
-                        log_msg(DEBUG_MSG, moi, "Using EIT[1] == %#o\n", src);
-                    } else {
-                        int which = (mopinfo.flags.sn) ? 4 : 3;
-                        unsigned sign = mopinfo.eit[which];
-                        log_msg(DEBUG_MSG, moi, "Using sign at EIT[%d] == %#o\n", which, sign);
-                        if (mop_put(dest_descp, is_decimal, sign) != 0)
-                            return 1;
-                        // TODO: should we test for destination exhaustion here?
-                        mopinfo.flags.es = 1;
-                        log_msg(INFO_MSG, moi, "flags.es set on.\n");
-                        src &= 0xf;
-                        src |= mopinfo.eit[8] & 0x1f0;
-                    }
-                }
-                if (mop_put(dest_descp, is_decimal, src) != 0)
-                    return 1;
-                if (dest_descp->n() == 0)
-                    return 0;   // exhaustion of destination is the only normal termination
-            }
-            break;
+            return mop_copy(dest_descp, is_decimal, mop_byte);
         case 015:   // mvc -- move source chars
-            if (mop_if == 0)
-                mop_if = 16;
-            log_msg(INFO_MSG, moi, "MVC %#o(%dd)\n", mop_if, mop_if);
-            for (uint i = 0; i < mop_if; ++i) {
-                if (mopinfo.n_src == 0) {
-                    log_msg(ERR_MSG, moi, "Source exhausted\n");
-                    fault_gen(illproc_fault);
-                    return 1;
-                }
-                unsigned src = *mopinfo.srcp++;
-                --mopinfo.n_src;
-                if (src != 0)
-                    mopinfo.flags.z = 0;
-                if (is_decimal && dest_descp->width() == 9) {
-                    src &= 0xf;
-                    src |= mopinfo.eit[8] & 0x1f0;
-                }
-                if (mop_put(dest_descp, is_decimal, src) != 0)
-                    return 1;
-                if (dest_descp->n() == 0)
-                    return 0;   // exhaustion of destination is the only normal termination
+            return mop_copy(dest_descp, is_decimal, mop_byte);
+        case 004:   // mvzb -- move with zero suppression and blank replacment
+            {
+            extern DEVICE cpu_dev; ++ opt_debug; ++ cpu_dev.dctrl;
+            int ret = mop_copy(dest_descp, is_decimal, mop_byte);
+            -- opt_debug; -- cpu_dev.dctrl;
+            return ret;
             }
-            break;
         case 003:   // ses -- Set End Suppression
             {
             int old_es = mopinfo.flags.es;
@@ -1248,6 +1194,104 @@ static int mop_exec_single(alpha_desc_t *mop_descp, alpha_desc_t *dest_descp, in
     return 0;
 }
 
+// ============================================================================
+
+/*
+ *
+ * Generic copy used by MOPS MVC, MBZA, MVZB, etc
+ *
+ */
+
+static int mop_copy(alpha_desc_t *dest_descp, int is_decimal, uint mop_byte)
+{
+    const char *moi = "opu::MOP::exec";
+    uint mop = (mop_byte >> 4) & 037;
+    uint mop_if = mop_byte & 017;
+
+    const char *mop_name; 
+    switch(mop) {
+        case 004: mop_name = "mvzb"; break;
+        case 006: mop_name = "mfls"; break;
+        case 015: mop_name = "mvc"; break;
+        default: mop_name = ""; break;
+    }
+
+    if (mop_if == 0)
+        mop_if = 16;
+    log_msg(INFO_MSG, moi, "%s %#o(%dd)\n", mop_name, mop_if, mop_if);
+
+    for (uint i = 0; i < mop_if; ++i) {
+        if (mopinfo.n_src == 0) {
+            log_msg(ERR_MSG, moi, "Source exhausted\n");
+            fault_gen(illproc_fault);
+            return 1;
+        }
+        unsigned src = *mopinfo.srcp++;
+        --mopinfo.n_src;
+        if (src != 0)
+            mopinfo.flags.z = 0;
+        if (mop == 015) {
+            // mvc - move source chars
+            if (is_decimal && dest_descp->width() == 9) {
+                src &= 0xf;
+                src |= mopinfo.eit[8] & 0x1f0;
+            }
+        } else if (mop == 006) {
+            // mfls -- move with floating sign insertion
+            log_msg(DEBUG_MSG, moi, "Fetched src %#o\n", src);
+            if (mopinfo.flags.es) {
+                if (is_decimal && dest_descp->width() == 9) {
+                    src &= 0xf;
+                    src |= mopinfo.eit[8] & 0x1f0;
+                }
+            } else {
+                if (src == 0) {
+                    src = mopinfo.eit[1];   // normally " "
+                    log_msg(DEBUG_MSG, moi, "Using EIT[1] == %#o\n", src);
+                } else {
+                    int which = (mopinfo.flags.sn) ? 4 : 3;
+                    unsigned sign = mopinfo.eit[which];
+                    log_msg(DEBUG_MSG, moi, "Using sign at EIT[%d] == %#o\n", which, sign);
+                    if (mop_put(dest_descp, is_decimal, sign) != 0)
+                        return 1;
+                    // TODO: should we test for destination exhaustion here?
+                    mopinfo.flags.es = 1;
+                    log_msg(INFO_MSG, moi, "flags.es set on.\n");
+                    src &= 0xf;
+                    src |= mopinfo.eit[8] & 0x1f0;
+                }
+            }
+        } else if (mop == 004) {
+            // mvzb -- move with zero suppression and blank replacment
+            log_msg(DEBUG_MSG, moi, "Fetched src %#o\n", src);
+            if (mopinfo.flags.es) {
+                // src unchanged
+                if (is_decimal && dest_descp->width() == 9) {
+                    src &= 0xf;
+                    src |= mopinfo.eit[8] & 0x1f0;
+                }
+            } else {
+                if (src == 0) {
+                    src = mopinfo.eit[1];   // normally " "
+                    log_msg(DEBUG_MSG, moi, "Using EIT[1] == %#o\n", src);
+                } else {
+                    mopinfo.flags.es = 1;
+                    if (is_decimal && dest_descp->width() == 9) {
+                        src &= 0xf;
+                        src |= mopinfo.eit[8] & 0x1f0;
+                    }
+                }
+            }
+        } else {
+            log_msg(ERR_MSG, moi, "Unimplemented MOP copy code %#o\n", mop);
+        }
+        if (mop_put(dest_descp, is_decimal, src) != 0)
+            return 1;
+        if (dest_descp->n() == 0)
+            return 0;   // exhaustion of destination is the only normal termination
+    }
+    return 0;
+}
 
 // ============================================================================
 

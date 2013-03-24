@@ -651,7 +651,7 @@ int ptr_t::get()
 
     if (get_ptr_address(base.ringno, base.segno, base.offset + page._offset, &page.addr, &page.lo, &page.hi) != 0) {
         log_msg(ERR_MSG, moi, "Failed to translate eis address.\n");
-        cancel_run(STOP_BUG);
+        cancel_run(STOP_IBKPT);
         return 1;
     } else
         page._valid = 1;
@@ -893,7 +893,7 @@ int desc_t::init_ptr()
     // Convert to 24-bit main memory address
     if (_curr.get() != 0) {
         log_msg(WARN_MSG, moi, "Failed to translate ptr.\n");
-        cancel_run(STOP_BUG);
+        cancel_run(STOP_IBKPT);
         return 1;
     }
 
@@ -973,7 +973,7 @@ int desc_t::_put(unsigned val, bool want_advance)
             log_msg(DEBUG_MSG, moi, "Initializing\n");
         if (init_ptr() != 0) {
             log_msg(WARN_MSG, moi, "Cannot initialize\n");
-            cancel_run(STOP_WARN);
+            cancel_run(STOP_IBKPT);
             return 1;
         }
         if (opt_debug)

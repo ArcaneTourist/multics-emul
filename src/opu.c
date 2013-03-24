@@ -2628,6 +2628,10 @@ static int do_an_op(instr_t *ip)
                 fault_gen(mme1_fault);
                 return 1;
 
+            case opcode0_drl:
+                fault_gen(drl_fault);
+                return 1;
+
             case opcode0_mme2:
                 if (get_addr_mode() == BAR_mode)
                     fault_gen(illproc_fault);

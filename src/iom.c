@@ -593,7 +593,7 @@ int do_channel(channel_t *chanp)
             log_msg(NOTIFY_MSG, moi, "Channel has non-zero return.\n");
         }
         if (chanp->xfer_running)
-            log_msg(NOTIFY_MSG, moi, "Channel has xfer-running set.\n");
+            log_msg(INFO_MSG, moi, "Channel has xfer-running set.\n");
         if (chanp->state == chn_err) {
             log_msg(WARN_MSG, moi, "Channel is in an error state.\n");
             ret = 1;
@@ -726,12 +726,12 @@ static int run_channel(int chan)
         } else if (chanp->control == 0 && ! first_list) {
             int is_idle;
             if (chanp->xfer_running) {
-                if (iom.channels[chan].type == DEVT_TAPE) {
+                if (iom.channels[chan].type != DEVT_DISK) {
                     is_idle = 0;
-                    log_msg(NOTIFY_MSG, moi, "Channel %d almost out of work, but TAPE channels get another list svc for in-progress transfers.\n", chan);
+                    log_msg(INFO_MSG, moi, "Channel %d almost out of work, but non-DISK channels get another list svc for in-progress transfers.\n", chan);
                 } else {
                     is_idle = 1;
-                    log_msg(NOTIFY_MSG, moi, "Channel %d shows transfer in progress, but isn't a tape channel, so it's deemed out of work.\n", chan);
+                    log_msg(NOTIFY_MSG, moi, "Channel %d shows transfer in progress, but it's a disk channel, so it's deemed out of work.\n", chan);
                     cancel_run(STOP_IBKPT);
                 }
             } else
@@ -765,7 +765,6 @@ static int run_channel(int chan)
         chanp->control = chanp->dcw.fields.instr.control;
         pcw_t *p = &chanp->dcw.fields.instr;
         chanp->have_status = 0;
-        log_msg(DEBUG_MSG, moi, "Sending idcw\n");
         int ret = dev_send_idcw(chan, p);
         // Note: dev_send_idcw will either set state=chn_cmd_sent or do iom_fault()
         if (ret != 0) {
@@ -822,8 +821,8 @@ static int run_channel(int chan)
     
         int need_ls = chanp->control == 2 || first_list;
         if (! need_ls && chanp->xfer_running) {
-            if (iom.channels[chan].type == DEVT_TAPE) {
-                log_msg(INFO_MSG, moi, "Doing a list service due to in-progess transfer on a TAPE channel.\n");
+            if (iom.channels[chan].type != DEVT_DISK) {
+                log_msg(INFO_MSG, moi, "Doing a list service due to in-progess transfer on a non-DISK channel.\n");
                 need_ls = 1;
             } else
                 log_msg(INFO_MSG, moi, "Not doing a list service in spite of an in-progess transfer for a non-TAPE channel.\n");
