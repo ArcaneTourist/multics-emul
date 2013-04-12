@@ -1,3 +1,0 @@
-[submodule "simh"]
-	path = simh
-	url = https://github.com/MichaelMondy/simh.git
