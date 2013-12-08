@@ -4,3 +4,6 @@
 [submodule "data"]
 	path = data
 	url = git://github.com/MichaelMondy/multics-emul-data
+[submodule "listings"]
+	path = listings
+	url = git://github.com/MichaelMondy/multics-emul-listings
