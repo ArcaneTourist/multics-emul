@@ -111,8 +111,13 @@ int opcon_autoinput_set(UNIT *uptr, int32 val, char *cptr, void *desc)
         free(con_statep->auto_input);
     }
     if (cptr) {
+        int quoted = (*cptr == '"' || *cptr == '\'' ) && cptr[strlen(cptr)-1] == *cptr;
+        if (quoted)
+            ++ cptr;
         con_statep->auto_input = strdup(cptr);
-        log_msg(NOTIFY_MSG, "opcon", "Auto-input now: %s\n", cptr);
+        if (quoted)
+            con_statep->auto_input[strlen(cptr)-1] = 0;
+        log_msg(NOTIFY_MSG, "opcon", "Auto-input now: %s\n", con_statep->auto_input);
     } else {
         con_statep->auto_input = NULL;
         log_msg(NOTIFY_MSG, "opcon", "Auto-input disabled.\n");

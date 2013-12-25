@@ -75,9 +75,9 @@ printmem: printmem.o bitstream.o
 hw6180.h: opcodes.h
 
 hw6180_cpu.o: *.h
-hw6180_sys.o: *.h
+hw6180_sys.o: *.h seginfo.hpp
 opcode_text.o: *.h
-misc.o: *.h
+misc.o: *.h seginfo.hpp
 opu.o: *.h
 eis_opu.o: *.h eis.hpp
 eis_desc.o: *.h eis.hpp
@@ -91,10 +91,10 @@ math.o: *.h
 math_real.o: *.h
 console.o: *.h
 #symtab.o: *.h
-listing.o: *.h
-seginfo.o: *.h
-debug_run.o: *.h
-debug_io.o: *.h
+listing.o: *.h seginfo.hpp
+seginfo.o: *.h seginfo.hpp
+debug_run.o: *.h *.hpp
+debug_io.o: *.h *.hpp
 
 bit-test.o: *.h
 bit-test: bit-test.o bitstream.o

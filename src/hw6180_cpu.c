@@ -290,7 +290,7 @@ DEVICE disk_dev = {
 
 
 MTAB opcon_mod[] = {
-    { MTAB_XTD | MTAB_VDV | MTAB_VALO | MTAB_NC,
+    { MTAB_XTD | MTAB_VDV | MTAB_VALO | MTAB_NC | MTAB_QUOTE,
         0, NULL, "AUTOINPUT",
         opcon_autoinput_set, opcon_autoinput_show, NULL },
     { 0 }
