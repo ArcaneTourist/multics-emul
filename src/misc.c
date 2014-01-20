@@ -185,6 +185,30 @@ void out_msg(const char* format, ...)
     }
 }
 
+static void out_sym_stm(FILE *stream, int is_write, t_addr simh_addr, t_value *val, UNIT *uptr, int32 sw)
+{
+    if (stream == NULL)
+        return;
+    fprintf(stream, "%s Memory ",
+        (is_write) ? "Write" : "Read");
+    fprint_addr(stream, NULL, simh_addr);
+    fprintf(stream, ": ");
+    fprint_sym(stream, simh_addr, val, uptr, sw);
+    crnl_out(stream, "\n", NULL);
+}
+
+
+void out_sym(int is_write, t_addr simh_addr, t_value *val, UNIT *uptr, int32 sw)
+{
+    FILE *stream = (sim_log != NULL) ? sim_log : stdout;
+    out_sym_stm(stream, is_write, simh_addr, val, uptr, sw);
+    if (sim_deb != NULL) {
+        fprintf(sim_deb, "Debug: ");
+        out_sym_stm(sim_deb, is_write, simh_addr, val, uptr, sw);
+    }
+}
+
+
 #if 0
 static void sim_hmsg(const char* tag, const char *who, const char* format, va_list ap)
 {

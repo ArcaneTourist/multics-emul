@@ -153,21 +153,30 @@ static cpu_t cpu_info;
 cpu_t *cpup = &cpu_info;    // but we still only have one CPU
 
 //-----------------------------------------------------------------------------
+// IOM
+iom_t iom;                      // only one for now
+
+//-----------------------------------------------------------------------------
 // Descriptions of all of the registers for SIMH.
 //
 // TODO: modify simh to take a PV_ZLEFT flag (leftmost bit is bit 0) or
 // perhaps PV_ZMSB (most significant bit is numbered zero).  Why did
 // I say this... Perhaps that comment was before fprint_sym/fprint_addr?
 // 
-// NOTE: Instead of using REF_USER# flags, we could also check regp->name to
-// detect which registers should have special formatting in fprint_sym.
+// NOTE: Instead of using REG_USER# flags, we could also check regp->name to
+// detect which registers should have special formatting in fprint_sym.  Even
+// better, we'll switch to description fields with GRDATADF.
 
+// We populate this in save_to_simh() so that only the "on" fields are displayed
+static BITFIELD IR_bits[19] = {
+    { 0 },
+};
 REG cpu_reg[] = {
     // structure members: name="PC", loc=PC, radix=<8>, width=36, offset=<0>, depth=<1>, flags=, qptr=
     { ORDATA (PPR_addr, saved_PPR_addr, 64), REG_RO | REG_VMIO | REG_HIDDEN },
     { ORDATA (PPR, saved_PPR, 64), REG_VMIO },
     { ORDATA (IC, saved_IC, 18) },      // saved_IC address also stored in sim_PC external
-    { GRDATA (IR, saved_IR, 2, 18, 0), REG_RO | REG_VMIO | REG_USER1},
+    { GRDATADF (IR, saved_IR, 2, 18, 0, "Indicator Register", IR_bits),  REG_RO},
     { ORDATA (A, reg_A, 36) },
     { ORDATA (Q, reg_Q, 36) },
     { ORDATA (E, reg_E, 8) },
@@ -205,7 +214,7 @@ UNIT cpu_unit = {
     UDATA (NULL, UNIT_FIX|UNIT_BINK|UNIT_IDLE, MAXMEMSIZE)
 };
 
-extern int iom_show_mbx(FILE *st, UNIT *uptr, int val, void *desc);
+extern int iom_show_mbx(FILE *st, UNIT *uptr, int val, void *desc); // FIXME
 static MTAB cpu_mod[] = {
     // for SIMH "show" and "set" commands
     { MTAB_XTD | MTAB_VDV | MTAB_NMO | MTAB_SHP | MTAB_NC,
@@ -297,9 +306,12 @@ MTAB opcon_mod[] = {
 };
 
 
+// Need to provide at least one unit or simh display won't emit a newline
+static t_stat con_svc(UNIT*up) { return 0; }
+UNIT opcon_unit = { UDATA(&con_svc, 0, 0) };
 DEVICE opcon_dev = {
-    "OPCON", NULL, NULL, opcon_mod,
-    0, 10, 8, 1, 8, 8,
+    "OPCON", &opcon_unit, NULL, opcon_mod,
+    1, 10, 8, 1, 8, 8,
     NULL, NULL, NULL,
     NULL, NULL, NULL,
     NULL, DEV_DEBUG
@@ -338,7 +350,6 @@ cpu_state_t cpu;
 ctl_unit_data_t cu; 
 
 scu_t scu;                      // only one for now
-iom_t iom;                      // only one for now
 
 // This is an out-of-band flag for the APU.  User commands to
 // display or modify memory can invoke much the APU.  Howeveer, we don't
@@ -396,6 +407,7 @@ static void restore_PR_registers(void);
 static int write72(FILE* fp, t_uint64 word0, t_uint64 word1);
 static int read72(FILE* fp, t_uint64* word0p, t_uint64* word1p);
 void init_memory_iom();
+static void set_IR_bitnames(uint32 irval);
 
 //=============================================================================
 
@@ -626,11 +638,18 @@ void init_memory_iom()
 
     log_msg(INFO_MSG, "CPU::IOM", "Performing load of eleven words from IOM bootchanel to memory.\n");
 
-    int base = 014;         // 12 bits; IOM base
+    const int base = 014;         // 12 bits; IOM base
     // bootload_io.alm insists that pi_base match
     // template_slt_$iom_mailbox_absloc
     int pi_base = 01200;    // 15 bits; interrupt cells
-    int iom = 0;            // 3 bits; only IOM 0 would use vector 030
+    int iom_num = 0;            // 3 bits; only IOM 0 would use vector 030
+
+    log_msg(NOTIFY_MSG, "IOM::boot", "bootload starting\n");
+    // log_msg(NOTIFY_MSG, "IOM::boot", "Multiplex switches are %#o\n", multiplex_base_switches);
+    log_msg(NOTIFY_MSG, "IOM::boot", "Mbx base is %#o\n", base);
+    log_msg(NOTIFY_MSG, "IOM::boot", "Interrupt base is %#o\n", pi_base);
+    log_msg(NOTIFY_MSG, "IOM::boot", "Tape channel is %#o (%d)\n", sys_opts.tape_chan, sys_opts.tape_chan);
+
 
     t_uint64 cmd = 5;       // 6 bits; 05 for tape, 01 for cards
     int dev = 0;            // 6 bits: drive number
@@ -648,14 +667,14 @@ void init_memory_iom()
             XXYYYY0 Program Interrupt Base
     */
 
-    t_uint64 dis0 = 0616200;
-    /* 1*/ Mem[010 + 2 * iom] = (imu << 34) | dis0;         // system fault vector; DIS 0 instruction (imu bit not mentioned by 43A239854)
+    const t_uint64 dis0 = 0616200;
+    /* 1*/ Mem[010 + 2 * iom_num] = (imu << 34) | dis0;         // system fault vector; DIS 0 instruction (imu bit not mentioned by 43A239854)
     // Zero other 1/2 of y-pair to avoid msgs re reading uninitialized
     // memory (if we have that turned on)
-    Mem[010 + 2 * iom + 1] = 0;
+    Mem[010 + 2 * iom_num + 1] = 0;
 
-    /* 2*/ Mem[030 + 2 * iom] = dis0;                       // terminate interrupt vector (overwritten by bootload)
-    int base_addr = base << 6; // 01400
+    /* 2*/ Mem[030 + 2 * iom_num] = dis0;                       // terminate interrupt vector (overwritten by bootload)
+    const int base_addr = base << 6; // 01400
 
     /* 3*/ Mem[base_addr + 7] = ((t_uint64) base_addr << 18) | 02000002;    // tally word for sys fault status
                 // ??? Fault channel DCW
@@ -663,7 +682,7 @@ void init_memory_iom()
     // bootload_tape_label.alm says 04000, 43A239854 says 040000.  Since 43A239854 says
     // "no change", 40000 is correct; 4000 would be a large tally
     /* 4*/ Mem[base_addr + 010] = 040000;       // Connect channel LPW; points to PCW at 000000
-    int mbx = base_addr + 4 * sys_opts.tape_chan;
+    const int mbx = base_addr + 4 * sys_opts.tape_chan;
     /* 5*/ Mem[mbx] = 03020003;             // Boot device LPW; points to IDCW at 000003
     /* 6*/ Mem[4] = 030 << 18;              // Second IDCW: IOTD to loc 30 (startup fault vector)
 
@@ -682,9 +701,22 @@ void init_memory_iom()
     /* 9*/ Mem[1] = ((t_uint64) sys_opts.tape_chan << 27) /*| port*/;       // 2nd word of PCW pair
 
     // following verified correct; instr 362 will not yield 1572 with a different shift
-    /*10*/ Mem[2] = ((t_uint64) base_addr << 18) | pi_base | iom;   // word after PCW (used by program)
+    /*10*/ Mem[2] = ((t_uint64) base_addr << 18) | pi_base | iom_num;   // word after PCW (used by program)
 
     /*11*/ Mem[3] = (cmd << 30) | (dev << 24) | 0700000;        // IDCW for read binary
+
+    {
+        int locs[] = {
+            010 + 2 * iom_num, 030 + 2 * iom_num,
+            base_addr + 7, base_addr + 010, mbx,
+            4, mbx + 2, 0, 1, 2, 3 };
+    
+        for (int i = 0; i < ARRAY_SIZE(locs); ++i) {
+            int addr = locs[i];
+            log_msg(NOTIFY_MSG, "IOM::boot", "Mem[%08o]: %012llo\n",
+            addr, Mem[addr]);
+        }
+    }
 
 }
 
@@ -983,6 +1015,7 @@ static void save_to_simh(void)
     t_uint64 sIR;
     save_IR(&sIR);
     saved_IR = sIR & MASKBITS(18);
+    set_IR_bitnames(saved_IR);
     save_PR_registers();
 
     saved_BAR[0] = BAR.base;
@@ -992,6 +1025,43 @@ static void save_to_simh(void)
         (cpup->DSBR.u << 12) | // 1 bit
         ((t_uint64) cpup->DSBR.bound << 13) | // 14 bits
         ((t_uint64) cpup->DSBR.addr << 27); // 24 bits
+}
+
+//=============================================================================
+
+/*
+ *  set_IR_bitnames
+ *  
+ *  We only want to display the names of the flags in the IR that are
+ *  are currently "on", so we update SIMH's descriptor array to only
+ *  include descriptions for the IR bit positions that are on.
+ *  
+*/
+
+static void set_IR_bitnames(uint32 irval)
+{
+    static const char *bool_names[] = { "off", "on" };
+    static char *IR_bit_names[18] = {
+        "zero", "neg", "carry", "overflow",
+        "exp-overflow", "exp-underflow", "overflow-mask", "tally-run-out",
+        "parity-error", "parity-mask", "not-bar-mode", "truncation",
+        "mid-instr-intr-fault", "abs-mode", "hex-mode",
+        "", "", ""
+    };
+    int nfields = 0;
+    for (int i = 0; i < 18; ++i) {
+        if ((irval >> i) & 1) {
+            int idx = 18 - i - 1;
+            IR_bits[nfields].name = IR_bit_names[idx];
+            IR_bits[nfields].offset = i;
+            // TODO: only initialize the following once
+            IR_bits[nfields].width = 1;
+            IR_bits[nfields].valuenames = bool_names;
+            IR_bits[nfields].format = NULL;
+            ++nfields;
+        }
+    }
+    IR_bits[nfields].name = NULL;
 }
 
 //=============================================================================
@@ -1214,6 +1284,11 @@ static t_stat control_unit(void)
             }
             // No interrupt pending; will we ever see one?
             uint32 n = sim_qcount();
+            if (n > 0) {
+                extern UNIT sim_con_unit;
+                if (sim_is_active(&sim_con_unit))
+                    --n;
+            }
             if (n == 0) {
                 log_msg(ERR_MSG, "CU", "DIS instruction running, but no activities are pending.\n");
                 reason = STOP_BUG;
@@ -1260,7 +1335,6 @@ static t_stat control_unit(void)
             // AL39, 1-13: for fetches, procedure pointer reg (PPR) is
             // ignored. [PPR IC is a dup of IC]
             cpu.ic_odd = PPR.IC % 2;    // don't exec even if fetch from odd
-            cpu.cycle = EXEC_cycle;
             TPR.TSR = PPR.PSR;
             TPR.TRR = PPR.PRR;
             cu.instr_fetch = 1;
@@ -1279,6 +1353,7 @@ static t_stat control_unit(void)
                     cpu.cycle = FAULT_cycle;
                     cpu.irodd_invalid = 1;
                 } else {
+                    cpu.cycle = EXEC_cycle;
 #if 0
                     t_uint64 simh_addr = addr_emul_to_simh(get_addr_mode(), PPR.PSR, PPR.IC - PPR.IC % 2 + 1);
                     if (sim_brk_summ && sim_brk_test (simh_addr, SWMASK ('E'))) {
@@ -2156,6 +2231,9 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
         // Check for absolute mode breakpoints.  Note that fetch_appended()
         // has its own test for appending mode breakpoints.
         t_uint64 simh_addr = addr_emul_to_simh(ABSOLUTE_mode, 0, addr);
+        if (cpu.cycle != FETCH_cycle && sim_brk_test (simh_addr, SWMASK ('D'))) {
+            out_sym(0, simh_addr, &Mem[addr], &cpu_unit, SWMASK('M') | SWMASK('A'));
+        }
         if (sim_brk_test (simh_addr, SWMASK ('M'))) {
             log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address %#o.  Fetched value %012llo\n", addr, Mem[addr]);
             (void) cancel_run(STOP_IBKPT);
@@ -2163,7 +2241,7 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
     }
 
     cpu.read_addr = addr;   // Should probably be in scu
-#if MEM_CHECK_UNINIT
+#if FEAT_MEM_CHECK_UNINIT
     {
     t_uint64 word = Mem[addr];  // absolute memory reference
     if (word == ~ 0) {
@@ -2263,6 +2341,9 @@ int store_abs_word(uint addr, t_uint64 word)
         // has its own test for appending mode breakpoints.
         t_uint64 simh_addr = addr_emul_to_simh(ABSOLUTE_mode, 0, addr);
         uint mask;
+        if (sim_brk_test (simh_addr, SWMASK ('D'))) {
+            out_sym(1, simh_addr, &Mem[addr], &cpu_unit, SWMASK('M') | SWMASK('A'));
+        }
         if ((mask = sim_brk_test(simh_addr, SWMASK('W') | SWMASK('M') | SWMASK('E'))) != 0) {
             if ((mask & SWMASK ('W')) != 0) {
                 log_msg(NOTIFY_MSG, "CU::store", "Memory Write Breakpoint, address %#o\n", addr);

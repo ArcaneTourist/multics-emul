@@ -127,13 +127,13 @@ public:
     enum vartype { unknown, fixedbin, bit, ptr, str, vchar };
 
     var_info() { type = unknown; size = 0; size2 = 0; };
-    var_info(const char *nm, enum vartype v, unsigned sz, unsigned sz2 = 0)
+    var_info(const char *nm, enum vartype v, unsigned sz, int sz2 = 0)
         { name = nm; type = v; size = sz; size2 = sz2; };
 
     enum vartype type;
     string name;
     unsigned size;
-    unsigned size2;
+    int size2;
 };
 
 class stack_frame {

@@ -67,17 +67,25 @@ extern "C" int cmd_load_listing(int32 arg, char *buf)
         return 1;
     }
     char *s = buf + strspn(buf, " \t");
-    int n = strspn(buf, "01234567");
-    char sv = buf[n];
-    buf[n] = 0;
-    unsigned segno;
     char c;
+
+    int debug = 0;
+    if (sscanf(s, "-d%c", &c) == 1 && isspace(c)) {
+        debug = 1;
+        s += strcspn(s, " \t");
+        s += strspn(s, " \t");
+    }
+
+    int n = strspn(s, "01234567");
+    char sv = s[n];
+    s[n] = 0;
+    unsigned segno;
     if (sscanf(s, "%o %c", &segno, &c) != 1) {
         out_msg("xlist: Expecting a octal segment number.\n");
         buf[n] = sv;
         return 1;
     }
-    buf[n] = sv;
+    s[n] = sv;
     s += n;
 
     // listing_segno = segno;
@@ -117,6 +125,10 @@ extern "C" int cmd_load_listing(int32 arg, char *buf)
     }
     if (ret != 0)
         out_msg("xlist: Problems loading listing %s for segment %o|%o.\n", s, segno, offset);
+    if (debug) {
+        cout << "Dump of file " << s << ":" << simh_nl;
+        src.print(cout, 4);
+    }
     return ret;
 }
 

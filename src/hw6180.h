@@ -699,6 +699,9 @@ extern int get_seg_name(uint segno);
 extern int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp);
 extern int cmd_find(int32 arg, char *buf);
 extern int cmd_symtab_parse(int32 arg, char *buf);
+extern t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int32 sw);
+extern void fprint_addr(FILE *stream, DEVICE *dptr, t_addr simh_addr);
+extern void out_sym(int is_write, t_addr simh_addr, t_value *val, UNIT *uptr, int32 sw);
 extern void flush_logs(void);
 
 /* debug_run.cpp */

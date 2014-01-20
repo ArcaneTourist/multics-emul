@@ -78,6 +78,7 @@ static DEVICE* find_opcon()
             return NULL;
         devinfop->chan = -1;
         devinfop->statep = NULL;
+        devinfop->have_status = 0;
         devp->ctxt = devinfop;
     }
     struct s_console_state *con_statep = devinfop->statep;

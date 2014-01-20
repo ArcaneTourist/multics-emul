@@ -2065,7 +2065,7 @@ static int send_general_interrupt(int chan, int pic)
     (void) fetch_abs_word(imw_addr, &imw);
     // The 5 least significant bits of the channel determine a bit to be
     // turned on.
-    log_msg(DEBUG_MSG, moi, "IMW at %#o was %012llo; setting bit %d\n", imw_addr, imw, chan & 037);
+    log_msg(INFO_MSG, moi, "IMW at %#o was %012llo; setting bit %d\n", imw_addr, imw, chan & 037);
     imw = setbits36(imw, chan & 037, 1, 1);
     log_msg(INFO_MSG, moi, "IMW at %#o now %012llo\n", imw_addr, imw);
     (void) store_abs_word(imw_addr, imw);

@@ -1408,6 +1408,12 @@ int fetch_appended(uint offset, t_uint64 *wordp)
     if (ret == 0) {
         if(opt_debug>0) log_msg(DEBUG_MSG, "APU::fetch_append", "Using addr 0%o\n", addr);
         ret = fetch_abs_word(addr, wordp);
+        if (ret == 0) {
+            if (cpu.cycle != FETCH_cycle && sim_brk_test (simh_addr, SWMASK ('D'))) {
+                extern UNIT cpu_unit;   // FIXME
+                out_sym(0, simh_addr, wordp, &cpu_unit, SWMASK('M') | SWMASK('A'));
+            }
+        }
     } else {
         if(opt_debug>0) log_msg(DEBUG_MSG, "APU::fetch_append", "page-in faulted\n");
     }
@@ -1440,6 +1446,11 @@ int store_appended(uint offset, t_uint64 word)
     if (ret == 0) {
         if(opt_debug>0) log_msg(DEBUG_MSG, "APU::store-append", "Using addr 0%o\n", addr);
         ret = store_abs_word(addr, word);
+        if (ret == 0)
+            if (sim_brk_test (simh_addr, SWMASK ('D'))) {
+                extern UNIT cpu_unit;   // FIXME
+                out_sym(1, simh_addr, &word, &cpu_unit, SWMASK('M') | SWMASK('A'));
+            }
     } else
         if(opt_debug>0) log_msg(DEBUG_MSG, "APU::store-append", "page-in faulted\n");
     return ret;

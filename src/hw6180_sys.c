@@ -17,7 +17,6 @@
 
 // The following are assigned to SIMH function pointers
 static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr);
-static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr addr);
 static void hw6180_init(void);
 
 extern DEVICE cpu_dev;
@@ -144,6 +143,7 @@ static void hw6180_init(void)
     sim_brk_types = SWMASK('E');    // execution
     sim_brk_types |= SWMASK('M');   // memory read/write
     sim_brk_types |= SWMASK('W');   // memory write
+    sim_brk_types |= SWMASK('D');   // auto-display (w/o stopping)
     sim_brk_dflt = SWMASK('E');
 
     // System-wide options
@@ -298,7 +298,7 @@ static int prior_lineno;
 
 t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int32 sw)
 {
-    // log_msg(INFO_MSG, "SYS:fprint_sym", "addr is %012llo; val-ptr is %p, uptr is %p\n", simh_addr, val, uptr);
+    //log_msg(INFO_MSG, "SYS:fprint_sym", "addr is %012llo; val-ptr is %p, uptr is %p, sw is %#o\n", simh_addr, val, uptr, sw);
 
     if (uptr == &cpu_unit) {
         // memory request -- print memory specified by SIMH 
@@ -360,10 +360,12 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
                 }
             }
         }
-        /* See if any other format was requested (but don't bother honoring multiple formats */
+        /* See if any other format was requested (but don't bother honoring
+           multiple formats */
         if (sw & SWMASK('A')) {
             // already done
-        } else if (sw & SWMASK('L')) {
+        }
+        if (sw & SWMASK('L')) {
             // L -> LPW
             fprintf(ofile, " %s", print_lpw(abs_addr));
         } else if (sw & SWMASK('M')) {
@@ -637,7 +639,7 @@ out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
  * format.
  */
 
-static void fprint_addr(FILE *stream, DEVICE *dptr, t_addr simh_addr)
+void fprint_addr(FILE *stream, DEVICE *dptr, t_addr simh_addr)
 {
     // log_msg(INFO_MSG, "SYS:fprint_addr", "Device is %s; addr is %012llo; dptr is %p\n", dptr->name, simh_addr, dptr);
 

@@ -95,6 +95,7 @@ listing.o: *.h seginfo.hpp
 seginfo.o: *.h seginfo.hpp
 debug_run.o: *.h *.hpp
 debug_io.o: *.h *.hpp
+scan-tape.o: opcodes.h
 
 bit-test.o: *.h
 bit-test: bit-test.o bitstream.o

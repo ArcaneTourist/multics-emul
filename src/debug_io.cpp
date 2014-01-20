@@ -162,6 +162,19 @@ ostream& entry_point::print(ostream& out, int indent) const
 
 // ============================================================================
 
+static const char* vartype2str(enum var_info::vartype vt)
+{
+    return (vt == var_info::unknown) ? "unknown"
+        : (vt == var_info::fixedbin) ? "fixed bin"
+        : (vt == var_info::bit) ? "fixed bit"
+        : (vt == var_info::ptr) ? "ptr"
+        : (vt == var_info::str) ? "string"
+        : (vt == var_info::vchar) ? "vchar"
+        : "???";
+}
+
+// ============================================================================
+
 ostream& stack_frame::print(ostream& out, int indent) const
 {
     out << string(indent, ' ');
@@ -175,8 +188,14 @@ ostream& stack_frame::print(ostream& out, int indent) const
         indent += 2;
         for (map<int,var_info>::const_iterator it = automatics.begin(); it != automatics.end(); it++) {
             int offset = (*it).first;
-            const string& name = (*it).second.name;
-            out << string(indent, ' ') << seg_offset_t(offset) << " " << name << simh_nl;
+            const var_info& v = (*it).second;
+            out << string(indent, ' ')
+                << seg_offset_t(offset)
+                << " " << v.name
+                << " " << vartype2str(v.type)
+                << " " << "size=" << dec << v.size
+                << " " << "size2=" << dec << v.size2
+                << simh_nl;
         }
     }
 
