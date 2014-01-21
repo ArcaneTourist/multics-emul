@@ -58,6 +58,13 @@
 
         Allow multiple tapes per channel.
 */
+/*
+	TODO
+		Temporary - everything setting status should set have_status
+		even if returning non-zero.  Later, have_status should proably
+		be changed to "active" (queued) because anything without 
+		activity needs a status service or iom fault.
+*/
 
 #include "hw6180.h"
 #include "sim_tape.h"
@@ -191,6 +198,7 @@ int mt_iom_cmd(chan_devinfo* devinfop)
                 }
             }
             tape_statep->bitsp = bitstm_new(tape_statep->bufp, tbc);
+			// note: leaving devinfop->have_status cleared
             *majorp = 0;
             *subp = 0;
             if (sim_tape_wrp(unitp)) *subp |= 1;
@@ -261,22 +269,35 @@ int mt_iom_cmd(chan_devinfo* devinfop)
 // ============================================================================
 
 
-int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
+int mt_iom_io(chan_devinfo* devinfop, t_uint64 *wordp)
 {
+    int chan = devinfop->chan;
+    int* majorp = &devinfop->major;
+    int* subp = &devinfop->substatus;
+
     // log_msg(DEBUG_MSG, "MT::iom_io", "Chan 0%o\n", chan);
 
     if (chan < 0 || chan >= ARRAY_SIZE(iom.channels)) {
+		devinfop->have_status = 1;
         *majorp = 05;   // Real HW could not be on bad channel
         *subp = 2;
         log_msg(ERR_MSG, "MT::iom_io", "Bad channel %d\n", chan);
+    	cancel_run(STOP_BUG);
         return 1;
     }
+	if (devinfop == NULL) {
+        log_msg(ERR_MSG, "MT::iom_io", "Internal errror, no dev info\n");
+    	cancel_run(STOP_BUG);
+        return 1;
+	}
 
     DEVICE* devp = iom.channels[chan].dev;
     if (devp == NULL || devp->units == NULL) {
+		devinfop->have_status = 1;
         *majorp = 05;
         *subp = 2;
         log_msg(ERR_MSG, "MT::iom_io", "Internal error, no device and/or unit for channel 0%o\n", chan);
+    	cancel_run(STOP_BUG);
         return 1;
     }
     UNIT* unitp = devp->units;
@@ -286,9 +307,12 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
 
     if (tape_statep->io_mode == no_mode) {
         // no prior read or write command
+		// BUG: Don't we need to set have_status ?
+        devinfop->have_status = 1;
         *majorp = 013;  // MPC Device Data Alert
         *subp = 02;     // Inconsistent command
         log_msg(ERR_MSG, "MT::iom_io", "Bad channel %d\n", chan);
+    	cancel_run(STOP_BUG);
         return 1;
     } else if (tape_statep->io_mode == read_mode) {
         // read
@@ -306,6 +330,7 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
             // BUG: See some of the IOM status fields.
             // BUG: The IOM should be updated to return its DCW tally residue
             // to the caller.
+            devinfop->have_status = 1;
             *majorp = 0;
             *subp = 0;
             if (sim_tape_wrp(unitp)) *subp |= 1;
@@ -313,6 +338,7 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
                 "Read buffer exhausted on channel %d\n", chan);
             return 1;
         }
+		devinfop->have_status = 1;
         *majorp = 0;
         *subp = 0;      // BUG: do we need to detect end-of-record?
         if (sim_tape_wrp(unitp)) *subp |= 1;
@@ -321,6 +347,7 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
         return 0;
     } else {
         // write
+		devinfop->have_status = 1;
         log_msg(ERR_MSG, "MT::iom_io", "Write I/O Unimplemented\n");
         *majorp = 043;  // DATA ALERT   
         *subp = 040;        // Reflective end of tape mark found while trying to write
@@ -328,6 +355,7 @@ int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp)
     }
 
     /*notreached*/
+	devinfop->have_status = 1;
     *majorp = 0;
     *subp = 0;
     log_msg(ERR_MSG, "MT::iom_io", "Internal error.\n");

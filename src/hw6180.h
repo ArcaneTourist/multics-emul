@@ -573,7 +573,7 @@ typedef struct {
 } scu_t;
 
 // I/O Multiplexer
-enum { max_channels = 32 };     // enums are more constant than consts...
+enum { max_channels = 64 };     // enums are more constant than consts...
 typedef struct {
     uint iom_num;
     int ports[8];   // CPU/IOM connectivity; designated a..h; negative to disable
@@ -849,7 +849,8 @@ extern int addr_mod_eis_addr_reg(instr_t *ip);
 /* mt.c */
 extern void mt_init(void);
 extern int mt_iom_cmd(chan_devinfo* devinfop);
-extern int mt_iom_io(int chan, t_uint64 *wordp, int* majorp, int* subp);
+extern int mt_iom_io(chan_devinfo* devinfop, t_uint64 *wordp);
+
 
 /* disk.c */
 extern void disk_init(void);

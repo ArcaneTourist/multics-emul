@@ -286,6 +286,8 @@ t_stat iom_reset(DEVICE *dptr)
 
     for (int chan = 0; chan < max_channels; ++chan) {
         channel_t* chanp = get_chan(chan);
+        if (chanp == NULL)
+            break;
         if (chanp->unitp != NULL) {
             sim_cancel(chanp->unitp);
             free(chanp->unitp);
@@ -408,13 +410,16 @@ static channel_t* get_chan(int chan)
 {
     static channel_t channels[max_channels];
 
-    if (chan < 0 || chan >= 040 || chan >= max_channels) {
+    if (chan < 0 || chan >= max_channels) {
         // TODO: Would ill-ser-req be more appropriate?
         // Probably depends on whether caller is the iom and
         // is issuing a pcw or if the caller is a channel requesting svc
         iom_fault(chan, NULL, 1, iom_ill_chan);
         return NULL;
     }
+    if (chan >= 040)
+        log_msg(INFO_MSG, "IOM", "Access to high channel over 32: %d\n", chan);
+
     return &channels[chan];
 }
 
@@ -452,10 +457,13 @@ static int send_channel_pcw(int chan, int addr)
 
     // BUG/TODO: Should these be user faults, not system faults?
 
-    if (pcw.chan < 0 || pcw.chan >= 040) {  // 040 == 32 decimal
+    if (pcw.chan < 0 || pcw.chan >= max_channels) {
+        log_msg(ERR_MSG, moi, "Attempt to access bad channel number %d\n", pcw.chan);
         iom_fault(chan, moi, 1, iom_ill_chan);
         return 1;
     }
+    if (pcw.chan >= 040)    // 040 == 32 decimal
+        log_msg(INFO_MSG, moi, "Access to high channel number %d\n", pcw.chan);
     if (pcw.cp != 07) {
         iom_fault(chan, moi, 1, iom_not_pcw_conn);
         return 1;
@@ -567,7 +575,7 @@ static int activate_chan(int chan, pcw_t* pcwp)
  *
  */
 
-int do_channel(channel_t *chanp)
+static int do_channel(channel_t *chanp)
 {
     const char *moi = "IOM::do-channel";
 
@@ -1419,6 +1427,8 @@ static int dev_io(int chan, t_uint64 *wordp)
     }
     chanp->status.power_off = 0;
 
+    chan_devinfo *devinfop = chanp->devinfop;
+    int ret = 0;
     switch(iom.channels[chan].type) {
         case DEVT_NONE:
             // BUG: no device connected, what's the fault code(s) ?
@@ -1428,19 +1438,19 @@ static int dev_io(int chan, t_uint64 *wordp)
             cancel_run(STOP_WARN);
             return 1;
         case DEVT_TAPE: {
-            int ret = mt_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
+            ret = mt_iom_io(devinfop, wordp);
             if (ret != 0 || chanp->status.major != 0)
                 log_msg(DEBUG_MSG, "IOM::dev-io", "MT returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             return ret; // caller must choose between our return and the status.{major,substatus}
         }
         case DEVT_CON: {
-            int ret = con_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
+            ret = con_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
             if (ret != 0 || chanp->status.major != 0)
                 log_msg(DEBUG_MSG, "IOM::dev-io", "CON returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             return ret; // caller must choose between our return and the status.{major,substatus}
         }
         case DEVT_DISK: {
-            int ret = disk_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
+            ret = disk_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
             // TODO: uncomment & switch to DEBUG: if (ret != 0 || chanp->status.major != 0)
                 log_msg(INFO_MSG, "IOM::dev-io", "DISK returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             return ret; // caller must choose between our return and the status.{major,substatus}
