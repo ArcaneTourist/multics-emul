@@ -575,7 +575,8 @@ typedef struct {
 // I/O Multiplexer
 enum { max_channels = 64 };     // enums are more constant than consts...
 typedef struct {
-    uint iom_num;
+    uint8 iom_num;
+    uint16 base;    // IOM BASE switches - 12 bits
     int ports[8];   // CPU/IOM connectivity; designated a..h; negative to disable
     int scu_port;   // which port on the SCU(s) are we connected to?
     struct {
@@ -850,7 +851,6 @@ extern int addr_mod_eis_addr_reg(instr_t *ip);
 extern void mt_init(void);
 extern int mt_iom_cmd(chan_devinfo* devinfop);
 extern int mt_iom_io(chan_devinfo* devinfop, t_uint64 *wordp);
-
 
 /* disk.c */
 extern void disk_init(void);

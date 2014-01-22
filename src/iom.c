@@ -235,6 +235,10 @@ void iom_init()
     log_msg(INFO_MSG, "IOM::init", "Running.\n");
 
     memset(&iom, 0, sizeof(iom));
+
+    iom.iom_num = 0;
+    iom.base = 0014;    // IOM A
+
     for (int i = 0; i < ARRAY_SIZE(iom.ports); ++i) {
         iom.ports[i] = -1;
     }

@@ -171,12 +171,13 @@ iom_t iom;                      // only one for now
 static BITFIELD IR_bits[19] = {
     { 0 },
 };
+
 REG cpu_reg[] = {
     // structure members: name="PC", loc=PC, radix=<8>, width=36, offset=<0>, depth=<1>, flags=, qptr=
     { ORDATA (PPR_addr, saved_PPR_addr, 64), REG_RO | REG_VMIO | REG_HIDDEN },
     { ORDATA (PPR, saved_PPR, 64), REG_VMIO },
     { ORDATA (IC, saved_IC, 18) },      // saved_IC address also stored in sim_PC external
-    { GRDATADF (IR, saved_IR, 2, 18, 0, "Indicator Register", IR_bits),  REG_RO},
+    { GRDATADF (IR, saved_IR, 2, 18, 0, "Indicator Register", IR_bits), REG_RO},
     { ORDATA (A, reg_A, 36) },
     { ORDATA (Q, reg_Q, 36) },
     { ORDATA (E, reg_E, 8) },
@@ -215,6 +216,8 @@ UNIT cpu_unit = {
 };
 
 extern int iom_show_mbx(FILE *st, UNIT *uptr, int val, void *desc); // FIXME
+static int cpu_set_fault_base(UNIT *uptr, int32 val, char *cptr, void *desc);
+static int cpu_show_fault_base(FILE *st, UNIT *uptr, int32 val, void *desc);
 static MTAB cpu_mod[] = {
     // for SIMH "show" and "set" commands
     { MTAB_XTD | MTAB_VDV | MTAB_NMO | MTAB_SHP | MTAB_NC,
@@ -229,6 +232,9 @@ static MTAB cpu_mod[] = {
     { MTAB_XTD | MTAB_VDV | MTAB_NMO | MTAB_SHP | MTAB_NC,
       0, "SEG", NULL,
       NULL, apu_show_seg, NULL },
+    { MTAB_XTD | MTAB_VDV | MTAB_NC,
+      0, "FAULT_BASE", "FAULT_BASE",
+      cpu_set_fault_base, cpu_show_fault_base, NULL },
     { 0 }
 };
 
@@ -326,8 +332,13 @@ MTAB iom_mod[] = {
       NULL, iom_show_mbx, NULL },
     { 0 }
 };
+REG iom_reg[] = {
+    { ORDATA(IOM_NUM, iom.iom_num, 2) },
+    { ORDATA(BASE_ADDR, iom.base, 12) },    // switches, not value
+    { NULL }
+};
 DEVICE iom_dev = {
-    "IOM", &iom_unit, NULL, iom_mod,
+    "IOM", &iom_unit, iom_reg, iom_mod,
     1, 10, 8, 1, 8, 8,
     NULL, NULL, &iom_reset,
     NULL, NULL, NULL,
@@ -406,8 +417,8 @@ static void save_PR_registers(void);
 static void restore_PR_registers(void);
 static int write72(FILE* fp, t_uint64 word0, t_uint64 word1);
 static int read72(FILE* fp, t_uint64* word0p, t_uint64* word1p);
-void init_memory_iom();
 static void set_IR_bitnames(uint32 irval);
+void init_memory_iom();
 
 //=============================================================================
 
@@ -638,18 +649,23 @@ void init_memory_iom()
 
     log_msg(INFO_MSG, "CPU::IOM", "Performing load of eleven words from IOM bootchanel to memory.\n");
 
-    const int base = 014;         // 12 bits; IOM base
+    const int base = iom.base;      // 12 bits; IOM base; switch values
     // bootload_io.alm insists that pi_base match
     // template_slt_$iom_mailbox_absloc
-    int pi_base = 01200;    // 15 bits; interrupt cells
-    int iom_num = 0;            // 3 bits; only IOM 0 would use vector 030
+    // const int multiplex_base_switches = 0120;    // only valid value
+    const int pi_base = 01200; // 15 bits; interrupt cells
+
+    const int iom_num = iom.iom_num;  // 3 bits; only IOM 0 would use vector 030
 
     log_msg(NOTIFY_MSG, "IOM::boot", "bootload starting\n");
-    // log_msg(NOTIFY_MSG, "IOM::boot", "Multiplex switches are %#o\n", multiplex_base_switches);
+    if (iom.iom_num == iom_num)
+        log_msg(NOTIFY_MSG, "IOM::boot", "IOM # is %d.\n", iom_num);
+    else
+        log_msg(NOTIFY_MSG, "IOM::boot", "IOM # is %d, but acting as %d!\n", iom.iom_num, iom_num);
+    //log_msg(NOTIFY_MSG, "IOM::boot", "Multiplex switches are %#o\n", multiplex_base_switches);
     log_msg(NOTIFY_MSG, "IOM::boot", "Mbx base is %#o\n", base);
     log_msg(NOTIFY_MSG, "IOM::boot", "Interrupt base is %#o\n", pi_base);
     log_msg(NOTIFY_MSG, "IOM::boot", "Tape channel is %#o (%d)\n", sys_opts.tape_chan, sys_opts.tape_chan);
-
 
     t_uint64 cmd = 5;       // 6 bits; 05 for tape, 01 for cards
     int dev = 0;            // 6 bits: drive number
@@ -706,18 +722,17 @@ void init_memory_iom()
     /*11*/ Mem[3] = (cmd << 30) | (dev << 24) | 0700000;        // IDCW for read binary
 
     {
-        int locs[] = {
-            010 + 2 * iom_num, 030 + 2 * iom_num,
-            base_addr + 7, base_addr + 010, mbx,
-            4, mbx + 2, 0, 1, 2, 3 };
-    
-        for (int i = 0; i < ARRAY_SIZE(locs); ++i) {
-            int addr = locs[i];
-            log_msg(NOTIFY_MSG, "IOM::boot", "Mem[%08o]: %012llo\n",
+    int locs[] = {
+        010 + 2 * iom_num, 030 + 2 * iom_num,
+        base_addr + 7, base_addr + 010, mbx,
+        4, mbx + 2, 0, 1, 2, 3 };
+
+    for (int i = 0; i < ARRAY_SIZE(locs); ++i) {
+        int addr = locs[i];
+        log_msg(NOTIFY_MSG, "IOM::boot", "Mem[%08o]: %012llo\n",
             addr, Mem[addr]);
         }
     }
-
 }
 
 //=============================================================================
@@ -2341,10 +2356,10 @@ int store_abs_word(uint addr, t_uint64 word)
         // has its own test for appending mode breakpoints.
         t_uint64 simh_addr = addr_emul_to_simh(ABSOLUTE_mode, 0, addr);
         uint mask;
-        if (sim_brk_test (simh_addr, SWMASK ('D'))) {
-            out_sym(1, simh_addr, &Mem[addr], &cpu_unit, SWMASK('M') | SWMASK('A'));
-        }
         if ((mask = sim_brk_test(simh_addr, SWMASK('W') | SWMASK('M') | SWMASK('E'))) != 0) {
+            if (sim_brk_test (simh_addr, SWMASK ('D'))) {
+                out_sym(1, simh_addr, &Mem[addr], &cpu_unit, SWMASK('M') | SWMASK('A'));
+            }
             if ((mask & SWMASK ('W')) != 0) {
                 log_msg(NOTIFY_MSG, "CU::store", "Memory Write Breakpoint, address %#o\n", addr);
                 (void) cancel_run(STOP_IBKPT);
@@ -2813,6 +2828,47 @@ static int read72(FILE* fp, t_uint64* word0p, t_uint64* word1p)
         *word1p |= buf[i];
     }
     return (nread == 9) ? 0 : 1;
+}
+
+//=============================================================================
+static int cpu_show_fault_base(FILE *st, UNIT *uptr, int32 val, void *desc)
+{
+    // FIXME: use FILE *st
+    // FIXME: use uptr to find one of multiple CPUs
+
+    out_msg("FAULT_BASE: %sb aka %03o => %04o",
+        bin2text(switches.FLT_BASE, 7), switches.FLT_BASE,
+        switches.FLT_BASE << 5);
+    return 0;
+}
+
+//=============================================================================
+
+static int cpu_set_fault_base(UNIT *uptr, int32 val, char *cptr, void *desc)
+{
+    const char* sw_name = "FLT_BASE";
+    if (cptr == NULL) {
+        out_msg("Error, usage is set cpu %s=<value>\n", sw_name);
+        return SCPE_ARG;
+    }
+    char c;
+    int n;
+    if (sscanf(cptr, "%d %c", &n, &c) != 1) {
+        out_msg("Error, expecting a number.\n");
+        return SCPE_ARG;
+    }
+
+    if (n < 0) {
+        out_msg("Error, expecting a value between 0 and %#o.\n", 1<<7);
+        return SCPE_ARG;
+    }
+    if (n >= (1<<7)) {
+        out_msg("Error, expecting a value between 0 and %#o.\n", 1<<7);
+        return SCPE_ARG;
+    }
+    switches.FLT_BASE = n;
+
+    return 0;
 }
 
 //=============================================================================
