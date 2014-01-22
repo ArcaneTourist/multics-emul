@@ -141,7 +141,7 @@ typedef struct {
 
 // #define MAXCHAN 64
 
-#define IOM_A_MBX 01400     /* location of mailboxes for IOM A */
+// #define IOM_A_MBX 01400     /* location of mailboxes for IOM A */
 #define IOM_CONNECT_CHAN 2
 
 // ============================================================================
@@ -551,7 +551,7 @@ static int activate_chan(int chan, pcw_t* pcwp)
     // use the SCW which is memory at the time status is needed (this may
     // be a SCW value loaded from tape, not the value that was there when
     // we were invoked).
-    int chanloc = IOM_A_MBX + chan * 4;
+    int chanloc = (iom.base << 6) + chan * 4;
     int scw = chanloc + 2;
     if (scw % 2 == 1) { // 3.2.4
         log_msg(WARN_MSG, "IOM::status", "SCW address 0%o is not even\n", scw);
@@ -968,7 +968,7 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
     // Core address of next PCW or DCW is returned in *addrp.  Pre-tally-runout
     // is returned in *ptro.
 
-    int chanloc = IOM_A_MBX + chan * 4;
+    int chanloc = (iom.base << 6) + chan * 4;
     const char* moi = "IOM::list-service";
 
     channel_t* chanp = get_chan(chan);
@@ -1775,7 +1775,7 @@ static void parse_lpw(lpw_t *p, int addr, int is_conn)
 char* print_lpw(t_addr addr)
 {
     lpw_t temp;
-    int chan = (addr - IOM_A_MBX) / 4;
+    int chan = (addr - (iom.base << 6)) / 4;
     parse_lpw(&temp, addr, chan == IOM_CONNECT_CHAN);
     static char buf[160];
     sprintf(buf, "Chan 0%o -- %s", chan, lpw2text(&temp, chan == IOM_CONNECT_CHAN));
@@ -1900,7 +1900,7 @@ static int status_service(int chan)
     // use the SCW loaded from tape.
 
 #if 1
-    int chanloc = IOM_A_MBX + chan * 4;
+    int chanloc = (iom.base << 6) + chan * 4;
     int scw = chanloc + 2;
     t_uint64 sc_word;
     (void) fetch_abs_word(scw, &sc_word);
@@ -2105,7 +2105,7 @@ int iom_show_mbx(FILE *st, UNIT *uptr, int val, void *desc)
     //      ret = send_channel_pcw(IOM_CONNECT_CHAN, addr);
 
     int chan = IOM_CONNECT_CHAN;
-    int chanloc = IOM_A_MBX + chan * 4;
+    int chanloc = (iom.base << 6) + chan * 4;
     out_msg("Connect channel is channel %d at %#06o\n", chan, chanloc);
     lpw_t lpw;
     parse_lpw(&lpw, chanloc, chan == IOM_CONNECT_CHAN);
