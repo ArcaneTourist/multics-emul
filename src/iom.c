@@ -14,7 +14,7 @@
 
     Changes needed to support multiple IOMs:
         Hang an iom_t off of a DEVICE instead of using global "iom".
-        Remove assumptions re IOM "A" (perhaps just IOM_A_xxx #defines).
+        Done: Remove assumptions re IOM "A" (perhaps just IOM_A_xxx #defines).
         Move the few non extern globals into iom_t.  This includes the
         one hidden in get_chan().
 */
@@ -93,9 +93,11 @@
 #include <sys/time.h>
 #include "iom.hincl"
 
+// FIXME - externs
 extern cpu_ports_t cpu_ports;
 extern scu_t scu;
 extern iom_t iom;
+extern DEVICE iom_dev;
 
 // ============================================================================
 // === Typedefs
@@ -139,9 +141,6 @@ typedef struct {
 // ============================================================================
 // === Static globals
 
-// #define MAXCHAN 64
-
-// #define IOM_A_MBX 01400     /* location of mailboxes for IOM A */
 #define IOM_CONNECT_CHAN 2
 
 // ============================================================================
@@ -173,6 +172,7 @@ static int send_terminate_interrupt(int chan);
 static int activate_chan(int chan, pcw_t* pcw);
 static channel_t* get_chan(int chan);
 static int run_channel(int chan);
+static int iom_show_chan_mbx(FILE *st, int chan);
 
 // ============================================================================
 
@@ -216,9 +216,14 @@ t_stat channel_svc(UNIT *up)
         chanp->status.rcount = chanp->devinfop->chan_data;
         chanp->status.read = chanp->devinfop->is_read;
         chanp->have_status = 1;
+        log_msg(DEBUG_MSG, "IOM::channel-svc", "Flagging status as ready\n");
         // FIXME: Do we need to do anything with need_indir_svc/xfer_running here?
     }
     do_channel(chanp);
+    if (0 && iom_dev.dctrl) {
+        log_msg(NOTIFY_MSG, "IOM::channel-svc", "Auto Breakpoint\n");
+        cancel_run(STOP_IBKPT);
+    }
     return 0;
 }
 
@@ -352,6 +357,10 @@ void iom_interrupt()
     log_msg(DEBUG_MSG, "IOM::CIOC::intr", "Starting\n");
     do_connect_chan();
     log_msg(DEBUG_MSG, "IOM::CIOC::intr", "Finished\n");
+    if (0 && iom_dev.dctrl) {
+        log_msg(NOTIFY_MSG, "IOM::CIOC::intr", "Auto Breakpoint\n");
+        cancel_run(STOP_IBKPT);
+    }
     log_msg(DEBUG_MSG, NULL, "\n");
     -- opt_debug; -- cpu_dev.dctrl;
 }
@@ -380,9 +389,18 @@ static int do_connect_chan()
     int ptro = 0;   // pre-tally-run-out, e.g. end of list
     int addr;
     int ret = 0;
+    int first = 1;
     while (ptro == 0) {
-        log_msg(DEBUG_MSG, moi, "Doing list service for Connect Channel\n");
+        // BUG: 43A239854 implies that the connect channel does a first list
+        // service for each channel found, but that may not imply multiple
+        // "first" list services for the connect channel itself...
+        if (first)
+            log_msg(DEBUG_MSG, moi, "Doing (first) list service for Connect Channel\n");
+        else
+            log_msg(NOTIFY_MSG, moi, "Doing another \"first\" list service for Connect Channel\n");
         ret = list_service(IOM_CONNECT_CHAN, 1, &ptro, &addr);
+        if (first)
+            first = 0;
         if (ret == 0) {
             log_msg(DEBUG_MSG, moi, "Return code zero from Connect Channel list service, doing pcw\n");
             log_msg(DEBUG_MSG, NULL, "\n");
@@ -391,6 +409,7 @@ static int do_connect_chan()
             log_msg(DEBUG_MSG, moi, "Return code non-zero from Connect Channel list service, skipping pcw\n");
             break;
         }
+        // We're supposed to write the LPW, but:
         // Note: list-service updates LPW in core -- (but has a BUG in 
         // that it *always* writes.
         // BUG: Stop if tro system fault occured
@@ -418,12 +437,12 @@ static channel_t* get_chan(int chan)
         // TODO: Would ill-ser-req be more appropriate?
         // Probably depends on whether caller is the iom and
         // is issuing a pcw or if the caller is a channel requesting svc
+        log_msg(ERR_MSG, "IOM", "Attempt to access bad channel number %d\n", chan);
         iom_fault(chan, NULL, 1, iom_ill_chan);
         return NULL;
     }
-    if (chan >= 040)
-        log_msg(INFO_MSG, "IOM", "Access to high channel over 32: %d\n", chan);
-
+    //if (chan >= 040)
+    //  log_msg(DEBUG_MSG, "IOM", "Access to high channel over 32: %d\n", chan);
     return &channels[chan];
 }
 
@@ -521,6 +540,7 @@ static int activate_chan(int chan, pcw_t* pcwp)
                 devinfop = malloc(sizeof(*devinfop));
                 devinfop->chan = chan;
                 devinfop->statep = NULL;
+                devinfop->have_status = 0;
                 chanp->devinfop = devinfop;
             } else
                 if (chanp->devinfop->chan == -1) {
@@ -548,8 +568,8 @@ static int activate_chan(int chan, pcw_t* pcwp)
 
 #if 0
     // T&D tape does *not* expect us to cache original SCW, it expects us to
-    // use the SCW which is memory at the time status is needed (this may
-    // be a SCW value loaded from tape, not the value that was there when
+    // use the SCW which is in main memory at the time status is needed (this
+    // may be a SCW value loaded from tape, not the value that was there when
     // we were invoked).
     int chanloc = (iom.base << 6) + chan * 4;
     int scw = chanloc + 2;
@@ -602,6 +622,7 @@ static int do_channel(channel_t *chanp)
         // log_msg(INFO_MSG, moi, "Running channel.\n");
         if (run_channel(chan) != 0) {
             // Often expected...
+            // BUG: Why not set ret = 1 ?
             log_msg(NOTIFY_MSG, moi, "Channel has non-zero return.\n");
         }
         if (chanp->xfer_running)
@@ -623,6 +644,7 @@ static int do_channel(channel_t *chanp)
             log_msg(INFO_MSG, moi, "Channel has status from device.\n");
         else {
             // activity should be pending
+            log_msg(INFO_MSG, moi, "Channel should have activity pending; ending loop.\n");
             break;
         }
     };
@@ -720,7 +742,7 @@ static int run_channel(int chan)
         // re-invoked until status is available).
         // Nor should we be invoked for an idle channel.
         if (! chanp->have_status && chanp->state != chn_err && ! chanp->err) {
-            log_msg(WARN_MSG, moi, "Channel %d activate, but still waiting on device.\n", chan);
+            log_msg(WARN_MSG, moi, "Channel %d active, but still waiting on device.\n", chan);
             cancel_run(STOP_WARN);
             return 0;
         }
@@ -742,9 +764,11 @@ static int run_channel(int chan)
                     is_idle = 0;
                     log_msg(INFO_MSG, moi, "Channel %d almost out of work, but non-DISK channels get another list svc for in-progress transfers.\n", chan);
                 } else {
+                    // BUG: This is wierd...
                     is_idle = 1;
                     log_msg(NOTIFY_MSG, moi, "Channel %d shows transfer in progress, but it's a disk channel, so it's deemed out of work.\n", chan);
                     cancel_run(STOP_IBKPT);
+                    (void) iom_show_chan_mbx(NULL, chan);
                 }
             } else
                 is_idle = 1;
@@ -757,8 +781,7 @@ static int run_channel(int chan)
             }
         }
     
-        // BUG: enable.   BUG: enabling kills the boot...
-        // chanp->have_status = 0;  // we just processed it
+        chanp->have_status = 0;  // we just processed the status
 
         // If we reach this point w/o resetting the state to chn_need_status,
         // we're busy and the channel hasn't terminated operations, so we don't
@@ -837,7 +860,7 @@ static int run_channel(int chan)
                 log_msg(INFO_MSG, moi, "Doing a list service due to in-progess transfer on a non-DISK channel.\n");
                 need_ls = 1;
             } else
-                log_msg(INFO_MSG, moi, "Not doing a list service in spite of an in-progess transfer for a non-TAPE channel.\n");
+                log_msg(INFO_MSG, moi, "Not doing a list service in spite of an in-progess transfer for a DISK channel.\n");
         }
         if (need_ls) {
             // Do a list service
@@ -899,6 +922,10 @@ static int run_channel(int chan)
          */
         // BUG: skip status service if system fault exists
         log_msg(INFO_MSG, moi, "Requesting Status service\n");
+        if (chan == IOM_CONNECT_CHAN) {
+            log_msg(WARN_MSG, moi, "Should not do status service on connect channel\n");
+            cancel_run(STOP_IBKPT);
+        }
         status_service(chan);
 
         /*
@@ -913,6 +940,7 @@ static int run_channel(int chan)
             ret = 1;
         chanp->state = chn_idle;
         // BUG: move setting have_status=0 to after early check for err
+        // TODO: Done and could be commented out here?
         chanp->have_status = 0; // we just processed it
         return ret;
     }
@@ -1086,6 +1114,7 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
     int cp = getbits36(word, 18, 3);
     if (cp == 7) {
         // BUG: update idcw fld of lpw
+        log_msg(NOTIFY_MSG, moi, "Not updating idcw field of LPW\n");
     }
 
     // int ret;
@@ -1285,9 +1314,12 @@ static int dev_send_idcw(int chan, pcw_t *p)
     if (devp == NULL) {
         // BUG: no device connected; what's the appropriate fault code(s) ?
         chanp->status.power_off = 1;
-        log_msg(WARN_MSG, moi, "No device connected to channel %#o(%d); Auto breakpoint.\n", chan, chan);
         iom_fault(chan, moi, 0, 0);
-        cancel_run(STOP_IBKPT);
+        if (iom_dev.dctrl) {
+            log_msg(WARN_MSG, moi, "No device connected to channel %#o(%d); Auto breakpoint.\n", chan, chan);
+            cancel_run(STOP_IBKPT);
+        } else
+            log_msg(WARN_MSG, moi, "No device connected to channel %#o(%d).\n", chan, chan);
         return 1;
     }
     chanp->status.power_off = 0;
@@ -1311,6 +1343,7 @@ static int dev_send_idcw(int chan, pcw_t *p)
             devp->ctxt = devinfop;
             devinfop->chan = p->chan;
             devinfop->statep = NULL;
+            devinfop->have_status = 0;
         }
         if (devinfop->chan != p->chan) {
             log_msg(ERR_MSG, moi, "Device on channel %#o (%d) has missing or bad context.\n", chan, chan);
@@ -1336,11 +1369,13 @@ static int dev_send_idcw(int chan, pcw_t *p)
             ret = mt_iom_cmd(devinfop);
             break;
         case DEVT_CON: {
+            // FIXME: Why chanp status instead of devinfop?
             int ret = con_iom_cmd(p->chan, p->dev_cmd, p->dev_code, &chanp->status.major, &chanp->status.substatus);
             chanp->state = chn_cmd_sent;
             chanp->have_status = 1;     // FIXME: con_iom_cmd should set this
             chanp->status.rcount = p->chan_data;
             log_msg(DEBUG_MSG, moi, "CON returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
+            // FIXME: Why not break?
             return ret; // caller must choose between our return and the chan_status.{major,substatus}
         }
         case DEVT_DISK:
@@ -1362,6 +1397,7 @@ static int dev_send_idcw(int chan, pcw_t *p)
             chanp->status.major = devinfop->major;
             chanp->status.substatus = devinfop->substatus;
             chanp->status.rcount = devinfop->chan_data;
+            // BUG: Tape device does one word per xfer, so chan should be tracking rcount (aka # of xfers)
             chanp->status.read = devinfop->is_read;
             log_msg(DEBUG_MSG, moi, "Device returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
         } else if (devinfop->time >= 0) {
@@ -1445,10 +1481,12 @@ static int dev_io(int chan, t_uint64 *wordp)
             ret = mt_iom_io(devinfop, wordp);
             if (ret != 0 || chanp->status.major != 0)
                 log_msg(DEBUG_MSG, "IOM::dev-io", "MT returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
-            return ret; // caller must choose between our return and the status.{major,substatus}
+            break;
         }
         case DEVT_CON: {
+            // FIXME: Why not status in devinfop?
             ret = con_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
+            chanp->have_status = 1;     // FIXME: con_iom_io should set this
             if (ret != 0 || chanp->status.major != 0)
                 log_msg(DEBUG_MSG, "IOM::dev-io", "CON returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
             return ret; // caller must choose between our return and the status.{major,substatus}
@@ -1457,7 +1495,7 @@ static int dev_io(int chan, t_uint64 *wordp)
             ret = disk_iom_io(chan, wordp, &chanp->status.major, &chanp->status.substatus);
             // TODO: uncomment & switch to DEBUG: if (ret != 0 || chanp->status.major != 0)
                 log_msg(INFO_MSG, "IOM::dev-io", "DISK returns major code 0%o substatus 0%o\n", chanp->status.major, chanp->status.substatus);
-            return ret; // caller must choose between our return and the status.{major,substatus}
+            break;
         }
         default:
             log_msg(ERR_MSG, "IOM::dev-io", "Unknown device type 0%o\n", iom.channels[chan].type);
@@ -1465,7 +1503,22 @@ static int dev_io(int chan, t_uint64 *wordp)
             cancel_run(STOP_BUG);
             return 1;
     }
-    return -1;  // not reached
+
+    if (devinfop != NULL) {
+        if (devinfop->have_status) {
+            // FIXME: get rid of copies of status info.  Then again,
+            // channels with multiple devices may need this...
+            chanp->have_status = devinfop->have_status;
+            chanp->status.major = devinfop->major;
+            chanp->status.substatus = devinfop->substatus;
+//          chanp->status.rcount = devinfop->chan_data;
+            // BUG: Tape device does one word per xfer, so chan should be tracking rcount (aka # of xfers)
+//          chanp->status.read = devinfop->is_read;
+            //log_msg(DEBUG_MSG, moi, "Device returns major code %#o substatus %#o\n", chanp->status.major, chanp->status.substatus);
+        }
+    }
+
+    return ret; // caller must choose between our return and the status.{major,substatus}
 }
 
 // ============================================================================
@@ -1486,7 +1539,7 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
     if (chanp == NULL)
         return 1;
 
-    log_msg(INFO_MSG, "IOW::DO-DDCW", "%012llo: %s\n", Mem[addr], dcw2text(dcwp));
+    log_msg(INFO_MSG, "IOM::DDCW", "%012llo: %s\n", Mem[addr], dcw2text(dcwp));
 
     // impossible for (cp == 7); see do_dcw
 
@@ -1540,13 +1593,22 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
         *control = 2;
 #endif
     }
+
     // update dcw
+
+    // scratchpad
+#if 1
+    dcwp->fields.ddcw.tally = tally;
+    daddr = dcwp->fields.ddcw.daddr = daddr;
+#endif
+
 #if 0
     // Assume that DCW is only in scratchpad (bootload_tape_label.alm rd_tape reuses same DCW on each call)
     Mem[addr] = setbits36(Mem[addr], 0, 18, daddr);
     Mem[addr] = setbits36(Mem[addr], 24, 12, tally);
     log_msg(DEBUG_MSG, "IOM::DDCW", "Data DCW update: %012llo: addr=%0o, tally=%d\n", Mem[addr], daddr, tally);
 #endif
+    log_msg(DEBUG_MSG, "IOM::DDCW", "Finished with return code %d.  Have-status: dev = %d, chan = %d\n", ret, chanp->devinfop->have_status, chanp->have_status);
     return ret;
 }
 
@@ -1790,7 +1852,7 @@ char* print_lpw(t_addr addr)
  * Write an LPW into main memory
  */
 
-int lpw_write(int chan, int chanloc, const lpw_t* p)
+static int lpw_write(int chan, int chanloc, const lpw_t* p)
 {
     log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o had %012llo %012llo\n", chan, chanloc, Mem[chanloc], Mem[chanloc+1]);
     lpw_t temp;
@@ -1869,7 +1931,8 @@ static int status_service(int chan)
     word1 = setbits36(word1, 1, 1, chanp->status.power_off);
     word1 = setbits36(word1, 2, 4, chanp->status.major);
     word1 = setbits36(word1, 6, 6, chanp->status.substatus);
-    word1 = setbits36(word1, 12, 1, 1); // BUG: even/odd
+    word1 = setbits36(word1, 12, 1, 0); // BUG: PSI channels could set "odd"
+    // BUG: terminate/initiate/marker controls M(13) and I(16)
     word1 = setbits36(word1, 13, 1, 1); // BUG: marker int
     word1 = setbits36(word1, 14, 2, 0);
     word1 = setbits36(word1, 16, 1, 0); // BUG: initiate flag
@@ -1877,20 +1940,24 @@ static int status_service(int chan)
 #if 0
     // BUG: Unimplemented status bits:
     word1 = setbits36(word1, 18, 3, chan_status.chan_stat);
-    word1 = setbits36(word1, 21, 3, chan_status.iom_stat);
+    word1 = setbits36(word1, 21, 3, chan_status.iom_stat);  // "aka central"
     word1 = setbits36(word1, 24, 6, chan_status.addr_ext);
 #endif
+    // 30..35: record residue
+    // from pcw or idcw!
     word1 = setbits36(word1, 30, 6, chanp->status.rcount);
 
     word2 = 0;
 #if 0
     // BUG: Unimplemented status bits:
     word2 = setbits36(word2, 0, 18, chan_status.addr);
+    // 18..20: record residue from chan; char position residue
     word2 = setbits36(word2, 18, 3, chan_status.char_pos);
 #endif
     word2 = setbits36(word2, 21, 1, chanp->status.read);
 #if 0
     word2 = setbits36(word2, 22, 2, chan_status.type);
+    // 24..35: dcw tally residue - from dcw mailbox (core or scratchpad)
     word2 = setbits36(word2, 24, 12, chan_status.dcw_residue);
 #endif
 
@@ -1919,10 +1986,13 @@ static int status_service(int chan)
 #endif
     log_msg(DEBUG_MSG, "IOM::status", "Status: 0%012llo 0%012llo\n",
         word1, word2);
-    log_msg(DEBUG_MSG, "IOM::status", "Status: (0)t=Y, (1)pow=%d, (2..5)major=0%02o, (6..11)substatus=0%02o, (12)e/o=%c, (13)marker=%c, (14..15)Z, 16(Z?), 17(Z)\n",
-        chanp->status.power_off, chanp->status.major, chanp->status.substatus,
+    log_msg(DEBUG_MSG, "IOM::status", "Status: (0)t=Y, (1)pow=%d, (2..5)major=0%02o, (6..11)substatus=0%02o,\n",
+        chanp->status.power_off, chanp->status.major, chanp->status.substatus);
+    log_msg(DEBUG_MSG, "IOM::status", "Status: (12)e/o=%c, (13)marker=%c, (14..15)Z, 16(Z?), 17(Z)\n",
         '1', // BUG 
         'Y');   // BUG
+    log_msg(DEBUG_MSG, "IOM::status", "Status: (18/3)chan=?, (21/3)iom=?, (24/6)ext=?, (30/6)rcount=%#o(%d)\n",
+        chanp->status.rcount,chanp->status.rcount);
     int lq = getbits36(sc_word, 18, 2);
     int tally = getbits36(sc_word, 24, 12);
 #if 1
@@ -2000,7 +2070,19 @@ static void iom_fault(int chan, const char* who, int is_sys, int signal)
 
 // ============================================================================
 
+// 43A239854 and AN70 differ on how the IMW addresses work
+// However, the AN70 matches for the case of channel group 1.
+
+// AN70:
 enum iom_imw_pics {
+    imw_system_fault_pic = 0, // IMW address 00xxx (where xxx is IOM # & chan group)
+    imw_terminate_pic = 1,    // IMW address 01xxx
+    imw_marker_pic = 2,       // IMW address 10xxx
+    imw_special_pic = 3       // IMW address 11xxx
+};
+
+// 43A239854:
+enum old_iom_imw_pics {
     // These are for bits 19..21 of an IMW address.  This is normally
     // the Interrupt Level from a Channel's Program Interrupt Service
     // Request.  We can deduce from the map in 3.2.7 that certain
@@ -2009,11 +2091,14 @@ enum iom_imw_pics {
     // of zero 00b (two bits) yields interrupt number 01100b or 12 decimal.
     // Interrupt 12d has trap words at location 030 in memory.  This
     // is the location that the bootload tape header is written to.
-    imw_overhead_pic = 1,   // IMW address ...001xx (where xx is IOM #)
-    imw_terminate_pic = 3,  // IMW address ...011xx
-    imw_marker_pic = 5,     // IMW address ...101xx
-    imw_special_pic = 7     // IMW address ...111xx
+    old_imw_overhead_pic = 1,   // IMW address ...001xx (where xx is IOM #)
+    old_imw_terminate_pic = 3,  // IMW address ...011xx
+    old_imw_marker_pic = 5,     // IMW address ...101xx
+    old_imw_special_pic = 7     // IMW address ...111xx
 };
+
+static const int imw_new2old[] =  { -1, old_imw_terminate_pic, old_imw_marker_pic, old_imw_special_pic };
+
 
 /*
  * send_marker_interrupt()
@@ -2055,31 +2140,74 @@ static int send_terminate_interrupt(int chan)
  *
  */
 
-static int send_general_interrupt(int chan, int pic)
+static int send_general_interrupt(int chan, int new_pic)
 {
     const char* moi = "IOM::send-interrupt";
 
-    int imw_addr;
-    imw_addr = iom.iom_num; // 2 bits
-    imw_addr |= pic << 2;   // 3 bits
-    int interrupt_num = imw_addr;
+    // 43A239854:
+    int old_pic = imw_new2old[new_pic];
+    int old_imw_addr;
+    old_imw_addr = iom.iom_num; // 2 bits
+    old_imw_addr |= old_pic << 2;   // 3 bits
+    int old_interrupt_num = old_imw_addr;
+    old_imw_addr += 01200;  // all remaining bits
+
+    // AN70:
+    int new_imw_addr;
+    uint new_interrupt_num;
+    {
+    uint iom_group = iom.iom_num + (chan < 32 ? 4 : 0); // 3 bits
+    new_interrupt_num = (new_pic << 3) | iom_group;
+    uint switches = 0120;
+    uint pi_base = switches & ~3;
+    new_imw_addr = (pi_base << 3) | new_interrupt_num;
+    }
+
+    int pic = new_pic;
+#if 1
+    int imw_addr = new_imw_addr;
+    int interrupt_num = new_interrupt_num;
+    log_msg(INFO_MSG, moi, "Channel %d (%#o), level %d; Interrupt %d (%#o).\n", chan, chan, pic, interrupt_num, interrupt_num);
+    if (new_imw_addr != old_imw_addr || new_interrupt_num != old_interrupt_num)
+        log_msg(INFO_MSG, moi, "Old level would be %d; Old Interrupt %d (%#o).\n", old_pic, old_interrupt_num, old_interrupt_num);
+#else
+    int pic = old_pic;
+    int imw_addr = old_imw_addr;
+    int interrupt_num = old_interrupt_num;
+    log_msg(INFO_MSG, moi, "Channel %d (%#o), level %d; Interrupt %d (%#o).\n", chan, chan, pic, interrupt_num, interrupt_num);
+    if (new_imw_addr != old_imw_addr || new_interrupt_num != old_interrupt_num)
+        log_msg(INFO_MSG, moi, "New level would be %d; New Interrupt %d (%#o).\n", new_pic, new_interrupt_num, new_interrupt_num);
+#endif
     // Section 3.2.7 defines the upper bits of the IMW address as
     // being defined by the mailbox base address switches and the
     // multiplex base address switches.
-    // However, AN-70 reports that the IMW starts at 01200.  If AN-70 is
+    // However, AN-70 reports that the IOM Mailbox is a fixed set of
+    // addresses with an IMW area at the beginning followed by the
+    // mailboxes.  It states that the IMW area starts at 01200.  If AN-70 is
     // correct, the bits defined by the mailbox base address switches would
     // have to always be zero.  We'll go with AN-70.  This is equivalent to
     // using bit value 0010100 for the bits defined by the multiplex base
     // address switches and zeros for the bits defined by the mailbox base
     // address switches.
-    imw_addr += 01200;  // all remaining bits
+    // 43A239854_600B_IOM_Spec_Jul75.pdf says the 24 bit addr is formed as:
+    //  15 switches provide bits 6-18, 22, and 23
+    //      bits(24) len bits(36)
+    //    Bits 22-23   2 34-35 - are the IOM number
+    //    Bits 19-21   3 31-33 - of this address are provided by the channel
+    //                           as an interrupt level in the interrupt
+    //                           service request
+    //    Bits 12-18   7 24-30 - multiplex base address (from switches)
+    //                           1400 << 5?
+    //    Bits  6-11   6 18-23 - match bits 6-11 the channel mailbox base addr
+    //                           1200 << 12 1200 000 000 000 000 Ox0000
+    //    Bits  0-05   6 12-17 - are zero
 
-    log_msg(INFO_MSG, moi, "Channel %d (%#o), level %d; Interrupt %d (%#o).\n", chan, chan, pic, interrupt_num, interrupt_num);
+    // log_msg(NOTIFY_MSG, moi, "IMW at %#06o; old IMW would be %#06o; new would be %#06o\n", imw_addr, old_imw_addr, new_imw_addr);
     t_uint64 imw;
     (void) fetch_abs_word(imw_addr, &imw);
     // The 5 least significant bits of the channel determine a bit to be
     // turned on.
-    log_msg(INFO_MSG, moi, "IMW at %#o was %012llo; setting bit %d\n", imw_addr, imw, chan & 037);
+    log_msg(DEBUG_MSG, moi, "IMW at %#o was %012llo; setting bit %d\n", imw_addr, imw, chan & 037);
     imw = setbits36(imw, chan & 037, 1, 1);
     log_msg(INFO_MSG, moi, "IMW at %#o now %012llo\n", imw_addr, imw);
     (void) store_abs_word(imw_addr, imw);
@@ -2104,9 +2232,17 @@ int iom_show_mbx(FILE *st, UNIT *uptr, int val, void *desc)
     //  ret = list_service(IOM_CONNECT_CHAN, 1, &ptro, &addr);
     //      ret = send_channel_pcw(IOM_CONNECT_CHAN, addr);
 
-    int chan = IOM_CONNECT_CHAN;
+    out_msg("Connect channel is channel %d.\n", IOM_CONNECT_CHAN);
+    return iom_show_chan_mbx(NULL, IOM_CONNECT_CHAN);
+}
+
+// ============================================================================
+
+static int iom_show_chan_mbx(FILE *st, int chan)
+{
+    const char* moi = "IOM::show";
     int chanloc = (iom.base << 6) + chan * 4;
-    out_msg("Connect channel is channel %d at %#06o\n", chan, chanloc);
+    out_msg("Channel %d (%#o) at %#06o\n", chan, chan, chanloc);
     lpw_t lpw;
     parse_lpw(&lpw, chanloc, chan == IOM_CONNECT_CHAN);
     lpw.hrel = lpw.srel;
@@ -2147,7 +2283,12 @@ int iom_show_mbx(FILE *st, UNIT *uptr, int val, void *desc)
             else
                 out_msg("-- end of list (because dcw control != 2) --\n");
         }
+        if (lpw.tally == 07777) {
+            out_msg("-- end of list (because tally seems negative) --\n");
+            break;
+        }
     }
+    out_msg("End dump of channel %d mailbox\n", chan);
 
     return 0;
 }
