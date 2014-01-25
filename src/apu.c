@@ -415,7 +415,7 @@ int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp,
         offset = TPR.CA;
         TPR.CA = saved_CA;
         if (bits != *bitnop || bits != 0 || *bitnop != 0) {
-            int err = *bitnop < 0 || *bitnop > 35 || bits < 0 || bits > 35;
+            int err = (int) *bitnop < 0 || *bitnop > 35 || (int) bits < 0 || bits > 35;
             log_msg(err ? ERR_MSG : DEBUG_MSG, moi, "Register mod 0%o: offset was 0%o, now 0%o; bit offset was %d, now %d.\n", reg, o, offset, bits, *bitnop);
             if (err) {
                 log_msg(ERR_MSG, moi, "Bit offset %d and/or %d outside range of 0..35\n", bits, *bitnop);
@@ -506,7 +506,7 @@ int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint
         TPR.is_value = saved_is_value;
         TPR.value = saved_value;
         if (bits != *bitnop || bits != 0 || *bitnop != 0) {
-            int err = *bitnop < 0 || *bitnop > 35 || bits < 0 || bits > 35;
+            int err = (int) *bitnop < 0 || *bitnop > 35 || (int) bits < 0 || bits > 35;
             log_msg(err ? ERR_MSG : DEBUG_MSG, moi, "Register mod 0%o: offset was 0%o, now 0%o; bit offset was %d, now %d.\n", reg, o, offset, bits, *bitnop);
             if (err) {
                 log_msg(ERR_MSG, moi, "Bit offset %d and/or %d outside range of 0..35\n", bits, *bitnop);
@@ -675,7 +675,7 @@ int addr_mod(const instr_t *ip)
         TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
         TPR.CA = (AR_PR[pr].wordno + ca_temp.soffset) & MASK18;
         TPR.TBR = AR_PR[pr].PR.bitno;
-        int err = TPR.TBR < 0 || TPR.TBR > 35;
+        int err = (int) TPR.TBR < 0 || TPR.TBR > 35;
         if (opt_debug || err)
             log_msg(err ? WARN_MSG : DEBUG_MSG, moi,
                 "Using PR[%d]: TSR=0%o, TRR=0%o, CA=0%o(0%o+0%o<=>%d+%d), bitno=0%o\n",

@@ -494,7 +494,7 @@ int seginfo_automatic_count(int segno, int offset)
     if (li_it == seg.linkage.end())
         return -1;
     const linkage_info& li = (*li_it).second;
-    if (li.entry == NULL);
+    if (li.entry == NULL)
         return -1;
     stack_frame *sfp = li.entry->stack();
     if (sfp == NULL)

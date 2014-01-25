@@ -1164,7 +1164,7 @@ static int do_an_op(instr_t *ip)
                     if (w == 0 || (reg_Q == ((t_uint64)1<<35) && w == -1)) {    // (1<<35) signed is -2**36
                         fault_gen(div_fault);
                         IR.neg = bit36_is_neg(reg_Q);
-                        reg_Q = (IR.neg) ? negate36(reg_Q) : reg_Q; // magnitude, absolute value
+                        reg_Q = (IR.neg) ? (t_uint64) negate36(reg_Q) : reg_Q; // magnitude, absolute value
                         IR.zero = w == 0;
                         ret = 1;
                     } else {
@@ -2388,7 +2388,7 @@ static int do_an_op(instr_t *ip)
                         AR_PR[i].PR.snr = getbits36(words[2*i], 3, 15);
                         AR_PR[i].wordno = getbits36(words[2*i+1], 0, 18);
                         AR_PR[i].PR.bitno = getbits36(words[2*i+1], 21, 6); // 36-(72-57)
-                        if (AR_PR[i].PR.bitno < 0 || AR_PR[i].PR.bitno  > 35) {
+                        if ((int) AR_PR[i].PR.bitno < 0 || AR_PR[i].PR.bitno  > 35) {
                             log_msg(ERR_MSG, "OPU::lpri", "PR%d now has a bitno of %d\n", i, AR_PR[i].PR.bitno );
                             cancel_run(STOP_BUG);
                         }
@@ -2423,7 +2423,7 @@ static int do_an_op(instr_t *ip)
                         return 1;
                     }
                     AR_PR[n].PR.bitno = getbits36(word, 0, 6);
-                    if (AR_PR[n].PR.bitno < 0 || AR_PR[n].PR.bitno  > 35) {
+                    if ((int) AR_PR[n].PR.bitno < 0 || AR_PR[n].PR.bitno  > 35) {
                         log_msg(ERR_MSG, "OPU::lprp*", "PR%d now has a bitno of %d\n", n, AR_PR[n].PR.bitno );
                         cancel_run(STOP_BUG);
                     }
@@ -3015,7 +3015,7 @@ static int do_an_op(instr_t *ip)
                     reg_A = setbits36(reg_A, 0, 15, 0);
                     reg_Q = setbits36(reg_Q, 0, 15, 0);
                     if (events.int_pending) {
-                        for (int i = 0; i < ARRAY_SIZE(events.interrupts); ++i)
+                        for (unsigned i = 0; i < ARRAY_SIZE(events.interrupts); ++i)
                             if (events.interrupts[i]) {
                                 if (i <= 15)
                                     reg_A = setbits36(reg_A, i, 1, 1);
@@ -4054,7 +4054,7 @@ static int do_epp(int epp)
     AR_PR[epp].PR.snr = TPR.TSR;
     AR_PR[epp].wordno = TPR.CA & MASK18;
     AR_PR[epp].PR.bitno = TPR.TBR;
-    if (AR_PR[epp].PR.bitno < 0 || AR_PR[epp].PR.bitno > 35) {
+    if ((int) AR_PR[epp].PR.bitno < 0 || AR_PR[epp].PR.bitno > 35) {
         log_msg(ERR_MSG, "OPU::epp*", "PR%d now has a bitno of %d\n", epp, AR_PR[epp].PR.bitno );
         cancel_run(STOP_BUG);
     }
@@ -4123,7 +4123,7 @@ static int do_eawp(int n)
     }
     AR_PR[n].wordno = TPR.CA;
     AR_PR[n].PR.bitno = TPR.TBR;
-    if (AR_PR[n].PR.bitno < 0 || AR_PR[n].PR.bitno > 35) {
+    if ((int) AR_PR[n].PR.bitno < 0 || AR_PR[n].PR.bitno > 35) {
         log_msg(ERR_MSG, "OPU::eawp", "PR%d now has a bitno of %d\n", n, AR_PR[n].PR.bitno );
         cancel_run(STOP_BUG);
     }

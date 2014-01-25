@@ -727,7 +727,7 @@ void init_memory_iom()
         base_addr + 7, base_addr + 010, mbx,
         4, mbx + 2, 0, 1, 2, 3 };
 
-    for (int i = 0; i < ARRAY_SIZE(locs); ++i) {
+    for (unsigned i = 0; i < ARRAY_SIZE(locs); ++i) {
         int addr = locs[i];
         log_msg(NOTIFY_MSG, "IOM::boot", "Mem[%08o]: %012llo\n",
             addr, Mem[addr]);
@@ -817,14 +817,14 @@ static void init_memory_iox()
  *  to the SIMH command prompt.
  */
 
-static int cancel;
+static t_stat cancel;
 
 void cancel_run(enum sim_stops reason)
 {
     // Maybe we should generate an OOB fault?
 
     (void) sim_cancel_step();
-    if (cancel == 0 || reason < cancel)
+    if (cancel == 0 || (t_stat) reason < cancel)
         cancel = reason;
     log_msg(DEBUG_MSG, "CU", "Cancel requested: %d\n", reason);
 }
@@ -858,7 +858,7 @@ t_stat sim_instr(void)
     restore_from_simh();
     // setup_streams(); // Route the C++ clog and cdebug streams to match SIMH settings
 
-    int reason = 0;
+    t_stat reason = 0;
 
     if (! bootimage_loaded) {
         // We probably should not do this
@@ -888,7 +888,7 @@ t_stat sim_instr(void)
         sim_interval = 32;
     }
 
-    int prev_seg = PPR.PSR;
+    unsigned prev_seg = PPR.PSR;
     int prev_debug = opt_debug;
     // Loop until it's time to bounce back to SIMH
 //log_msg(DEBUG_MSG, "MAIN::CU", "Starting cycle loop; total cycles %lld; sim time is %f, %d events pending, first event at %d\n", sys_stats.total_cycles, sim_gtime(), sim_qcount(), sim_interval);
@@ -1211,7 +1211,7 @@ void load_PPR(t_uint64 word, PPR_t *pprp)
 
 static void save_PR_registers()
 {
-    for (int i = 0; i < ARRAY_SIZE(saved_ar_pr); ++ i) {
+    for (unsigned i = 0; i < ARRAY_SIZE(saved_ar_pr); ++ i) {
         saved_ar_pr[i] =
             (AR_PR[i].PR.snr & 077777) |            // 15 bits
             ((AR_PR[i].PR.rnr & 07) << 15) |        //  3 bits
@@ -1230,7 +1230,7 @@ static void save_PR_registers()
 
 static void restore_PR_registers(void)
 {
-    for (int i = 0; i < ARRAY_SIZE(AR_PR); ++ i) {
+    for (unsigned i = 0; i < ARRAY_SIZE(AR_PR); ++ i) {
         AR_PR[i].PR.snr = saved_ar_pr[i] & MASKBITS(15);
         AR_PR[i].PR.rnr = (saved_ar_pr[i] >> 15) & MASKBITS(3);
         AR_PR[i].PR.bitno = (saved_ar_pr[i] >> 18) & MASKBITS(6);
@@ -1682,7 +1682,7 @@ static t_stat control_unit(void)
 
             // We assume IC always points to the correct instr -- should
             // be advanced after even instr
-            uint IC_temp = PPR.IC;
+            int IC_temp = PPR.IC;
             // Munge PPR.IC for history debug
             if (cu.xde)
                 PPR.IC = TPR.CA;
@@ -2259,7 +2259,7 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
 #if FEAT_MEM_CHECK_UNINIT
     {
     t_uint64 word = Mem[addr];  // absolute memory reference
-    if (word == ~ 0) {
+    if (word == ~ (t_uint64) 0) {
         word = 0;
         if (sys_opts.warn_uninit)
             log_msg(WARN_MSG, "CU::fetch", "Fetch from uninitialized absolute location %#o.\n", addr);
@@ -2520,7 +2520,7 @@ int fetch_yblock(uint addr, int aligned, uint n, t_uint64 *wordsp)
     int ret;
     uint Y = (aligned) ? (addr / n) * n : addr;
 
-    for (int i = 0; i < n; ++i)
+    for (uint i = 0; i < n; ++i)
         if ((ret = fetch_word(Y++, wordsp++)) != 0)
             return ret;
     return 0;

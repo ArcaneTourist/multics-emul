@@ -8,6 +8,8 @@ CC = gcc -std=c99
 # Use make DEBUG=1 to disable optimization
 
 CFLAGS += -pedantic -Wall
+CFLAGS += -Wextra -Wno-unused-parameter -Wno-missing-field-initializers
+CFLAGS += -Wno-sign-compare	# enabled by -Wextra, but we need cleanup
 CFLAGS += -Wno-unused-variable -Wno-unused-but-set-variable # until we cleanup...
 CFLAGS += -Wno-variadic-macros -Wno-long-long	# non-std features we use
 CFLAGS += -D_GNU_SOURCE	# (SIMH uses this)
@@ -36,8 +38,8 @@ default: cflags multics.a
 	@
 
 cflags:
-	@echo
-	@echo "* CFLAGS are $(CFLAGS)"
+	@echo "***"
+	@echo "*** CFLAGS are $(CFLAGS)"
 	@echo
 
 multics.a: seginfo.o debug_run.o debug_io.o listing.o hw6180_cpu.o hw6180_sys.o opcode_text.o misc.o opu.o eis_opu.o bitstream.o apu.o eis_desc.o scu.o iom.o mt.o disk.o math.o math_real.o console.o
@@ -102,15 +104,17 @@ bit-test: bit-test.o bitstream.o
 scan-tape: scan-tape.o bitstream.o opcode_text.o
 mtst: mtst.o math.o misc.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -lgmp -o $@ mtst.o math.o misc.o
-tst: tst.o misc.o
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ tst.o misc.o
+#tst: tst.o misc.o
+#	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ tst.o misc.o
+tst: tst.o
+	$(CXX) $(CFLAGS) $(LDFLAGS) -o $@ $?
 
 clean:
 	rm -f *.o multics.a
 	rm -f y.tab.h y.tab.c lex.yy.c
 	rm -f *.bin
 	rm -f `/bin/ls | sed -ne 's/\.alm$$/.lst/p'`
-	rm -f bits bit-test tst test-op scan-tape a.out cctst malm t
+	rm -f bits bit-test tst test-op scan-tape a.out cctst malm
 	rm -f opcodes.h opcode_text.c
 
 opcodes.h: opcodes0.txt opcodes1.txt opcodes2c.pl

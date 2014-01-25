@@ -89,7 +89,7 @@ void check_seg_debug()
 
     opt_debug = (cpu_dev.dctrl != 0);   // todo: should CPU control all debug settings?
     if (get_addr_mode() == APPEND_mode)
-        if (PPR.PSR >= 0 && PPR.PSR < ARRAY_SIZE(seg_debug)) {
+        if ((int) PPR.PSR >= 0 && PPR.PSR < ARRAY_SIZE(seg_debug)) {
             if (seg_debug[PPR.PSR] == -1)
                 opt_debug = 0;
             else if (seg_debug[PPR.PSR] == 1)
@@ -1023,7 +1023,7 @@ public:
     int offset() const { return _offset; }
     int addr();
     int addr() const;
-    const int size() const
+    int size() const
         { return vals.size(); }
     const linkage_info* linkage() const
         { return _linkage; }

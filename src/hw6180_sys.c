@@ -179,7 +179,7 @@ static void hw6180_init(void)
 
     // Only one CPU
     memset(&cpu_ports, 0, sizeof(cpu_ports));
-    for (int i = 0; i < ARRAY_SIZE(cpu_ports.ports); ++i)
+    for (unsigned i = 0; i < ARRAY_SIZE(cpu_ports.ports); ++i)
         cpu_ports.ports[i] = -1;
 
     // CPU Switches
@@ -194,13 +194,13 @@ static void hw6180_init(void)
     // Only one SCU
     memset(&scu, 0, sizeof(scu));
     scu.mode = 1;   // PROGRAM mode
-    for (int i = 0; i < ARRAY_SIZE(scu.ports); ++i)
+    for (unsigned i = 0; i < ARRAY_SIZE(scu.ports); ++i)
         scu.ports[i].idnum = -1;
 
     // BUG/TODO: the following belongs in a scu_reset()
-    for (int i = 0; i < ARRAY_SIZE(scu.ports); ++i)
+    for (unsigned i = 0; i < ARRAY_SIZE(scu.ports); ++i)
         scu.ports[i].is_enabled = 0;
-    for (int i = 0; i < ARRAY_SIZE(scu.interrupts); ++i) {
+    for (unsigned i = 0; i < ARRAY_SIZE(scu.interrupts); ++i) {
         scu.interrupts[i].mask_assign.unassigned = 1;
         scu.interrupts[i].exec_intr_mask = ~0 & MASKBITS(32);
     }
@@ -495,7 +495,7 @@ t_stat XX_clk_svc(UNIT *up)
 
 //=============================================================================
 
-static int inline is_octal_digit(char x)
+inline static int is_octal_digit(char x)
 {
     return isdigit(x) && x != '8' && x != '9';
 }
@@ -524,7 +524,7 @@ static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
 
     // BUG/TODO: cleanup the last_parsed gunk that's no longer needed
     addr_modes_t last_parsed_mode;
-    int last_parsed_seg;
+    uint last_parsed_seg;
     int last_parsed_offset;
     t_addr last_parsed_addr;
 
@@ -535,7 +535,7 @@ static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
     int force_seg = 0;
 
     char *offsetp;
-    int seg = -1;
+    uint seg = ~0;
     int pr = -1;
     unsigned int offset = 0;
     if ((offsetp = strchr(cptr, '|')) != NULL || ((offsetp = strchr(cptr, '$')) != NULL)) {
@@ -554,7 +554,7 @@ static t_addr parse_addr(DEVICE *dptr, char *cptr, char **optr)
                 out_msg("ERROR: Non octal digit starting at: %s\n.", cptr);
                 return 0;
             }
-            sscanf(cptr, "%o", (unsigned int *) &seg);
+            sscanf(cptr, "%o", &seg);
             cptr += strspn(cptr, "01234567");
             if (cptr != offsetp) {
 out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
@@ -594,16 +594,16 @@ out_msg("DEBUG: parse_addr: non octal digit within: %s\n.", cptr);
     prior_line = NULL;
 
     // uint addr;
-    if (force_abs || (seg == -1 && get_addr_mode() == ABSOLUTE_mode)) {
+    if (force_abs || (seg == ~(uint)0 && get_addr_mode() == ABSOLUTE_mode)) {
         last_parsed_mode = ABSOLUTE_mode;
         *optr = cptr;
         // addr = offset;
-        last_parsed_seg = -1;
+        last_parsed_seg = ~0;
         last_parsed_offset = offset;
         // last_parsed_addr = addr;
     } else {
         last_parsed_mode = APPEND_mode;
-        last_parsed_seg = (seg == -1) ? TPR.TSR : seg;
+        last_parsed_seg = (seg == ~(uint)0) ? TPR.TSR : seg;
         last_parsed_offset = offset;
         *optr = cptr;
     }
