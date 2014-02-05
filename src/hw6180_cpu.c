@@ -123,6 +123,7 @@ t_uint64 saved_ar_pr[8];    // Only for sending to/from SIMH
 // See earlier comments re the PPR and IC
 PPR_t PPR;              // Procedure Pointer Reg, 37 bits, internal only
 static t_uint64 saved_PPR;  // Only for sending to/from SIMH; see also sim_PC and saved_IC
+static t_uint64 saved_TPR;  // Only for sending to/from SIMH; see also sim_PC and saved_IC
 static t_uint64 saved_PPR_addr; // Only for sending to/from SIMH; see also sim_PC and saved_IC
 static uint32 saved_IC; // Only for sending to/from SIMH; duplicates portions of saved_PPR
 
@@ -190,6 +191,7 @@ REG cpu_reg[] = {
     // stuff needed to yield a save/restore sufficent for examining memory dumps
     { BRDATA (BAR, saved_BAR, 8, 9, 2) },
     { ORDATA (DSBR, saved_DSBR, 51) },
+    { ORDATA (TPR, saved_TPR, 46), REG_VMIO },
     { ORDATA (CMR, CMR, 36), REG_RO },
     // The following is a hack, but works as long as you don't save/restore
     // across different architectures, compiler implementations, or phases
@@ -419,6 +421,7 @@ static int write72(FILE* fp, t_uint64 word0, t_uint64 word1);
 static int read72(FILE* fp, t_uint64* word0p, t_uint64* word1p);
 static void set_IR_bitnames(uint32 irval);
 void init_memory_iom();
+static t_uint64 save_TPR(const TPR_t *tprp);
 
 //=============================================================================
 
@@ -539,7 +542,7 @@ t_stat cpu_reset (DEVICE *dptr)
 
     set_addr_mode(ABSOLUTE_mode);
 
-    // We statup with either a fault or an interrupt.  So, a trap pair from the
+    // We startup with either a fault or an interrupt.  So, a trap pair from the
     // appropriate location will end up being the first instructions executed.
     if (sys_opts.startup_interrupt) {
         // We'll first generate interrupt #4.  The IOM will have initialized
@@ -564,6 +567,7 @@ t_stat cpu_reset (DEVICE *dptr)
     memset(&sys_stats, 0, sizeof(sys_stats));
 #endif
 
+    save_to_simh();     // pack private variables into SIMH's world
     return 0;
 }
 
@@ -602,6 +606,7 @@ t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
         for (int i = 0; i < MAXMEMSIZE - 1; i += 2) {
             if (feof(fileref)) {
                 out_msg("EOF on %s after %d words\n", fnam, i);
+                bootimage_loaded = 1;
                 return SCPE_OK;
             }
             if (read72(fileref, &Mem[i], &Mem[i+1]) != 0) {
@@ -609,6 +614,7 @@ t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int32 write_flag)
                 return SCPE_IOERR;
             }
         }
+        bootimage_loaded = 1;
     }
     out_msg("Done.\n");
     return SCPE_OK;
@@ -1027,6 +1033,7 @@ static void save_to_simh(void)
     addr_modes_t mode = get_addr_mode();
     saved_PPR = save_PPR(&PPR);
     saved_PPR_addr = addr_emul_to_simh(mode, PPR.PSR, PPR.IC);
+    saved_TPR = save_TPR(&TPR);
     t_uint64 sIR;
     save_IR(&sIR);
     saved_IR = sIR & MASKBITS(18);
@@ -1100,6 +1107,7 @@ void restore_from_simh(void)
     BAR.bound = saved_BAR[1];
     load_PPR(saved_PPR, &PPR);
     PPR.IC = saved_IC;  // allow user to update "IC"
+    load_TPR(saved_TPR, &TPR);
     cpup->DSBR.stack = saved_DSBR & MASKBITS(12);
     cpup->DSBR.u = (saved_DSBR >> 12) & 1;
     cpup->DSBR.bound = (saved_DSBR >> 13) & MASKBITS(14);
@@ -1199,6 +1207,32 @@ void load_PPR(t_uint64 word, PPR_t *pprp)
     pprp->P = (word >> 18) & 1;     //  1 bit
     pprp->PSR = (word >> 19) & 077777;  //  15 bits
     pprp->PRR = (word >> 34) & 7;   //  3 bits
+}
+
+//=============================================================================
+
+/*
+ * save_TPR() & load_TPR()
+ *
+ * Convert between TPR and bit string
+ */
+
+t_uint64 save_TPR(const TPR_t *tprp)
+{
+    // Our bit arrangment is arbitrary; real HW spread across multiple CU words
+    t_uint64 word = (t_uint64) tprp->CA & MASK18;   // 18 bits
+    word |= (t_uint64) tprp->TBR << 18; // 6 bits
+    word |= (t_uint64) tprp->TSR << 24; // 15 bits
+    word |= (t_uint64) tprp->TRR << 39; // 3 bits
+    return word;
+}
+
+void load_TPR(t_uint64 word, TPR_t *tprp)
+{
+    tprp->CA = word & MASK18;       // 18 bits
+    tprp->TBR = (word >> 18) & 077;     //  6 bits
+    tprp->TSR = (word >> 24) & 077777;  //  15 bits
+    tprp->TRR = (word >> 39) & 7;   //  3 bits
 }
 
 //=============================================================================
@@ -2736,10 +2770,7 @@ static t_stat cpu_dep (t_value v, t_addr simh_addr, UNIT *uptr, int32 switches)
         return SCPE_ARG;    // BUG: is this the right failure code
 
     // We use the translated absolute reference here.
-    // BUG: We should use store_abs_word() in case we need cache invalidation.
-    Mem[abs_addr] = v;
-
-    return 0;
+    return store_abs_word(abs_addr, v);
 }
 
 //=============================================================================

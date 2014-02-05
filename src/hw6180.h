@@ -296,7 +296,7 @@ typedef struct {
 typedef struct {
     uint TRR;   // Current effective ring number, 3 bits
     uint TSR;   // Current effective segment number, 15 bits
-    uint TBR;   // Current bit offset as calculated from ITS and ITP
+    uint TBR;   // Current bit offset as calculated from ITS and ITP, 6 bits
     uint CA;    // Current computed addr relative to the segment in TPR.TSR, 18 bits
     // FIXME: CA value should probably be placed in ctl_unit_data_t
     uint is_value;  // is offset a value or an address? (du or dl modifiers)
@@ -734,6 +734,7 @@ extern int cmd_load_listing(int32 arg, char *buf);
 extern void load_IR(IR_t *irp, t_uint64 word);
 extern void save_IR(t_uint64* wordp);
 extern void load_PPR(t_uint64 word, PPR_t *pprp);
+extern void load_TPR(t_uint64 word, TPR_t *pprp);
 extern t_uint64 save_PPR(const PPR_t *pprp);
 extern void fault_gen(enum faults);
 extern int fault_check_group(int group);    // Do faults exist a given or higher priority?

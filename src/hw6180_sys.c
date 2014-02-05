@@ -224,13 +224,15 @@ static void hw6180_init(void)
     memset(Mem, 0, MAXMEMSIZE*sizeof(Mem[0]));
 #endif
 
-    // CPU port 'd' (1) connected to port '0' of SCU
+    // CPU port 'a' connected to port '5' of SCU
     // scas_init's call to make_card seems to require that the CPU be connected
     // to SCU port zero.
     // Also, rsw_util$port_info claims base addr is: port-assignment * size/1024
-    int cpu_port = 4;       // CPU port 'd' or 4
-    // int cpu_port = 1;        // CPU port 'b' or 1
-    cpu_ports.scu_port = 0;
+    //int cpu_port = 4;       // CPU port 'd' or 4
+    // However, MR12.1 error_msgs.compout says CPUs should be on higher
+    // port numbers than IOMs and Bulk Stores
+    int cpu_port = 0;       // CPU port 'a' or 0
+    cpu_ports.scu_port = 5;
     cpu_ports.ports[cpu_port] = 0;  // CPU connected to SCU "A"
     scu.ports[cpu_ports.scu_port].is_enabled = 1;
     scu.ports[cpu_ports.scu_port].type = ADEV_CPU;
@@ -422,6 +424,12 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
             PPR_t ppr;
             load_PPR(*val, &ppr);
             fprintf(ofile, "[ring %0o, address %0o|%0o, priv %d]", ppr.PRR, ppr.PSR, ppr.IC, ppr.P);
+            fflush(ofile);
+            return SCPE_OK;
+        } else if (regp && strcmp(regp->name,"TPR") == 0) {
+            TPR_t tpr;
+            load_TPR(*val, &tpr);
+            fprintf(ofile, "[ring %#o, address %#o|%#o (bit %d)]", tpr.TRR, tpr.TSR, tpr.CA, tpr.TBR);
             fflush(ofile);
             return SCPE_OK;
         } else
