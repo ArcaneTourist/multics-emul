@@ -117,10 +117,14 @@ sysinfo_t sys_opts;
  * and sets up structures representing how the various devices are
  * physically cabled together.
  *
+ * Note that this runs before SIMH loads any "ini" file specified on
+ * the command line.
+ *
  * TODO: Provide a more general function interface for specifying
  * that two devices are interconnected.
  *
- * TODO: Move some of this code into device reset routines.
+ * TODO: Move some of this code into device reset routines (especially
+ * anything depending on sys_opts that will be allowed to change).
  */
 
 static void hw6180_init(void)
@@ -262,9 +266,9 @@ static void hw6180_init(void)
     scu.ports[iom.scu_port].dev_port = iom_port;
 
     /* Console */
-    int con_chan = 012; // channels 010 and higher are probed for an operators console
-    iom.channels[con_chan].type = DEVT_CON;
-    iom.channels[con_chan].dev = &opcon_dev;
+    sys_opts.opcon_chan = 012; // channels 010 and higher are probed for an operators console
+    iom.channels[sys_opts.opcon_chan].type = DEVT_CON;
+    iom.channels[sys_opts.opcon_chan].dev = &opcon_dev;
 
     /* Disk */
     const int disk_chan = 20;

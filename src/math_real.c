@@ -39,7 +39,7 @@ int instr_dvf(t_uint64 word)
 
     double aq = multics_to_double(reg_A, reg_Q, 0, 1);
     double div = multics_to_double(word, 0, 0, 1);
-    log_msg(NOTIFY_MSG, "opu::dvf", "%.6g/%.6g\n", aq, div);
+    log_msg(INFO_MSG, "opu::dvf", "%.6g/%.6g\n", aq, div);
     int dividend_is_neg = bit36_is_neg(reg_A);
     int divisor_is_neg = bit36_is_neg(word);
 
@@ -80,9 +80,9 @@ int instr_dvf(t_uint64 word)
     IR.neg = bit36_is_neg(reg_A);
 
     double tmp = multics_to_double(reg_A, 0, 0, 1);
-    log_msg(NOTIFY_MSG, "opu::dvf", "quotient:  A => %.6g\n", tmp);
+    log_msg(INFO_MSG, "opu::dvf", "quotient:  A => %.6g\n", tmp);
     tmp = multics_to_double(reg_Q, 0, 0, 1);
-    log_msg(NOTIFY_MSG, "opu::dvf", "remainder: Q => %.6g\n", tmp);
+    log_msg(INFO_MSG, "opu::dvf", "remainder: Q => %.6g\n", tmp);
 
     return 0;
 }

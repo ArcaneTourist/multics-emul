@@ -633,6 +633,7 @@ typedef struct {
         // waiting for the next interrupt (from the IOM after it loads the first
         // tape record and sends a terminate interrupt).
     int tape_chan;  // Which channel of the IOM is the tape drive attached to?
+    int opcon_chan; // Which channel of the IOM has the operator's console?
 } sysinfo_t;
 
 // Statistics

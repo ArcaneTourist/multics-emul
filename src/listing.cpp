@@ -338,8 +338,11 @@ static int listing_parse(FILE *f, source_file &src)
             }
 
             // If no pairs, we're finished
-            if (!any)
+            if (!any) {
+                if (src.lines.empty())
+                    cerr << "WARNING: No line/loc mappings found" << simh_nl;
                 seen_line_locs = 1;
+            }
 
             // Check for additional garbage on the same line as the pairs
             if (any && (*s != 0 || lineno != -1)) {

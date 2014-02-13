@@ -455,7 +455,7 @@ int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp,
 
 int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint *segnop, uint *offsetp, uint *bitnop)
 {
-    char *moi = "APU::get-addr";
+    char *moi = "APU::decode-eis-addr";
 
     addr_modes_t addr_mode = get_addr_mode();
 
@@ -544,8 +544,8 @@ int get_ptr_address(uint ringno, uint segno, uint offset, uint *addrp, uint *min
         return -1;
     }
 
-    uint saved_PSR = TPR.TSR;
-    uint saved_PRR = TPR.TRR ;
+    uint saved_TSR = TPR.TSR;
+    uint saved_TRR = TPR.TRR ;
     uint saved_bitno = TPR.TBR;
 
     uint saved_CA = TPR.CA;
@@ -567,8 +567,8 @@ int get_ptr_address(uint ringno, uint segno, uint offset, uint *addrp, uint *min
         if (opt_debug>0) log_msg(DEBUG_MSG, moi, "page-in faulted\n");
     }
 
-    TPR.TSR = saved_PSR;
-    TPR.TRR = saved_PRR;
+    TPR.TSR = saved_TSR;
+    TPR.TRR = saved_TRR;
     TPR.CA = saved_CA;
     TPR.is_value = saved_is_value;
     TPR.value = saved_value;
@@ -1158,13 +1158,16 @@ static void register_mod(uint td, uint off, uint *bitnop, int nbits)
             TPR.CA &= MASK18;
             break;
         case 5:
+            {
+            uint orig_off = off;
             chars_to_words(sign18(getbits36(reg_A, 18, 18)), nbits, &off, bitnop);
             TPR.CA = off;
             TPR.CA &= MASK18;
             if (opt_debug) {
                 uint a = getbits36(reg_A, 18, 18);
-                log_msg(DEBUG_MSG, "APU", "Tm=REG,Td=%02o: offset 0%o(%d) + A=0%llo=>0%o(%+d decimal) ==> 0%o=>0%o(%+d)\n",
-                    td, off, off, reg_A, a, sign18(a), TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
+                log_msg(DEBUG_MSG, "APU", "Tm=REG,Td=%02o: offset %06o(%d) + A=(36)%#llo=>(18)%06o(%+d decimal) ==> 0%o=>0%o(%+d)\n",
+                    td, orig_off, orig_off, reg_A, a, sign18(a), TPR.CA, sign18(TPR.CA), sign18(TPR.CA));
+            }
             }
             break;
         case 6:
@@ -1660,7 +1663,7 @@ static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uin
     }
     int ret = page_in_page(SDWp, offset, perm_mode, addrp, minaddrp, maxaddrp);
     if (ret != 0) {
-        log_msg(NOTIFY_MSG, moi, "page_in_page returned non zero.  Segno 0%o, offset 0%o(%d)\n", segno, offset, offset);
+        log_msg(NOTIFY_MSG, moi, "page_in_page returned non zero.  Segno %#o, offset %#o(%d)\n", segno, offset, offset);
     }
     return ret;
 }
@@ -1993,8 +1996,9 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp,
                 return 1;
             }
             t_uint64 word;
-            // log_msg(DEBUG_MSG, "APU::append", "Fetching PTW for (segno 0%o, page 0%o) from 0%o(0%o+page)\n", segno, x2, SDWp->sdw.addr + x2, SDWp->sdw.addr);
-            if (fetch_abs_word(SDWp->sdw.addr + x2, &word) != 0)
+            uint ptw_addr = SDWp->sdw.addr + x2;
+            // log_msg(DEBUG_MSG, "APU::append", "Fetching PTW for (segno 0%o, page 0%o) from 0%o(0%o+page)\n", segno, x2, ptw_addr, SDWp->sdw.addr);
+            if (fetch_abs_word(ptw_addr, &word) != 0)
                 return 1;
             for (int i = 0; i < ARRAY_SIZE(cpup->PTWAM); ++i) {
                 -- cpup->PTWAM[i].assoc.use;
@@ -2006,7 +2010,7 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp,
             PTWp->assoc.pageno = x2;
             PTWp->assoc.is_full = 1;
             if (PTWp->ptw.f == 0) {
-                log_msg(INFO_MSG, "APU::append", "PTW directed fault\n");
+                log_msg(INFO_MSG, "APU::append", "PTW directed fault in segment %#o for PTW at %#o\n", segno, ptw_addr);
                 fault_gen(dir_flt0_fault + PTWp->ptw.fc);   // Directed Faults 0..4 use sequential fault numbers
                 return 1;
             }
