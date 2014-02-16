@@ -395,6 +395,7 @@ int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp,
                 offset += TPR.TBR / 36;
                 TPR.TBR %= 36;
             }
+            TPR.CA = offset; TPR.is_value = 0;
             if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o(0%o+0%o), bitno=0%o\n",
                 n, TPR.TSR, TPR.TRR, offset, AR_PR[n].wordno, soffset, TPR.TBR);
             *(uint*)bitnop = TPR.TBR;
@@ -451,6 +452,8 @@ int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp,
  * decode_eis_address()
  *
  * See prior function (get_address) for comments
+ *
+ * FIXME: Have callers not pass ringp etc and have them inspect TPR instead
  */
 
 int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint *segnop, uint *offsetp, uint *bitnop)
@@ -480,10 +483,14 @@ int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint
             "Using PR[%d]: TSR=0%o, TRR=0%o, offset=0%o(0%o+0%o), bitno=0%o\n",
             n, *segnop, *ringp, offset, AR_PR[n].wordno, soffset, *bitnop);
     } else {
-        *segnop = TPR.TSR;
+        *segnop = PPR.PSR;
         *ringp = max3(0, TPR.TRR, PPR.PRR);
         offset = y;     // unsigned
         *bitnop = 0;
+        TPR.TSR = *segnop;
+        TPR.TRR = *ringp;
+        TPR.CA = y;
+        TPR.TBR = *bitnop;
     }
 
     if (reg != 0) {
@@ -502,9 +509,7 @@ int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint
         }
 #endif
         offset = TPR.CA;
-        TPR.CA = saved_CA;
-        TPR.is_value = saved_is_value;
-        TPR.value = saved_value;
+        TPR.is_value = 0;
         if (bits != *bitnop || bits != 0 || *bitnop != 0) {
             int err = (int) *bitnop < 0 || *bitnop > 35 || (int) bits < 0 || bits > 35;
             log_msg(err ? ERR_MSG : DEBUG_MSG, moi, "Register mod 0%o: offset was 0%o, now 0%o; bit offset was %d, now %d.\n", reg, o, offset, bits, *bitnop);
@@ -518,6 +523,7 @@ int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint
         //cancel_run(STOP_IBKPT);
     }
     *offsetp = offset;
+    TPR.CA = offset;
 
     return 0;
 }
@@ -529,6 +535,9 @@ int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint
  * get_ptr_address()
  *
  * See prior function (get_address) for comments
+ *
+ * FIXME: Have callers not pass ringp etc and have them inspect TPR instead
+ *
  */
 
 int get_ptr_address(uint ringno, uint segno, uint offset, uint *addrp, uint *minaddrp, uint* maxaddrp)
@@ -566,13 +575,6 @@ int get_ptr_address(uint ringno, uint segno, uint offset, uint *addrp, uint *min
     if (ret != 0) {
         if (opt_debug>0) log_msg(DEBUG_MSG, moi, "page-in faulted\n");
     }
-
-    TPR.TSR = saved_TSR;
-    TPR.TRR = saved_TRR;
-    TPR.CA = saved_CA;
-    TPR.is_value = saved_is_value;
-    TPR.value = saved_value;
-    TPR.TBR = saved_bitno;
 
     return ret;
 }

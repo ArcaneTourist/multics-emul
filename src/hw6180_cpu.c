@@ -454,10 +454,11 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
      *  area of main memory if an IOX is detected.
      *  Emulating an IOX was later abandoned because when using an IOX,
      *  bootload_tape_label.alm will try to execute the "ldo" instruction.
-     *  The "ldo" instruction was never implemented on the L68 series. The
-     *  "ldo" instruction was implmented on on the ADP aka ORION aka
-     *  DPS88.
-     *  However, we might as well run the IOM or IOX to do the I/O.  Note that
+     *  The "ldo" instruction was never implemented on the L68 series. I
+     *  originaly though "ldo" instruction was only implmented on on the
+     *  ADP aka ORION aka DPS88.   However, years later I find that it also
+     *  existed on the DPS8.
+     *  This version does run the IOM or IOX to do the I/O.  Note that
      *  prior to booting, the emulated IOM or IOX must load IOM control words
      *  into memory.  This is done in init_memory_iom() or in init_memory_iox().
      *  This approach replaces the dozen or so lines of code that used to live
@@ -470,7 +471,6 @@ t_stat cpu_boot (int32 unit_num, DEVICE *dptr)
 
     // Initializing memory to reflect the existance of an IOM, not an
     // IOX.  Using an IOX causes use of the non L68 "ldo" instruction.
-    // The "ldo" instruction was implmented on on the ADP aka ORION aka DPS88.
     // Also, the IOX has an undocumented mailbox architecture.
     // init_memory_iox();
     init_memory_iom();

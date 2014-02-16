@@ -121,17 +121,16 @@ bitstream_t* bitstm_open(const char* fname)
     reads or other error conditions.
 */
 
-int bitstm_get(bitstream_t *bp, size_t len, t_uint64 *word)
+int bitstm_get(bitstream_t *bp, size_t len, t_uint64 *wordp)
 {
 
-    *word = 0;
     size_t orig_len = len;
     int used = bp->used;
     int left = 8 - used;
     if (left != 0 && len < left) {
         // We have enough bits left in the currently buffered byte.
         unsigned val = bp->byte >> (8-len); // Consume bits from left of byte
-        *word = val;
+        *wordp = val;
         //printf("b-debug: used %d leading bits of %d-bit curr byte to fufill small request.\n", len, left);
         bp->byte = bp->byte << len;
         bp->used += len;
@@ -181,7 +180,7 @@ int bitstm_get(bitstream_t *bp, size_t len, t_uint64 *word)
         bp->byte = bp->byte << extra;
         bp->used = extra;
     }
-    *word = wtmp;
+    *wordp = wtmp;
 
 b_end:
     //printf("b-debug: after %u req: offset=%u, %d curr bits used, return = %lu\n",

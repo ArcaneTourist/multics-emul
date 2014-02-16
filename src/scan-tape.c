@@ -43,7 +43,7 @@ static t_uint64 gbits36(t_uint64 x, int i, int n) {
 }
 
 
-int main()
+int main(int argc, char* argv[])
 {
     init_ops();
     t_uint64 word;
@@ -63,7 +63,7 @@ int main()
 exit(1);
 #endif
 
-    doit();
+    doit(argc > 1 ? argv[1] : "boot.tape");
     return 0;
 }
 
@@ -75,7 +75,7 @@ int tbit(t_uint64 word, const char *tag, int pos, int nbit)
     return 0;
 }
 
-int doit()
+int doit(const char *fname)
 {
     // Boot -- Copy bootstrap loader into memory & set PC (actually send startup fault)
     // Issue: have to specify boot tape or file out-of-band
@@ -89,7 +89,6 @@ int doit()
     // question
     //      What type of data does blksiz measure?  Count of 32bit words?  Count of 9 bit "bytes" ?
     
-    char *fname = "boot.tape";
     printf("Loading file %s\n", fname);
     int fd;
     if ((fd = open(fname, O_RDONLY)) == -1) {

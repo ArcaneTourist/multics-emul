@@ -239,6 +239,10 @@ extern int op_mvt(const instr_t* ip)
 
     if (ret == 0) {
         IR.truncation = desc1.n() != 0;
+        if (IR.truncation) {
+            // Harry & Charles report ascii.no_trim expects TRO instead of truncation
+            log_msg(DEBUG_MSG, moi, "Setting truncation flag, but may need to also set tally-run-out.\n");
+        }
         if (IR.truncation && t) {
             fault_gen(overflow_fault);  // truncation
             ret = 1;
