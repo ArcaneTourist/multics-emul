@@ -613,6 +613,7 @@ static int scan_seg_defs(uint segno, AR_PR_t *defsp, int name_only, int msgs)
     // Moved out of _scan_seg()
     // Intent is to make usable for getting segment names
 
+    const char* moi = "scan_seg_defs";
     t_uint64 word0, word1;
 
     uint defp = defsp->wordno;
@@ -695,11 +696,13 @@ static int scan_seg_defs(uint segno, AR_PR_t *defsp, int name_only, int msgs)
                     if (msgs)
                         out_msg("Text %s: link %o|%#o\n", buf, segno, thing_relp);
                     // if (strncmp(entryname, buf, entryp-entryname) == 0)
-                    if (strchr(buf, '$') != NULL)
-                        seginfo_add_linkage(segno, thing_relp, buf);
-                    else {
+                    if (strchr(buf, '$') != NULL) {
+                        if (seginfo_add_linkage(segno, thing_relp, buf) != 0)
+                            log_msg(INFO_MSG, moi, "call to seginfo_add_linkage failed\n");
+                    } else {
                         strcpy(entryp, buf);
-                        seginfo_add_linkage(segno, thing_relp, entryname);
+                        if (seginfo_add_linkage(segno, thing_relp, entryname) != 0)
+                            log_msg(INFO_MSG, moi, "call to seginfo_add_linkage failed\n");
                     }
                 } else if (class == 2) {
                     if (msgs)

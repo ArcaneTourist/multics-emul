@@ -43,6 +43,7 @@ static inline uint max3(uint a, uint b, uint c);
 
 static int do_op(instr_t *ip);
 static void scu2words(t_uint64 *words);
+static void words2scu(const t_uint64 *words);
 static int op_add(instr_t *ip, t_uint64 *operand);
 static int op_and(instr_t *ip, t_uint64 *op, t_uint64 *op2, t_uint64 *dest1, t_uint64 *dest2);
 static int add36(t_uint64 a, t_uint64 b, t_uint64 *dest);
@@ -544,8 +545,17 @@ static int do_an_op(instr_t *ip)
                     t_uint64 ir;
                     uint tro = IR.tally_runout;
                     IR.tally_runout = saved_tro;
+                    flag_t abs = IR.abs_mode;
+#if 1
+                    // The DH02-01 DPS8 ASM manual states that
+                    // bit 31 (absolute mode) is cleared.  AL-39
+                    // claims that the all 18 bits are stored, but
+                    // the T&D tape insists that bit 31 be cleared.
+                    IR.abs_mode = 0;
+#endif
                     save_IR(&ir);
                     IR.tally_runout = tro;
+                    IR.abs_mode = abs;
                     word = setbits36(word, 18, 18, ir);
                     ret = store_word(TPR.CA, word);
                 }
@@ -639,7 +649,7 @@ static int do_an_op(instr_t *ip)
                 lrotate72(&reg_A, &reg_Q, n);
                 IR.zero = reg_A == 0 && reg_Q == 0;
                 IR.neg = bit36_is_neg(reg_A);
-                IR.carry = init_neg != IR.neg;
+                // IR.carry = init_neg != IR.neg;
                 return 0;
             }
             case opcode0_lls: {     // Long left shift
@@ -771,7 +781,7 @@ static int do_an_op(instr_t *ip)
                 if (ret == 0) {
                     t_uint64 a = reg_A;
                     reg_A += word;
-                    if ((IR.carry = reg_A & MASK36) != 0)
+                    if ((IR.carry = ((reg_A & MASK36) != 0)))
                         reg_A &= MASK36;
                     IR.zero = reg_A == 0;
                     IR.neg = bit36_is_neg(reg_A);
@@ -804,7 +814,7 @@ static int do_an_op(instr_t *ip)
                 if (ret == 0) {
                     t_uint64 q = reg_Q;
                     reg_Q += word;
-                    if ((IR.carry = reg_Q & MASK36) != 0)
+                    if ((IR.carry = ((reg_Q & MASK36) != 0)))
                         reg_Q &= MASK36;
                     IR.zero = reg_Q == 0;
                     IR.neg = bit36_is_neg(reg_Q);
@@ -835,7 +845,7 @@ static int do_an_op(instr_t *ip)
                 int ret = fetch_op(ip, &word);
                 if (ret == 0) {
                     word = getbits36(word, 0, 18) + reg_X[n];
-                    if ((IR.carry = word & MASK18) != 0)
+                    if ((IR.carry = ((word & MASK18) != 0)))
                         word &= MASK18;
                     reg_X[n] = word;
                     IR.zero = reg_X[n] == 0;
@@ -2836,7 +2846,17 @@ static int do_an_op(instr_t *ip)
             // lra unimplemented
             // lsdp unimplemented -- T&D Instruction
             // lsdr unimplemented -- T&D Instruction
-            // rcu unimplemented -- restore control unit
+
+            case opcode0_rcu: {
+                int ret;
+                t_uint64 words[8];
+                if ((ret = fetch_yblock8(TPR.CA, words)) != 0)
+                    return ret;
+                words2scu(words);
+                log_msg(ERR_MSG, "OPU::rcu", "Partial implementation: Cannot fully restore control unit\n");
+                cancel_run(STOP_BUG);
+                return 1;
+            }
 
             case opcode0_scpr: {    // Store CU reg
                 if (get_addr_mode() == BAR_mode || ! PPR.P) {
@@ -2901,9 +2921,6 @@ static int do_an_op(instr_t *ip)
                     log_msg(WARN_MSG, "OPU::scu", "Auto breakpoint\n");
                     cancel_run(STOP_WARN);
                 }
-                // BUG: why are we doing a safe store *withing* scu???
-                // if (! events.xed)
-                //  scu2words(scu_data);
                 return store_yblock8(TPR.CA, scu_data);
             }
 
@@ -3563,12 +3580,15 @@ static int do_an_op(instr_t *ip)
 
 void cu_safe_store()
 {
-    // Save current Control Unit Data in hidden temporary so a later SCU instruction running
-    // in FAULT mode can save the state as it existed at the time of the fault rather than
-    // as it exists at the time the scu instruction is executed.
+    // Save current Control Unit Data in hidden temporary so a later SCU
+    // instruction running in FAULT mode can save the state as it existed
+    // at the time of the fault rather than as it exists at the time the scu
+    // instruction is executed.
+    log_msg(INFO_MSG, "CU", "Safe storing SCU data\n");
     scu2words(scu_data);
 }
 
+// ----------------------------------------------------------------------------
 
 static void scu2words(t_uint64 *words)
 {
@@ -3576,6 +3596,7 @@ static void scu2words(t_uint64 *words)
 
     memset(words, 0, 8 * sizeof(*words));
 
+    // See AL39 table 5-1
     words[0] = setbits36(0, 0, 3, PPR.PRR);
     words[0] = setbits36(words[0], 3, 15, PPR.PSR);
     words[0] = setbits36(words[0], 18, 1, PPR.P);
@@ -3605,7 +3626,7 @@ static void scu2words(t_uint64 *words)
     words[5] = setbits36(words[5], 19, 1, cu.rpt);
     // BUG: Not all of CU data exists and/or is saved
     words[5] = setbits36(words[5], 24, 1, cu.xde);
-    words[5] = setbits36(words[5], 24, 1, cu.xdo);
+    words[5] = setbits36(words[5], 25, 1, cu.xdo);
     words[5] = setbits36(words[5], 30, 6, cu.CT_HOLD);
 
     encode_instr(&cu.IR, &words[6]);    // BUG: cu.IR isn't kept fully up-to-date
@@ -3613,6 +3634,45 @@ static void scu2words(t_uint64 *words)
     words[7] = cu.IRODD;
 }
 
+// ----------------------------------------------------------------------------
+
+static void words2scu(const t_uint64 *words)
+{
+    // BUG:  We don't track much of the data that should be tracked
+
+    // See AL39 table 5-1
+
+    // words[0]
+    PPR.PRR = getbits36(words[0], 0, 3);
+    PPR.PSR = getbits36(words[0], 3, 15);
+    PPR.P = getbits36(words[0], 18, 1);
+
+    // words[1] - none of these loaded by rcu
+ 
+    // words[2]
+    TPR.TRR = getbits36(words[2], 0, 3);
+    TPR.TSR = getbits36(words[2], 3, 15);
+    switches.cpu_num = getbits36(words[2], 27, 3);  // FIXME: Really?
+    cu.delta = getbits36(words[2], 30, 6);
+
+    // words[3]
+    TPR.TBR = getbits36(words[3], 30, 6);
+
+    // words[4]
+    PPR.IC = getbits36(words[4], 0, 18);
+    load_IR(&IR, words[4]); // FIXME: do we need to suppress any bits?
+
+    // words[5]
+    cu.repeat_first = getbits36(words[5], 18, 1);
+    cu.rpt = getbits36(words[5], 19, 1);
+    cu.xde = getbits36(words[5], 24, 1);
+    cu.xdo = getbits36(words[5], 25, 1);
+    cu.CT_HOLD = getbits36(words[5], 30, 6);
+
+    decode_instr(&cu.IR, words[6]);    // BUG: cu.IR isn't kept fully up-to-date
+
+    cu.IRODD = words[7];
+}
 
 // ============================================================================
 
