@@ -247,7 +247,7 @@ void desc_t::len_to_text(char* bufp) const
 {
     if (_mf.rl) {
         char mod[30];
-        mod2text(mod, 0, _count);
+        mod2text(mod, 0, _raw_count);
         sprintf(bufp, "\"%s\"->%#o(%d)", mod, _n, _n);
     } else
         sprintf(bufp, "%#o(%d)", _n, _n);
@@ -257,20 +257,36 @@ void desc_t::len_to_text(char* bufp) const
 
 void desc_t::yaddr_to_text(char* bufp) const
 {
+    // Note that we display the initial value of the descriptor.  The descriptor
+    // points to an unchanging base address; the address or PR register is not
+    // updated during instruction execution.
+    // TODO: Update various instructions to display the value of the "active" address
+    // of each operand (by showing the delta of chars read or written).
     if (_mf.ar) {
         uint pr = _addr >> 15;
         uint offset = _addr & MASKBITS(15);
-        sprintf(bufp, "%#o => PR%d|%#o", _addr, pr, offset);
-    } else
-        sprintf(bufp, "%#o", _addr);
+        int soffset = sign15(offset);
+        soffset += AR_PR[pr].wordno;
+#if 0
+        soffset += _count - _n;
+#endif
+        sprintf(bufp, "%#o => PR%d|%#o => %#o|%#o", _addr, pr, offset,
+            AR_PR[pr].PR.snr, (unsigned) soffset & (unsigned) MASK18);
+    } else {
+        uint offset = _addr;
+#if 0
+        offset += _count - _n;
+#endif
+        sprintf(bufp, "%#o", offset);
+    }
+    if (_mf.id)
+        strcpy(bufp + strlen(bufp), " (id)");
 }
 
 //=============================================================================
 
 /*
  * alpha_desc_t::to_text()
- *
- * BUG/TODO/CAVEAT: Prints initial value; should probably print current value
  *
  */
 
@@ -292,8 +308,6 @@ char* alpha_desc_t::to_text(char *bufp) const
 /*
  * bit_desc_t::to_text()
  *
- * BUG/TODO/CAVEAT: Prints initial value; should probably print current value
- *
  */
 
 char* bit_desc_t::to_text(char *bufp) const
@@ -313,8 +327,6 @@ char* bit_desc_t::to_text(char *bufp) const
 
 /*
  * num_desc_t::to_text()
- *
- * BUG/TODO/CAVEAT: Prints initial value; should probably print current value
  *
  */
 
@@ -353,9 +365,10 @@ void desc_t::init(const eis_mf_t& mf, int y_addr, int width, int cn, int bit_off
         log_msg(NOTIFY_MSG, "APU::EIS", "Initializing 4-bit descriptor.\n");
 
     _mf = mf;
-    _count = nchar;     // TODO: rename to "rl" or similar
+    _raw_count = nchar;     // TODO: rename to "rl" or similar
+    _count = nchar;
+    fix_mf_len(&_count, &_mf, width);
     _n = _count;
-    fix_mf_len(&_n, &_mf, width);
 
     // _is_read = is_read;
     _is_fwd = is_fwd;

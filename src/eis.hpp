@@ -96,7 +96,8 @@ protected:
     eis_mf_t _mf;
     int _addr;  // original raw address
     int _width;  // "character" size in bits
-    unsigned _count;  // initial number of characters (pre MF fixup)
+    unsigned _raw_count;  // initial number of characters (pre MF fixup)
+    unsigned _count;  // initial number of characters (post MF fixup)
     unsigned _n;  // current character count
     struct {
         int cn;

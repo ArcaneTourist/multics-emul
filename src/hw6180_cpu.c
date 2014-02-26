@@ -2679,38 +2679,6 @@ void encode_instr(const instr_t *ip, t_uint64 *wordp)
 //=============================================================================
 
 /*
- * bin2text()
- *
- * Display as bit string.
- *
- */
-
-#include <ctype.h>
-
-char *bin2text(t_uint64 word, int n)
-{
-    // WARNING: static buffer
-    static char str1[65];
-    static char str2[65];
-    static char *str = NULL;
-    if (str == NULL)
-        str = str1;
-    else if (str == str1)
-        str = str2;
-    else
-        str = str1;
-    str[n] = 0;
-    int i;
-    for (i = 0; i < n; ++ i) {
-        str[n-i-1] = ((word % 2) == 1) ? '1' : '0';
-        word >>= 1;
-    }
-    return str;
-}
-
-//=============================================================================
-
-/*
  * cpu_ex()
  *
  * Called by SIMH to retrieve memory.

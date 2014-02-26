@@ -633,7 +633,7 @@ typedef struct {
         // waiting for the next interrupt (from the IOM after it loads the first
         // tape record and sends a terminate interrupt).
     int tape_chan;  // Which channel of the IOM is the tape drive attached to?
-    int opcon_chan; // Which channel of the IOM has the operator's console?
+    int opcon_chan;  // Which channel of the IOM has the operator's console?
 } sysinfo_t;
 
 // Statistics
@@ -696,15 +696,16 @@ extern void log_msg(enum log_level, const char* who, const char* format, ...);
 extern void out_msg(const char* format, ...);
 extern t_stat cmd_seginfo(int32 arg, char *buf);    // display segment info
 extern int apu_show_seg(FILE *st, UNIT *uptr, int val, void *desc); // display segment info
-extern int scan_seg(uint segno, int msgs);  // scan definitions section for procedure entry points
-extern int get_seg_name(uint segno);
 extern int words2its(t_uint64 word1, t_uint64 word2, AR_PR_t *prp);
+extern void word2pr(t_uint64 word, AR_PR_t *prp);
 extern int cmd_find(int32 arg, char *buf);
 extern int cmd_symtab_parse(int32 arg, char *buf);
 extern t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int32 sw);
 extern void fprint_addr(FILE *stream, DEVICE *dptr, t_addr simh_addr);
 extern void out_sym(int is_write, t_addr simh_addr, t_value *val, UNIT *uptr, int32 sw);
 extern void flush_logs(void);
+extern int get_seg_name(uint segno);
+extern int scan_seg(uint segno, int msgs);  // scan definitions section for procedure entry points
 
 /* debug_run.cpp */
 extern void check_seg_debug(void);

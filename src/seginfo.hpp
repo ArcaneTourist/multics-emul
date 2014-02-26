@@ -170,15 +170,15 @@ public:
         { return ep.print(out, 0); }
 };
 
-// Information found in in-core linkage sections of segments.
+// Information found in either in-core linkage sections of segments
+// or in listings files.
 class linkage_info {
 public:
     linkage_info() { offset = -1; entry = NULL; }
     linkage_info(const char *nm, int off)
         { name = nm; offset = off; entry = NULL; }
     string name;                // DOC FIXME: is name same as entry->name?  Is entry allowed to be NULL?
-    int offset;                 // Relocated value determined at runtime
-    // int last;                // negative if unknown
+    int offset;                 // May or may not be relocated value, see owner
     entry_point* entry;
     int hi() const // unrelocated
         { return (entry == NULL) ? -1 : int(entry->last); }
