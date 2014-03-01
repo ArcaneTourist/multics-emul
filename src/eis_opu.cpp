@@ -8,7 +8,7 @@
 
 */
 /*
-   Copyright (c) 2007-2013 Michael Mondy
+   Copyright (c) 2007-2014 Michael Mondy
 
    This software is made available under the terms of the
    ICU License -- ICU 1.8.1 and later.     
@@ -242,6 +242,7 @@ extern int op_mvt(const instr_t* ip)
         if (IR.truncation) {
             // Harry & Charles report ascii.no_trim expects TRO instead of truncation
             log_msg(DEBUG_MSG, moi, "Setting truncation flag, but may need to also set tally-run-out.\n");
+            //IR.tally_runout = 1;
         }
         if (IR.truncation && t) {
             fault_gen(overflow_fault);  // truncation

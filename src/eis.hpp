@@ -136,8 +136,8 @@ public:
     int width() const { return _width; }
     int put(unsigned val)  // write, advance forward or backwards
         { return _put(val, 1); }
-    int set(unsigned val)  // write, no advance
-        { return _put(val, 0); }
+    //int set(unsigned val)  // write, no advance
+    //   { return _put(val, 0); }
     int get(unsigned* valp)  // read, advance forward or backwards
         { return _get(valp, 1); }
     int val(unsigned* valp)  // read, no advance

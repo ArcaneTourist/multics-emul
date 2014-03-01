@@ -13,18 +13,21 @@
 #ifndef _SEGINFO_H
 #define _SEGINFO_H
 
-#if !defined(SIM_DEFS_H_) && !defined(_SIM_DEFS_H_)
-#include <stdint.h>
-typedef uint64_t t_uint64;
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#if !defined(SIM_DEFS_H_)
+// #include <stdint.h>
+// typedef uint64_t t_uint64;
+// SIMH insists on unsigned long long instead of uint64_t, so we should
+// just pull in their defs for consistancy.
+#include "sim_defs.h"
+#endif
+
 #ifndef _HW6180_H
-// FIXME -- should require  h6180.h to be included...
-typedef enum { ABSOLUTE_mode, APPEND_mode, BAR_mode } addr_modes_t;
+// FIXME -- should probably require  h6180.h to be included...
+// typedef enum { ABSOLUTE_mode, APPEND_mode, BAR_mode } addr_modes_t;
 #endif
 
 typedef struct {
@@ -48,6 +51,8 @@ int seginfo_find_all(int seg, int offset, where_t *wherep);
 int seginfo_automatic_count(int segno, int offset);
 int seginfo_automatic_list(int segno, int offset, int *count, automatic_t *list);
 void seginfo_find_line(int segno, int offset, const char**line, int *lineno);
+
+extern int fetch_acc(int (*fetch)(unsigned addr, t_uint64 *wordp), unsigned addr, char bufp[513]);
 
 #ifdef __cplusplus
 }
@@ -283,8 +288,63 @@ static inline std::ostream& simh_endl(std::ostream &os) { return os << simh_nl <
 
 // ============================================================================
 
-
 extern source_file& seginfo_add_source_file(int segno, const char *fname, int offset = -1);
+
+// ============================================================================
+
+typedef enum { def_undef = -1, def_text = 0, def_symbol = 2, def_seg_name = 3} def_type;
+
+// An entry in a segment's definitions table
+class def_t {
+public:
+    // TODO: make offset private & provide a function that returns
+    // either _offset or link.offset as appropriate
+    def_type type;
+    linkage_info link;  // for type == def_text
+    unsigned offset;    // for type == def_symbol or unknown
+    string name;        // for all types
+    def_t (linkage_info li)
+        { type = def_text; offset = ~0; link = li; }
+    def_t (const char* seg_name)
+        { type = def_seg_name; offset = ~0; name = seg_name; }
+    def_t (unsigned off, const char* sym)
+        { type = def_symbol; offset = off; name = sym; }
+    def_t (int def_class, unsigned off, const char* text)
+        { type = (def_type) def_class; offset = off; name = text; }
+    def_t ()
+        { type = def_undef; offset = ~ 0; }
+};
+
+// A segment's entire definitions table
+class seg_defs {
+private:
+    // unsigned _hdrp;
+    unsigned _first_defp;
+    unsigned _firstp;
+    //vector<string> _names;
+    //map <int, linkage_info> _defs;  // Key is offset
+    // void add(unsigned defp, unsigned offset, const char* s);
+    void add_link(unsigned defp, linkage_info li)
+        { defs[defp] = def_t(li); }
+    void add_seg_name(unsigned defp, const char* seg_name)
+        { defs[defp] = def_t(seg_name); }
+    void add_sym(unsigned defp, unsigned offset, const char* sym)
+        { defs[defp] = def_t(offset, sym); }
+    void add_unknown(unsigned defp, int def_class, unsigned offset, const char* text)
+        { defs[defp] = def_t(def_class, offset, text); }
+public:
+    unsigned defp() { return _first_defp; }
+    unsigned firstp() { return _firstp; }
+    int scan(uint hdrp, int (*fetch)(uint addr, t_uint64 *wordp));
+    map <int, def_t> defs;  // Key is defp offset
+        // FIXME: make private & provide iterators
+    //FIXME: provide efficient lookups:
+        // const string name(); 
+        // const string* names();
+        // begin() & end() ordered by offset
+};
+
+// ============================================================================
 
 #endif //__cplusplus
 #endif // _SEGINFO_H

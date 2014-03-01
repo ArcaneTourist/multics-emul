@@ -16,7 +16,7 @@
         the cycle loop.
 */
 /*
-   Copyright (c) 2007-2013 Michael Mondy
+   Copyright (c) 2007-2014 Michael Mondy
 
    This software is made available under the terms of the
    ICU License -- ICU 1.8.1 and later.     
@@ -510,6 +510,7 @@ int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint
 #endif
         offset = TPR.CA;
         TPR.is_value = 0;
+
         if (bits != *bitnop || bits != 0 || *bitnop != 0) {
             int err = (int) *bitnop < 0 || *bitnop > 35 || (int) bits < 0 || bits > 35;
             log_msg(err ? ERR_MSG : DEBUG_MSG, moi, "Register mod 0%o: offset was 0%o, now 0%o; bit offset was %d, now %d.\n", reg, o, offset, bits, *bitnop);
@@ -1815,7 +1816,7 @@ static SDWAM_t* page_in_sdw()
     }
 
     if (SDWp != NULL) {
-        // SDW is in SDWAM; it becomes the LRU
+        // SDW is in SDWAM; it moves to the end of the LRU queue
         // log_msg(DEBUG_MSG, "APU::append", "SDW is in SDWAM[%d].\n", SDWp - cpup->SDWAM);
         if (SDWp->assoc.use != 15) {
             for (int i = 0; i < ARRAY_SIZE(cpup->SDWAM); ++i) {
@@ -1937,7 +1938,8 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp,
         if (! fault_gen_no_fault)
             cu.word1flags.oosb = 1;         // ERROR: nothing clears
         log_msg(NOTIFY_MSG, "APU::append", "SDW: Offset=0%o(%u), bound = 0%o(%u) -- OOSB fault\n", offset, offset, SDWp->sdw.bound, SDWp->sdw.bound);
-        fault_gen(acc_viol_fault);
+        if (! fault_gen_no_fault)
+            fault_gen(acc_viol_fault);
         return 1;
     }
 
@@ -1979,7 +1981,7 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp,
                 //}
             }
         } else {
-            // log_msg(DEBUG_MSG, "APU::append", "PTW for (segno 0%o, page 0%o) is the MRU -- in PTWAM[%d]\n", segno, x2, PTWp-PTWAM);
+            // log_msg(DEBUG_MSG, "APU::append", "PTW for (segno %#o, page %#o) is the MRU -- in PTWAM[%d]\n", segno, x2, PTWp - cpup->PTWAM);
         }
         if (PTWp != NULL) {
             // PTW is in PTWAM; it becomes the LRU
@@ -1999,7 +2001,7 @@ static int page_in_page(SDWAM_t* SDWp, uint offset, uint perm_mode, uint *addrp,
             }
             t_uint64 word;
             uint ptw_addr = SDWp->sdw.addr + x2;
-            // log_msg(DEBUG_MSG, "APU::append", "Fetching PTW for (segno 0%o, page 0%o) from 0%o(0%o+page)\n", segno, x2, ptw_addr, SDWp->sdw.addr);
+            // log_msg(DEBUG_MSG, "APU::append", "Fetching PTW for (segno %#o, page %#o) from %#o(%#o+page)\n", segno, x2, ptw_addr, SDWp->sdw.addr);
             if (fetch_abs_word(ptw_addr, &word) != 0)
                 return 1;
             for (int i = 0; i < ARRAY_SIZE(cpup->PTWAM); ++i) {

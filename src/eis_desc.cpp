@@ -22,7 +22,7 @@
         behavior.
 */
 /*
-   Copyright (c) 2007-2013 Michael Mondy
+   Copyright (c) 2007-2014 Michael Mondy
 
    This software is made available under the terms of the
    ICU License -- ICU 1.8.1 and later.     
@@ -270,8 +270,15 @@ void desc_t::yaddr_to_text(char* bufp) const
 #if 0
         soffset += _count - _n;
 #endif
+#if 1
         sprintf(bufp, "%#o => PR%d|%#o => %#o|%#o", _addr, pr, offset,
             AR_PR[pr].PR.snr, (unsigned) soffset & (unsigned) MASK18);
+#else
+        sprintf(bufp, "%#o => PR%d|%#o => %#o|%#o+%#o => %#o|%#o",
+            _addr, pr, offset,
+            AR_PR[pr].PR.snr, AR_PR[pr].wordno, sign15(offset),
+            AR_PR[pr].PR.snr, soffset);
+#endif
     } else {
         uint offset = _addr;
 #if 0
@@ -958,7 +965,7 @@ int desc_t::init_ptr()
 /*
  * desc_t::_put()
  *
- * Private function to save a single char Results are internally buffered
+ * Private function to save a single char.  Results are internally buffered
  * and stored when the buffer fills. Caller should call flush() before
  * exiting to flush the buffer and force a store.
  * Advances the internal pointer forwards or backwards as appropriate.

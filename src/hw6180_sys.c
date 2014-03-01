@@ -2,7 +2,7 @@
     hw6180_sys.c -- Most of the interfaces to SIMH.
 */
 /*
-   Copyright (c) 2007-2013 Michael Mondy
+   Copyright (c) 2007-2014 Michael Mondy
 
    This software is made available under the terms of the
    ICU License -- ICU 1.8.1 and later.     
