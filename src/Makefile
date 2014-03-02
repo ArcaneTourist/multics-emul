@@ -14,6 +14,7 @@ CFLAGS += -Wno-unused-variable -Wno-unused-but-set-variable # until we cleanup..
 CFLAGS += -Wno-variadic-macros -Wno-long-long	# non-std features we use
 CFLAGS += -D_GNU_SOURCE	# (SIMH uses this)
 CFLAGS += -U__STRICT_ANSI__	# we want some exensions (and SIMH uses this)
+CFLAGS += -Wno-unused-function	# flex generates some...
 CFLAGS += -g
 ifneq ($(DEBUG),)
 CFLAGS += -O0 -g
@@ -26,12 +27,14 @@ CFLAGS += -DUSE_INT64 -DUSE_ADDR64	# affects SIMH typedefs
 CFLAGS += -I ../simh -I ../decNumber
 # CFLAGS += -O1 -pg
 
+CXX = g++ -std=c++0x	# g++ 4.6 doesn't know -std=c++11 yet :-(
 CXXFLAGS =
 
+YACC = bison
 LFLAGS =
 YFLAGS = -d
 
-.SUFFIXES: .tab.c .tab.h
+.SUFFIXES: .tab.c .tab.h .yy.c
 
 .c.o:
 	@echo $(CC) \$$CFLAGS -c -o $@ $<
@@ -40,6 +43,15 @@ YFLAGS = -d
 .cpp.o:
 	@echo $(CXX) \$$CFLAGS $(CXXFLAGS) -c -o $@ $<
 	@$(CXX) $(CFLAGS) $(CXXFLAGS) -c -o $@ $<
+
+.l.yy.c:
+	$(LEX) $(LFLAGS) -P yy$(subst -,_,$*)_ $<
+	mv -f lex.yy$(subst -,_,$*)_.c $@
+
+%.tab.h %.tab.c: %.y
+	$(YACC) $(YFLAGS) -p yy$(subst -,_,$*)_ $<
+	@# mv -f y.tab.c $*.tab.c
+	@# mv -f y.tab.h $*.tab.h
 
 default: cflags multics.a
 	@
@@ -67,18 +79,19 @@ opcode-count:
 t: t.c
 	gcc -o t t.c
 
-malm: malm.o y.tab.o lex.yy.o opcode_text.o
-	g++ -o $@ $^
+malm: malm.tab.o malm.yy.o malm.o opcode_text.o
+	$(CXX) -o $@ $^
 
 malm.o: *.h
 
-y.tab.c: malm.y
-	$(YACC) $(YFLAGS) $?
-y.tab.h: malm.y
-	$(YACC) $(YFLAGS) $?
-lex.yy.c: malm.l y.tab.h
-	$(LEX) ($LFLAGS) malm.l
-y.tab.o: *.h
+malm.yy.o: malm.tab.h
+
+alm-list: alm-list.tab.o alm-list.o alm-list.yy.o
+	$(CXX) -o $@ $^
+
+alm-list.tab.o: *.h
+alm-list.o: *.h
+alm-list.yy.o: alm-list.tab.h
 
 printmem: printmem.o bitstream.o
 
@@ -124,9 +137,13 @@ realclean: clean
 
 clean:
 	rm -f *.o multics.a
-	rm -f y.tab.h y.tab.c lex.yy.c
+	@#rm -f y.tab.h y.tab.c lex.yy.c
+	@#rm -f malm.tab.h malm.tab.c malm.yy.c
+	@#rm -f alm-list.tab.h alm-list.tab.c alm-list.yy.c
+	rm -f *.tab.h *.tab.c *.yy.c
 	rm -f *.bin
 	rm -f `/bin/ls | sed -ne 's/\.alm$$/.lst/p'`
+	rm -f alm-list
 	rm -f bits bit-test tst test-op scan-tape a.out cctst malm
 
 opcodes.h: opcodes0.txt opcodes1.txt opcodes2c.pl

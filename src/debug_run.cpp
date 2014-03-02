@@ -168,7 +168,7 @@ void state_dump_changes()
             log_msg(DEBUG_MSG, "HIST", "TPR: TRR=%#o, TSR=%#o, TBR=%#o, CA=%#o, is_value=N\n",
                 TPR.TRR, TPR.TSR, TPR.TBR, TPR.CA);
     }
-    if (memcmp(&hist.cpu.DSBR, &cpup->DSBR, sizeof(hist.cpu.DSBR)) != 0)
+    if (memcmp(&hist.cpu.DSBR, &cpup->DSBR, sizeof(hist.cpu.DSBR)) != 0) 
         log_msg(DEBUG_MSG, "HIST", "DSBR: addr=%#o, bound=%#o(%d), unpaged=%c, stack=%#o\n",
             cpup->DSBR.addr, cpup->DSBR.bound, cpup->DSBR.bound, cpup->DSBR.u ? 'Y' : 'N', cpup->DSBR.stack);
     if (hist.cu.PT_ON != cu.PT_ON)
@@ -762,7 +762,8 @@ static void print_frame(
     if (stack_to_entry(addr, &entry_pr) == 0) {
         const seginfo& seg = segments(entry_pr.PR.snr);
         map<int,linkage_info>::const_iterator li_it = seg.find_entry(entry_pr.wordno);
-        if (li_it != seg.linkage.end()) {
+        if (li_it != seg.linkage_end()) {
+            // FIXME: We don't handle multiple entries at the same offset
             const linkage_info& li = (*li_it).second;
             out_msg("\t%s  ", li.name.c_str());
         } else
@@ -1562,7 +1563,7 @@ void multics_stack::check_frame()
     // Lookup entry-point's offset in symbol table
     const seginfo& seg = segments(entry_pr.segno);
     map<int,linkage_info>::const_iterator li_it = seg.find_entry(entry_pr.offset);
-    if (li_it != seg.linkage.end()) {
+    if (li_it != seg.linkage_end()) {
         const linkage_info* lip = &(*li_it).second;
         log_msg(INFO_MSG, moi, "Frame discovered to have entry ptr %s to %s.\n",
             string(entry_pr).c_str(), lip->name.c_str());
@@ -1609,8 +1610,8 @@ if (debug) log_msg(INFO_MSG, NULL, "-- is-in-frame: linkage is %#o|%#o .. %#o|%#
         // Lookup current IC in symbol table
         const seginfo& seg = segments(segno);
         map<int,linkage_info>::const_iterator li_it = seg.find_entry(offset);
-if (debug) log_msg(INFO_MSG, NULL, "-- is-in-frame: find_entry(%d) returns %d\n", offset, li_it != seg.linkage.end());
-        return (li_it != seg.linkage.end());
+if (debug) log_msg(INFO_MSG, NULL, "-- is-in-frame: find_entry(%d) returns %d\n", offset, li_it != seg.linkage_end());
+        return (li_it != seg.linkage_end());
     }
 }
 

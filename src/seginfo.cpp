@@ -189,26 +189,28 @@ int seginfo_add_linkage(int segno, int offset, const char* name)
 
     seginfo& seg = segments(segno);
     int ret = 0;
-    if (seg.linkage.find(offset) != seg.linkage.end()) {
-        const linkage_info& li = (*(seg.linkage.find(offset))).second;
+
+    // Is this name already recorded as existing at this offset?
+    if (seg.find_linkage(offset) != seg.linkage_end()) {
+        const linkage_info& li = (*(seg.find_linkage(offset))).second;
         if (li.name == name && li.offset == offset)
             return 0;   // duplicate entry; see comments in _scan_seg() in seginfo_run.cpp
-        // It seems that it's valid for multiple entries to be located at
-        // the same offset.
+        // We have a different name as the same offset as a prior entry.
+        // It seems that this is valid.
         // BUG: this is mostly a non issue, but *might* mean that the stack
         // tracking code for displaying automatic variables will refuse to
         // handle these entry points.
         log_msg(DEBUG_MSG, "SEGINFO", "Entry point %s is at %03o|%o, but we already have %s recorded as being at that address.\n", name, segno, offset, li.name.c_str());
-        // cerr << "internal error: " << seg_addr_t(segno,offset) << " Adding linkage for '" << name << "', but we already had '" << li.name << "'." << simh_nl;
-        ret = -1;   // last one wins
-        // return -1;   // first one wins
     }
 
-    seg.linkage[offset] = linkage_info(name, offset);
+    multimap<int,linkage_info>::iterator li =
+        seg.linkage_insert(pair<int,linkage_info>(offset, linkage_info(name, offset)));
 
-    // TODO: Move source_file to a single list instead of requiring user to specify segments
+    // Find a source file that provides this entry point and point our new linkage
+    // record at it.
     for (list<source_file>::iterator src_it = seg.source_list.begin(); src_it != seg.source_list.end(); src_it++) {
         source_file& src = *src_it;
+        // TODO: Move source_file to a single list instead of requiring user to specify segments
         for (map<int,entry_point>::iterator e_it = src.entries.begin(); e_it != src.entries.end(); e_it++) {
             entry_point& ep = (*e_it).second;
             if (ep.name == name) {
@@ -226,7 +228,7 @@ int seginfo_add_linkage(int segno, int offset, const char* name)
                 } else
                     if (src.reloc != delta)
                         cerr << "Linkage: Warning: Prior delta for this source file was " << src.reloc << simh_nl;
-                seg.linkage[offset].entry = &ep;
+                (*li).second.entry = &ep;
             }
         }
     }
@@ -252,6 +254,7 @@ map<int,linkage_info>::const_iterator seginfo::find_entry(int offset) const
     if (linkage.empty())
         return linkage.end();
     else {
+        // BUG: we should probably use lower_bound and also check for equality
         map<int,linkage_info>::const_iterator li_it = linkage.upper_bound(offset);
         int need_sanity_check = 0;
         if (li_it == linkage.end()) {
@@ -418,7 +421,7 @@ int seginfo_find_all(int segno, int offset, loc_t& loc)
     // Looking for highest entry <= given offset
 
     map<int,linkage_info>::const_iterator li_it = seg.find_entry(offset);
-    if (li_it != seg.linkage.end()) {
+    if (li_it != seg.linkage_end()) {
         const linkage_info& li = (*li_it).second;
         loc.linkage = &li;
     }
@@ -460,6 +463,8 @@ int seginfo_find_all(int segno, int offset, where_t *wherep)
         wherep->file_name = srcp->fname.c_str();
 
     if (loc.linkage != NULL) {
+        // FIXME: we don't handle multiple entries at the same offset,
+        // but that is probably only possible for ALM source files.
         const linkage_info& li = *loc.linkage;
         wherep->entry = li.name.c_str();
         wherep->entry_offset = li.offset;
@@ -480,6 +485,7 @@ int seginfo_find_all(int segno, int offset, where_t *wherep)
 
 void seginfo_find_line(int segno, int offset, const char**line, int *lineno)
 {
+    // FIXME: we don't handle multiple entries at the same offset.  Probably OK.
     loc_t loc;
     if (seginfo_find_all(segno, offset, loc) == 0 && loc.line != NULL) {
         *lineno = loc.line->line_no;
@@ -498,8 +504,9 @@ int seginfo_automatic_count(int segno, int offset)
     if (seg.empty())
         return -1;
 
+    // FIXME: we don't handle multiple entries at the same offset.  Probably OK.
     map<int,linkage_info>::const_iterator li_it = seg.find_entry(offset);
-    if (li_it == seg.linkage.end())
+    if (li_it == seg.linkage_end())
         return -1;
     const linkage_info& li = (*li_it).second;
     if (li.entry == NULL)

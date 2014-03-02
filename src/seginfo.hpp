@@ -2,7 +2,7 @@
  * Support for symbolic debugging -- information about segments
 */
 /*
-   Copyright (c) 2007-2013 Michael Mondy
+   Copyright (c) 2007-2014 Michael Mondy
 
    This software is made available under the terms of the
    ICU License -- ICU 1.8.1 and later.     
@@ -249,13 +249,20 @@ private:
 
 
 class seginfo {
+private:
+    multimap <int, linkage_info> linkage;   // Key is linkage_info.offset (a relocated runtime value)
 public:
-    map <int, linkage_info> linkage;        // Key is linkage_info.offset (a relocated runtime value)
     list <source_file> source_list;
     map <int, source_file*> source_map; // Key is source_file.lo(); sources with negative lo offsets are not entered
     bool empty() const {
         return linkage.empty() && source_map.empty() && source_list.empty();
     }
+    map<int,linkage_info>::iterator linkage_insert(pair<int,linkage_info> p)
+        { return linkage.insert(p); }
+    map<int,linkage_info>::const_iterator linkage_end() const
+        { return linkage.end(); };
+    map<int,linkage_info>::const_iterator find_linkage(int offset) const
+        { return linkage.find(offset); }
     map<int,linkage_info>::const_iterator find_entry(int offset) const;
         // search linkage for relocated entry_point corresponding to
         // offset
@@ -296,21 +303,24 @@ typedef enum { def_undef = -1, def_text = 0, def_symbol = 2, def_seg_name = 3} d
 
 // An entry in a segment's definitions table
 class def_t {
+private:
+    string _name;
 public:
     // TODO: make offset private & provide a function that returns
     // either _offset or link.offset as appropriate
     def_type type;
     linkage_info link;  // for type == def_text
     unsigned offset;    // for type == def_symbol or unknown
-    string name;        // for all types
+    const string& name() const
+        { if (type == def_text) return link.name; else return _name; }
     def_t (linkage_info li)
         { type = def_text; offset = ~0; link = li; }
     def_t (const char* seg_name)
-        { type = def_seg_name; offset = ~0; name = seg_name; }
+        { type = def_seg_name; offset = ~0; _name = seg_name; }
     def_t (unsigned off, const char* sym)
-        { type = def_symbol; offset = off; name = sym; }
+        { type = def_symbol; offset = off; _name = sym; }
     def_t (int def_class, unsigned off, const char* text)
-        { type = (def_type) def_class; offset = off; name = text; }
+        { type = (def_type) def_class; offset = off; _name = text; }
     def_t ()
         { type = def_undef; offset = ~ 0; }
 };

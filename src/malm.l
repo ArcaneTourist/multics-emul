@@ -1,5 +1,5 @@
 %{
-#include "y.tab.h"
+#include "malm.tab.h"
 %}
 
 %option yylineno
