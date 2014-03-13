@@ -204,55 +204,6 @@ typedef struct {
     t_uint64 word;
 } mode_reg_t;
 
-// More emulator state variables for the cpu
-// These probably belong elsewhere, perhaps control unit data or the
-// cu-history regs...
-typedef struct {
-    cycles_t cycle;
-    uint IC_abs;    // translation of odd IC to an absolute address; see ADDRESS of cu history
-    flag_t irodd_invalid;   // cached odd instr invalid due to memory write by even instr
-    uint read_addr; // last absolute read; might be same as CA for our purposes...; see APU RMA
-    // flag_t instr_fetch;  // true during an instruction fetch
-    /* The following are all from the control unit history register: */
-        flag_t trgo;    // most recent instruction caused a transfer?
-        flag_t ic_odd;  // executing odd pair?
-        flag_t poa;     // prepare operand address
-        uint opcode;    // currently executing opcode
-    struct {
-        flag_t  fhld;   // An access violation or directed fault is waiting.   AL39 mentions that the APU has this flag, but not where scpr stores it
-    } apu_state;
-} cpu_state_t;
-
-
-/* APU history register (72 bits) */
-typedef struct {
-    int esn;
-    enum { esn_ppr = 0, esn_pr = 1, esn_ptr = 2 } bsy;
-} apu_hist_t;
-
-/* Fault register (72 bits) */
-#if 0
-/* NOTE USED, see fault_reg_t above */
-typedef struct {
-    // Multics never examines this (just the CPU) -- multicians.org glossary
-    uint ill_op:1;      /* 1 bit at 0 */
-    uint ill_mod:1;     /* 1 bit at 1 */
-    uint ill_slv:1;     /* 1 bit at 2 */
-    uint ill_proc:1;    /* 1 bit at 3 */
-    /* ... */
-} fault_reg_t;
-#endif
-
-// Emulator-only interrupt and fault info
-typedef struct {
-    flag_t xed;             // executed xed for a fault handler
-    flag_t any;                 // true if any of the below are true
-    flag_t int_pending;
-    int low_group;          // Lowest group-number fault preset
-    uint32 group7;          // bitmask for multiple group 7 faults
-    int fault[7];           // only one fault in groups 1..6 can be pending
-    flag_t interrupts[32];
-} events_t;
 
 // Base Address Register (BAR) -- 18 bits
 typedef struct {
@@ -302,6 +253,57 @@ typedef struct {
     uint is_value;  // is offset a value or an address? (du or dl modifiers)
     t_uint64 value; // 36bit value from opcode constant via du/dl
 } TPR_t;
+
+
+// More emulator state variables for the cpu
+// These probably belong elsewhere, perhaps control unit data or the
+// cu-history regs...
+typedef struct {
+    cycles_t cycle;
+    uint IC_abs;    // translation of odd IC to an absolute address; see ADDRESS of cu history
+    flag_t irodd_invalid;   // cached odd instr invalid due to memory write by even instr
+    uint read_addr; // last absolute read; might be same as CA for our purposes...; see APU RMA
+    // flag_t instr_fetch;  // true during an instruction fetch
+    /* The following are all from the control unit history register: */
+        flag_t trgo;    // most recent instruction caused a transfer?
+        flag_t ic_odd;  // executing odd pair?
+        flag_t poa;     // prepare operand address
+        uint opcode;    // currently executing opcode
+    struct {
+        flag_t  fhld;   // An access violation or directed fault is waiting.   AL39 mentions that the APU has this flag, but not where scpr stores it
+    } apu_state;
+} cpu_state_t;
+
+
+/* APU history register (72 bits) */
+typedef struct {
+    int esn;
+    enum { esn_ppr = 0, esn_pr = 1, esn_ptr = 2 } bsy;
+} apu_hist_t;
+
+/* Fault register (72 bits) */
+#if 0
+/* NOTE USED, see fault_reg_t above */
+typedef struct {
+    // Multics never examines this (just the CPU) -- multicians.org glossary
+    uint ill_op:1;      /* 1 bit at 0 */
+    uint ill_mod:1;     /* 1 bit at 1 */
+    uint ill_slv:1;     /* 1 bit at 2 */
+    uint ill_proc:1;    /* 1 bit at 3 */
+    /* ... */
+} fault_reg_t;
+#endif
+
+// Emulator-only interrupt and fault info
+typedef struct {
+    flag_t xed;             // executed xed for a fault handler
+    flag_t any;                 // true if any of the below are true
+    flag_t int_pending;
+    int low_group;          // Lowest group-number fault preset
+    uint32 group7;          // bitmask for multiple group 7 faults
+    int fault[7];           // only one fault in groups 1..6 can be pending
+    flag_t interrupts[32];
+} events_t;
 
 
 /* Control unit data (288 bits) */

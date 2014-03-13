@@ -4128,8 +4128,6 @@ static int do_epp(int epp)
 
 // ============================================================================
 
-extern flag_t fault_gen_no_fault;   // BUG
-
 static int do_epbp(int n)
 {
     if (get_addr_mode() == BAR_mode) {
