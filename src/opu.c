@@ -2560,24 +2560,12 @@ static int do_an_op(instr_t *ip)
                     log_msg(NOTIFY_MSG, "OPU::opcode::xec", "fetch instr: error or fault\n");
                     return 1;   // faulted
                 }
-#if 0
-                // todo: combine with xed
-                // todo: re-implement via setting flags and return to control_unit()
-                // todo: handle rpd repeats
-                decode_instr(&IR, word0);
-                // extern DEVICE cpu_dev; ++ opt_debug; ++ cpu_dev.dctrl;
-                log_msg(DEBUG_MSG, "OPU::opcode::xec", "executing instr at %#o\n", TPR.CA);
-                int ret;
-                if ((ret = do_op(&IR)) != 0)
-                    log_msg(NOTIFY_MSG, "OPU::opcode::xec", "fault or error executing instr\n");
-                log_msg(DEBUG_MSG, "OPU::opcode::xec", "finished\n");
-                // -- opt_debug; -- cpu_dev.dctrl;
-#else
                 if (sim_brk_summ)
                     if (sim_brk_test(TPR.CA, SWMASK ('E'))) {
                         log_msg(NOTIFY_MSG, "opu::xec", "Breakpoint on target instruction pair at %#o\n", TPR.CA);
                         cancel_run(STOP_IBKPT);
                     }
+                uint ca_orig = TPR.CA;
                 if (cpu.ic_odd) {
                     cu.xdo = 1;
                     cu.IRODD = word0;
@@ -2586,8 +2574,7 @@ static int do_an_op(instr_t *ip)
                     decode_instr(&cu.IR, word0);
                     cu.xde = 1;
                 }
-                log_msg(DEBUG_MSG, "opu::xec", "Flags are set for exec of instruction at %#o\n", TPR.CA);
-#endif
+                log_msg(DEBUG_MSG, "opu::xec", "Flags are set for exec of instruction at %#o\n", ca_orig);
                 return 0;
             }
 

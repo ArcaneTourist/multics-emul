@@ -33,16 +33,12 @@ enum atag_tm { atag_r = 0, atag_ri = 1, atag_it = 2, atag_ir = 3 };
 static const int page_size = 1024;
 
 typedef struct {    // TODO: having a temp CA is ugly and doesn't match HW
-    int32 soffset;      // Signed copy of CA (15 or 18 bits if from instr;
-                        // 18 bits if from indirect word)
-    uint32 tag;
     flag_t more;
     enum atag_tm special;
 } ca_temp_t;
 
 static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp);
 static int addr_append(t_uint64 *wordp);
-//static int do_esn_segmentation(instr_t *ip, ca_temp_t *ca_tempp);
 static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01);
 static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uint *maxaddrp);
 static void decode_PTW(t_uint64 word, PTW_t *ptwp);
@@ -626,13 +622,12 @@ int addr_mod(const instr_t *ip)
     // Figure 6-10 claims we update the TPR.TSR segno as instructed by a "PR"
     // bit 29 only if we're *not* doing a sequential instruction fetch.
 
-    ca_temp.tag = ip->mods.single.tag;
+    cu.IR.mods.single.tag = ip->mods.single.tag;
 
     if (cu.rpt || cu.rd) {
         // Special handling for repeat instructions
         TPR.TBR = 0;
-        cu.tag = ca_temp.tag;
-        uint td = ca_temp.tag & 017;
+        uint td = cu.IR.mods.single.tag & 017;
         int n = td & 07;
         if (cu.repeat_first) {
             if (opt_debug)
@@ -640,24 +635,21 @@ int addr_mod(const instr_t *ip)
                     "RP*: First repetition; incr will be 0%o(%d).\n",
                     ip->addr, ip->addr);
             TPR.CA = ip->addr;
-            // FIXME: do we need to sign-extend to allow for negative "addresses"?
-            ca_temp.soffset = ip->addr;
         } else {
             // Note that we don't add in a delta for X[n] here.   Instead the
             // CPU increments X[n] after every instruction.  So, for
             // instructions like cmpaq, the index register points to the entry
             // after the one found.
             TPR.CA = 0;
-            ca_temp.soffset = 0;
             if(opt_debug)
                 log_msg((cu.rd) ? INFO_MSG : DEBUG_MSG, moi,
                     "RP*: X[%d] is 0%o(%d).\n", n, reg_X[n], reg_X[n]);
         }
     } else if (ptr_reg_flag == 0) {
-        ca_temp.soffset = sign18(ip->addr);
         // TPR.TSR = PPR.PSR;   -- done prior to fetch_instr()
         // TPR.TRR = PPR.PRR;   -- done prior to fetch_instr()
         TPR.CA = ip->addr;
+        // TPR.is_value = 0;    // already set false above
         TPR.TBR = 0;
     } else {
         if (cu.instr_fetch) {
@@ -672,24 +664,23 @@ int addr_mod(const instr_t *ip)
         }
         // AL39: Page 341, Figure 6-7 shows 3 bit PR & 15 bit offset
         int32 offset = ip->addr & MASKBITS(15);
-        ca_temp.soffset = sign15(offset);
+        int32 soffset = sign15(offset);
         uint pr = ip->addr >> 15;
         TPR.TSR = AR_PR[pr].PR.snr;     // FIXME: see comment above re figure 6-10
         TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
-        TPR.CA = (AR_PR[pr].wordno + ca_temp.soffset) & MASK18;
+        TPR.CA = (AR_PR[pr].wordno + soffset) & MASK18;
         TPR.TBR = AR_PR[pr].PR.bitno;
         int err = (int) TPR.TBR < 0 || TPR.TBR > 35;
         if (opt_debug || err)
             log_msg(err ? WARN_MSG : DEBUG_MSG, moi,
                 "Using PR[%d]: TSR=0%o, TRR=0%o, CA=0%o(0%o+0%o<=>%d+%d), bitno=0%o\n",
-                pr, TPR.TSR, TPR.TRR, TPR.CA, AR_PR[pr].wordno, ca_temp.soffset,
-                AR_PR[pr].wordno, ca_temp.soffset, TPR.TBR);
+                pr, TPR.TSR, TPR.TRR, TPR.CA, AR_PR[pr].wordno, soffset,
+                AR_PR[pr].wordno, soffset, TPR.TBR);
         if (err) {
             log_msg(ERR_MSG, moi, "Bit offset %d outside range of 0..35\n",
                 TPR.TBR);
             cancel_run(STOP_BUG);
         }
-        ca_temp.soffset = sign18(TPR.CA);
 
         // FIXME: Enter append mode & stay if execute a transfer -- fixed?
     }
@@ -730,25 +721,13 @@ int addr_mod(const instr_t *ip)
     while (ca_temp.more) {
         if (compute_addr(ip, &ca_temp) != 0) {
             if (ca_temp.more) log_msg(NOTIFY_MSG, moi, "Not-Final (not-incomplete) CA: 0%0o\n", TPR.CA);
-            ca_temp.soffset = sign18(TPR.CA);
             // return 1;
         }
         if (ca_temp.more)
             mult = 1;
-        ca_temp.soffset = sign18(TPR.CA);
         if (ca_temp.more)
             if(opt_debug>0)
                 log_msg(DEBUG_MSG, moi, "Post CA: Continuing indirect fetches\n");
-#if 0
-        if (ca_temp.more)
-            log_msg(DEBUG_MSG, moi, "Pre Seg: Continuing indirect fetches\n");
-        if (do_esn_segmentation(ip, &ca_temp) != 0) {
-            log_msg(DEBUG_MSG, moi, "Final (incomplete) CA: 0%0o\n", TPR.CA);
-            return 1;
-        }
-        if (ca_temp.more)
-            log_msg(DEBUG_MSG, moi, "Post Seg: Continuing indirect fetches\n");
-#endif
         if (ca_temp.more)
             mult = 1;
     }
@@ -809,9 +788,9 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
     // FIXME: Need to do ESN special handling if loop is continued
 
     // the and is a hint to the compiler for the following switch...
-    enum atag_tm tm = (ca_tempp->tag >> 4) & 03;
+    enum atag_tm tm = (cu.IR.mods.single.tag >> 4) & 03;
 
-    uint td = ca_tempp->tag & 017;
+    uint td = cu.IR.mods.single.tag & 017;
 
     ca_tempp->special = tm;
 
@@ -829,7 +808,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
         case atag_r: {
         // Tm=0 -- register (r)
             if (td != 0)
-                reg_mod(td, ca_tempp->soffset);
+                reg_mod(td, sign18(TPR.CA));
             if (cu.rpt || cu.rd) {
                 int n = td & 07;
                 reg_X[n] = TPR.CA;
@@ -844,13 +823,12 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 fault_gen(illproc_fault);   // need illmod sub-category
                 return 1;
             }
-            int off = ca_tempp->soffset;
-            uint ca = TPR.CA;
-            reg_mod(td, off);
+            uint ca_orig = TPR.CA;
+            reg_mod(td, sign18(TPR.CA));
             if(opt_debug)
                 log_msg(DEBUG_MSG, "APU",
                     "RI: pre-fetch:  TPR.CA=0%o <==  TPR.CA=%o + 0%o\n",
-                    TPR.CA, ca, TPR.CA - ca);
+                    TPR.CA, ca_orig, TPR.CA - ca_orig);
             t_uint64 word;
             if (cu.rpt || cu.rd) {
                 int n = td & 07;
@@ -862,6 +840,10 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                     log_msg((cu.rpt) ? DEBUG_MSG : INFO_MSG, "APU",
                         "RI for repeated instr: Not doing address appending on CA.\n");
                 }
+                if (! cu.repeat_first) {
+                    log_msg(INFO_MSG, "APU", "Doing extra indir fetch(es) for repeated instr.  Reading %#o\n", TPR.CA);
+                    cancel_run(STOP_WARN);
+                }
                 if (fetch_abs_word(TPR.CA, &word) != 0)
                     return 1;
             } else
@@ -871,16 +853,17 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 "RI: fetch:  word at TPR.CA=0%o is 0%llo\n", TPR.CA, word);
             if (cu.rpt || cu.rd) {
                 // ignore tag and don't allow more indirection
+                // cu.IR.mods.single.tag = 0;   // good idea?  bad idea?
                 return 0;
             }
-            ca_tempp->tag = word & MASKBITS(6);
-            if (TPR.CA % 2 == 0 && (ca_tempp->tag == 041 || ca_tempp->tag == 043)) {
+            cu.IR.mods.single.tag = word & MASKBITS(6);
+            if (TPR.CA % 2 == 0 && (cu.IR.mods.single.tag == 041 || cu.IR.mods.single.tag == 043)) {
                     int ret = do_its_itp(ip, ca_tempp, word);
                     if(opt_debug>0) log_msg(DEBUG_MSG, "APU",
                         "RI: post its/itp: TPR.CA=0%o, tag=0%o\n",
-                        TPR.CA, ca_tempp->tag);
+                        TPR.CA, cu.IR.mods.single.tag);
                     if (ret != 0) {
-                        if (ca_tempp->tag != 0) {
+                        if (cu.IR.mods.single.tag != 0) {
                             log_msg(WARN_MSG, "APU",
                                 "RI: post its/itp: canceling remaining APU cycles.\n");
                             cancel_run(STOP_WARN);
@@ -891,7 +874,7 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 TPR.CA = word >> 18;
                 if(opt_debug>0) log_msg(DEBUG_MSG, "APU",
                     "RI: post-fetch: TPR.CA=0%o, tag=0%o\n",
-                    TPR.CA, ca_tempp->tag);
+                    TPR.CA, cu.IR.mods.single.tag);
             }
             // break;   // Continue a new CA cycle
             ca_tempp->more = 1;     // Continue a new CA cycle
@@ -992,16 +975,17 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                 if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR",
                     "fetched:  word at TPR.CA=0%o is 0%llo:\n",
                     TPR.CA, word);
-                ca_tempp->tag = word & MASKBITS(6);
+                cu.IR.mods.single.tag = word & MASKBITS(6);
                 if (TPR.CA % 2 == 0 &&
-                    (ca_tempp->tag == 041 || ca_tempp->tag == 043))
+                    (cu.IR.mods.single.tag == 041 || cu.IR.mods.single.tag == 043))
                 {
+                        // TODO: this code should probably be moved into our caller to match AL39 Fig 6-10
                         int ret = do_its_itp(ip, ca_tempp, word);
                         if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR",
                             "post its/itp: TPR.CA=0%o, tag=0%o\n",
-                            TPR.CA, ca_tempp->tag);
+                            TPR.CA, cu.IR.mods.single.tag);
                         if (ret != 0) {
-                            if (ca_tempp->tag != 0) {
+                            if (cu.IR.mods.single.tag != 0) {
                                 log_msg(WARN_MSG, "APU",
                                     "IR: post its/itp: canceling remaining APU cycles.\n");
                                 cancel_run(STOP_WARN);
@@ -1010,11 +994,11 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                         }
                 } else {
                     TPR.CA = word >> 18;
-                    tm = (ca_tempp->tag >> 4) & 03;
-                    td = ca_tempp->tag & 017;
+                    tm = (cu.IR.mods.single.tag >> 4) & 03;
+                    td = cu.IR.mods.single.tag & 017;
                     if(opt_debug>0) log_msg(DEBUG_MSG, "APU::IR",
                         "post-fetch: TPR.CA=0%o, tag=0%o, new tm=0%o; td = %o\n",
-                        TPR.CA, ca_tempp->tag, tm, td);
+                        TPR.CA, cu.IR.mods.single.tag, tm, td);
                     if (td == 0) {
                         // FIXME: Disallow a reg_mod() with td equal to
                         // NULL (AL39)
@@ -1026,19 +1010,19 @@ static int compute_addr(const instr_t *ip, ca_temp_t *ca_tempp)
                         case atag_ri:
                             log_msg(WARN_MSG, "APU::IR",
                                 "IR followed by RI.  Not tested\n");
-                            reg_mod(td, ca_tempp->soffset);
+                            reg_mod(td, sign18(TPR.CA));
                             break;      // continue looping
                         case atag_r:
-                            reg_mod(cu.CT_HOLD, ca_tempp->soffset);
+                            reg_mod(cu.CT_HOLD, sign18(TPR.CA));
                             return 0;
                         case atag_it:
-                            //reg_mod(td, ca_tempp->soffset);
+                            //reg_mod(td, sign18(TPR.CA));
                             log_msg(ERR_MSG, "APU::IR", "Need to run normal IT algorithm, ignoring fault 1.\n"); // actually cannot have fault 1 if disallow td=0 above
                             cancel_run(STOP_BUG);
                             return 0;
                         case atag_ir:
                             log_msg(WARN_MSG, "APU::IR", "IR followed by IR, continuing to loop.  Not tested\n");
-                            cu.CT_HOLD = ca_tempp->tag & MASKBITS(4);
+                            cu.CT_HOLD = cu.IR.mods.single.tag & MASKBITS(4);
                             break;      // keep looping
                     }
                 }
@@ -1217,8 +1201,9 @@ static void register_mod(uint td, uint off, uint *bitnop, int nbits)
 
 static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
 {
+    // FIXME: Caller should almost certainly provide a word02
     // Just did an "ir" or "ri" addr modification
-    if (ca_tempp->tag == 041) {
+    if (cu.IR.mods.single.tag == 041) {
         // itp
         t_uint64 word1, word2;
         // FIXME: are we supposed to fetch?
@@ -1241,14 +1226,14 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         uint sdw_r1 = SDWp->r1;
         TPR.TRR = max3(AR_PR[n].PR.rnr, sdw_r1, TPR.TRR);
         TPR.TBR = getbits36(word2, 21, 6);
-        ca_tempp->tag = word2 & MASKBITS(6);
-        uint i_mod_tm = ca_tempp->tag >> 4;
+        cu.IR.mods.single.tag = word2 & MASKBITS(6);
+        uint i_mod_tm = cu.IR.mods.single.tag >> 4;
         uint r;
         if (ca_tempp->special == atag_ir) {
             log_msg(DEBUG_MSG, "APU", "ITP: temp special is IR; Will use r from cu.CT_HOLD\n");
             r = cu.CT_HOLD;
         } else if (ca_tempp->special == atag_ri && (i_mod_tm == atag_r || i_mod_tm == atag_ri)) {
-            uint i_mod_td = ca_tempp->tag & MASKBITS(4);
+            uint i_mod_td = cu.IR.mods.single.tag & MASKBITS(4);
             // r = i_mod_td;
             r = 0;  // the tag will be used during the next cycle
         } else {
@@ -1267,7 +1252,7 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         log_msg(DEBUG_MSG, "APU", "ITP done\n");
         //cancel_run(STOP_WARN);
         return 0;
-    } else if (ca_tempp->tag == 043) {
+    } else if (cu.IR.mods.single.tag == 043) {
         // its
         t_uint64 word1, word2;
         // FIXME: are we supposed to fetch?
@@ -1275,6 +1260,10 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         int ret = fetch_pair(TPR.CA, &word1, &word2);   // bug: refetching word1
         if (ret != 0)
             return ret;
+        if (word01 != word1) {
+            log_msg(WARN_MSG, "APU:ITS/ITP", "Refetched word at %#o has changed.   Was %012llo, now %012llo.\n", word01, word1);
+            cancel_run(STOP_BUG);
+        }
         set_addr_mode(APPEND_mode);
         TPR.TSR =  getbits36(word1, 3, 15);
         uint its_rn = getbits36(word1, 18, 3);
@@ -1300,17 +1289,17 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
             log_msg(ERR_MSG, "APU:ITS", "ITS specifies a bit offset of %d bits\n", TPR.TBR);
             cancel_run(STOP_WARN);
         }
-        ca_tempp->tag = word2 & MASKBITS(6);
+        cu.IR.mods.single.tag = word2 & MASKBITS(6);
 
-        uint i_mod_tm = ca_tempp->tag >> 4;
+        uint i_mod_tm = cu.IR.mods.single.tag >> 4;
         if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "ITS: TPR.TSR = 0%o, rn=0%o, sdw.r1=0%o, TPR.TRR=0%o, TPR.TBR=0%o, tag=0%o(tm=0%o)\n",
-            TPR.TSR, its_rn, sdw_r1, TPR.TRR, TPR.TBR, ca_tempp->tag, i_mod_tm);
+            TPR.TSR, its_rn, sdw_r1, TPR.TRR, TPR.TBR, cu.IR.mods.single.tag, i_mod_tm);
         uint r;
         if (ca_tempp->special == atag_ir) {
             log_msg(DEBUG_MSG, "APU", "ITS: temp special is IR; Will use r from cu.CT_HOLD\n");
             r = cu.CT_HOLD;
         } else if (ca_tempp->special == atag_ri && (i_mod_tm == atag_r || i_mod_tm == atag_ri)) {
-            uint i_mod_td = ca_tempp->tag & MASKBITS(4);
+            uint i_mod_td = cu.IR.mods.single.tag & MASKBITS(4);
             // r = i_mod_td;
             r = 0;  // the tag will be used during the next cycle
             log_msg(DEBUG_MSG, "APU", "ITS: temp special is RI; temp tag is r or ri; Will use r from special tag's td\n");

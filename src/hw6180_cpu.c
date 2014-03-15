@@ -411,6 +411,7 @@ static int is_eis[1024];    // hack
 #define getbit18(x,n)  ((((x) >> (17-n)) & 1) != 0) // return nth bit of an 18bit half word
 
 static t_stat control_unit(void);
+static int fetch_instr(uint IC, instr_t *ip);
 static void execute_ir(void);
 static void init_opcodes(void);
 static void check_events(void);
@@ -1797,7 +1798,7 @@ static t_stat control_unit(void)
                         // Note that we increment X[n] here, not in the APU.
                         // So, for instructions like cmpaq, the index register
                         // points to the entry after the one found.
-                        int n = cu.tag & 07;
+                        int n = cu.IR.mods.single.tag & 07;
                         if (cu.rpt) {
                             reg_X[n] += cu.delta;
                             if (opt_debug) log_msg(DEBUG_MSG, "CU", "Incrementing X[%d] by %#o to %#o.\n", n, cu.delta, reg_X[n]);
@@ -2185,7 +2186,7 @@ int fault_check_group(int group)
  * TODO: limit this to only the CPU by re-working the "xec" instruction.
  */
 
-int fetch_instr(uint IC, instr_t *ip)
+static int fetch_instr(uint IC, instr_t *ip)
 {
 
     t_uint64 word;
@@ -2644,6 +2645,8 @@ void decode_instr(instr_t *ip, t_uint64 word)
         ip->mods.mf1.id = getbits36(word, 31, 1);
         ip->mods.mf1.reg = getbits36(word, 32, 4);
     }
+    TPR.CA = ip->addr;  // Added 03/2014 to match AL-39, but may not be necessary
+    TPR.is_value = 0;
 }
 
 //=============================================================================

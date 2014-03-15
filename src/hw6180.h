@@ -404,7 +404,7 @@ typedef struct {
 
     /* word 6 */
     instr_t IR;     /* Working instr register; addr & tag are modified */
-    uint tag;       // td portion of instr tag (we only update this for rpt instructions which is the only time we need it)
+    //uint tag;       // td portion of instr tag (we only update this for rpt instructions which is the only time we need it)
 
     /* word 7 */
     // instr_t IRODD;   // Instr holding register; odd word of last pair fetched
@@ -742,7 +742,6 @@ extern void load_TPR(t_uint64 word, TPR_t *pprp);
 extern t_uint64 save_PPR(const PPR_t *pprp);
 extern void fault_gen(enum faults);
 extern int fault_check_group(int group);    // Do faults exist a given or higher priority?
-extern int fetch_instr(uint IC, instr_t *ip);
 extern int fetch_word(uint addr, t_uint64 *wordp);
 extern int fetch_abs_word(uint addr, t_uint64 *wordp);
 extern int store_word(uint addr, t_uint64 word);
