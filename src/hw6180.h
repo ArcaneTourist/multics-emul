@@ -754,7 +754,8 @@ extern int fetch_yblock(uint addr, int aligned, uint n, t_uint64 *wordsp);
 extern int fetch_yblock8(uint addr, t_uint64 *wordsp);
 extern int store_yblock8(uint addr, const t_uint64 *wordsp);
 extern int store_yblock16(uint addr, const t_uint64 *wordsp);
-extern void decode_instr(instr_t *ip, t_uint64 word);
+extern void word2instr(t_uint64 word, instr_t *ip);
+extern void decode_instr(t_uint64 word);
 extern void encode_instr(const instr_t *ip, t_uint64 *wordp);
 extern char *bin2text(t_uint64 word, int n);
 
@@ -800,7 +801,7 @@ extern char* print_instr(t_uint64 word);
 extern int get_address(uint y, uint xbits, flag_t ar, uint reg, int nbits, uint *addrp, uint* bitnop, uint *minaddrp, uint* maxaddrp);
 int decode_eis_address(uint y, flag_t ar, uint reg, int nbits, uint *ringp, uint*segp, uint *offsetp, uint *bitnop);
 int get_ptr_address(uint ringno, uint segno, uint offset, uint *addrp, uint *minaddrp, uint* maxaddrp);
-extern int addr_mod(const instr_t *ip);
+extern int addr_mod(void);
 extern void reg_mod(uint td, int off);          // FIXME: might be performance boost if inlined
 extern int fetch_appended(uint addr, t_uint64 *wordp);
 extern int store_appended(uint offset, t_uint64 word);

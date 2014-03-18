@@ -411,7 +411,6 @@ static int is_eis[1024];    // hack
 #define getbit18(x,n)  ((((x) >> (17-n)) & 1) != 0) // return nth bit of an 18bit half word
 
 static t_stat control_unit(void);
-static int fetch_instr(uint IC, instr_t *ip);
 static void execute_ir(void);
 static void init_opcodes(void);
 static void check_events(void);
@@ -423,6 +422,15 @@ static int read72(FILE* fp, t_uint64* word0p, t_uint64* word1p);
 static void set_IR_bitnames(uint32 irval);
 void init_memory_iom();
 static t_uint64 save_TPR(const TPR_t *tprp);
+
+//=============================================================================
+
+static inline uint max3(uint a, uint b, uint c)
+{
+    return (a > b) ?
+        ((a > c) ? a : c) :
+        ((b > c) ? b : c);
+}
 
 //=============================================================================
 
@@ -1388,33 +1396,15 @@ static t_stat control_unit(void)
             TPR.TSR = PPR.PSR;
             TPR.TRR = PPR.PRR;
             cu.instr_fetch = 1;
-            if (fetch_instr(PPR.IC - PPR.IC % 2, &cu.IR) != 0) {
+            t_uint64 word;
+            if (fetch_pair(PPR.IC, &word, &cu.IRODD) != 0) {
                 cpu.cycle = FAULT_cycle;
                 cpu.irodd_invalid = 1;
             } else {
+                decode_instr(word);
                 t_uint64 simh_addr = addr_emul_to_simh(get_addr_mode(), PPR.PSR, PPR.IC - PPR.IC % 2);
-#if 0
-                if (sim_brk_summ && sim_brk_test (simh_addr, SWMASK ('E'))) {
-                    log_msg(WARN_MSG, "CU", "Execution Breakpoint (fetch even)\n");
-                    reason = STOP_IBKPT;    /* stop simulation */
-                }
-#endif
-                if (fetch_word(PPR.IC - PPR.IC % 2 + 1, &cu.IRODD) != 0) {
-                    cpu.cycle = FAULT_cycle;
-                    cpu.irodd_invalid = 1;
-                } else {
-                    cpu.cycle = EXEC_cycle;
-#if 0
-                    t_uint64 simh_addr = addr_emul_to_simh(get_addr_mode(), PPR.PSR, PPR.IC - PPR.IC % 2 + 1);
-                    if (sim_brk_summ && sim_brk_test (simh_addr, SWMASK ('E'))) {
-                        log_msg(WARN_MSG, "CU", "Execution Breakpoint (fetch odd)\n");
-                        reason = STOP_IBKPT;    /* stop simulation */
-                    }
-#endif
-                    cpu.irodd_invalid = 0;
-                    if (opt_debug && get_addr_mode() != ABSOLUTE_mode)
-                        log_msg(DEBUG_MSG, "CU", "Fetched odd half of instruction pair from %06o\n", PPR.IC - PPR.IC % 2 + 1);
-                }
+                cpu.irodd_invalid = 0;
+                cpu.cycle = EXEC_cycle;
             }
             cpu.IC_abs = cpu.read_addr;
             cu.instr_fetch = 0;
@@ -1536,6 +1526,9 @@ static t_stat control_unit(void)
             cu.IR.mods.single.pr_bit = 0;
             cu.IR.mods.single.tag = 0;
             cu.IR.is_eis_multiword = 0;
+            TPR.CA = cu.IR.addr;
+            TPR.is_value = 0;
+            TPR.TBR = 0;
 
             // Maybe instead of calling execute_ir(), we should just set a
             // flag and run the EXEC case?  // Maybe the following increments
@@ -1609,6 +1602,9 @@ static t_stat control_unit(void)
             cu.IR.mods.single.pr_bit = 0;
             cu.IR.mods.single.tag = 0;
             cu.IR.is_eis_multiword = 0;
+            TPR.CA = cu.IR.addr;
+            TPR.is_value = 0;
+            TPR.TBR = 0;
 
             // Maybe instead of calling execute_ir(), we should just set a
             // flag and run the EXEC case?  // Maybe the following increments
@@ -1665,7 +1661,7 @@ static t_stat control_unit(void)
             flag_t do_odd = 0;
 
             // We need to know if we should execute an instruction from the
-            // normal fetch process or an extruction loaded by XDE.  The
+            // normal fetch process or an instruction loaded by XDE.  The
             // answer controls whether we execute a buffered even instruction
             // or a buffered odd instruction.
             int doing_xde = cu.xde;
@@ -1698,7 +1694,7 @@ static t_stat control_unit(void)
                     }
                     break;
                 }
-                decode_instr(&cu.IR, cu.IRODD);
+                decode_instr(cu.IRODD);
             }
 
             // Do we have a breakpoint here?
@@ -2176,29 +2172,6 @@ int fault_check_group(int group)
 //=============================================================================
 
 /*
- * fetch_instr()
- *
- * Fetch intstruction
- *
- * Note that we allow fetch from an arbitrary address.
- * Returns non-zero if a fault in groups 1-6 is detected
- *
- * TODO: limit this to only the CPU by re-working the "xec" instruction.
- */
-
-static int fetch_instr(uint IC, instr_t *ip)
-{
-
-    t_uint64 word;
-    int ret = fetch_word(IC, &word);
-    if (ip)
-        decode_instr(ip, word);
-    return ret;
-}
-
-//=============================================================================
-
-/*
  * fetch_word()
  *
  * Fetches a word at the specified address according to the current
@@ -2625,14 +2598,15 @@ int store_yblock16(uint addr, const t_uint64 *wordsp)
 //=============================================================================
 
 /*
- * decode_instr()
+ * word2_instr()
  *
  * Convert a 36-bit word into a instr_t struct.
  * 
  */
 
-void decode_instr(instr_t *ip, t_uint64 word)
+void word2instr(t_uint64 word, instr_t *ip)
 {
+
     ip->addr = getbits36(word, 0, 18);
     ip->opcode = getbits36(word, 18, 10);
     ip->inhibit = getbits36(word, 28, 1);
@@ -2645,8 +2619,26 @@ void decode_instr(instr_t *ip, t_uint64 word)
         ip->mods.mf1.id = getbits36(word, 31, 1);
         ip->mods.mf1.reg = getbits36(word, 32, 4);
     }
-    TPR.CA = ip->addr;  // Added 03/2014 to match AL-39, but may not be necessary
+}
+
+
+//=============================================================================
+
+/*
+ * decode_instr()
+ *
+ * Convert a 36-bit word into a instr_t struct and perform initial address movement.
+ * 
+ */
+
+
+void decode_instr(t_uint64 word)
+{
+    word2instr(word, &cu.IR);
+    // Note that the CU doesn't do the bit 29 handling; that's done by the APU.
+    TPR.CA = cu.IR.addr;
     TPR.is_value = 0;
+    TPR.TBR = 0;
 }
 
 //=============================================================================

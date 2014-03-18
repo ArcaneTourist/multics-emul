@@ -29,7 +29,7 @@ static void init_ops();
 
 int bootimage_loaded;
 void tape_block(int n_blocks, unsigned char *p, uint32 len);
-void decode_instr(instr_t *ip, t_uint64 word);
+void word2instr(t_uint64 word, instr_t *ip);
 
 static t_uint64 gbits36(t_uint64 x, int i, int n) {
     // bit 35 is right end, bit zero is 36th from the left
@@ -298,7 +298,7 @@ void anal36 (const char* tag, t_uint64 word)
     printf("%-16s  ", ascii);
 
     instr_t instr;
-    decode_instr(&instr, word);
+    word2instr(word, &instr);
     const char *opname = opcodes2text[instr.opcode];
     if (opname == NULL)
         printf("\n");
@@ -332,7 +332,7 @@ char *bin(t_uint64 word, int n)
     return str;
 }
 
-void decode_instr(instr_t *ip, t_uint64 word)
+void word2instr(t_uint64 word, instr_t *ip)
 {
     memset(ip, 0, sizeof(*ip));
     ip->addr = getbits36(word, 0, 18);

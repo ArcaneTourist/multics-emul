@@ -320,7 +320,7 @@ char* instr2text(const instr_t* ip)
 char* print_instr(t_uint64 word)
 {
     instr_t instr;
-    decode_instr(&instr, word);
+    word2instr(word, &instr);
     return instr2text(&instr);
 }
 
@@ -587,7 +587,7 @@ int get_ptr_address(uint ringno, uint segno, uint offset, uint *addrp, uint *min
  *
  */
 
-int addr_mod(const instr_t *ip)
+int addr_mod()
 {
 
 /*
@@ -603,6 +603,7 @@ int addr_mod(const instr_t *ip)
 */
 
     char *moi = "APU::addr-mod";
+    const instr_t *ip = &cu.IR;
 
     // FIXME: do reg and indir word stuff first?
 
@@ -616,13 +617,11 @@ int addr_mod(const instr_t *ip)
     int ptr_reg_flag = ip->mods.single.pr_bit;
     ca_temp_t ca_temp;  // FIXME: hack
 
-    // FIXME: The following check should only be done after a sequential
+    // FIXME: The bit 29 check below should only be done after a sequential
     // instr fetch, not after a transfer!  We're only called by do_op(),
     // so this criteria is *almost* met.   Need to detect transfers.
     // Figure 6-10 claims we update the TPR.TSR segno as instructed by a "PR"
     // bit 29 only if we're *not* doing a sequential instruction fetch.
-
-    cu.IR.mods.single.tag = ip->mods.single.tag;
 
     if (cu.rpt || cu.rd) {
         // Special handling for repeat instructions
@@ -646,11 +645,9 @@ int addr_mod(const instr_t *ip)
                     "RP*: X[%d] is 0%o(%d).\n", n, reg_X[n], reg_X[n]);
         }
     } else if (ptr_reg_flag == 0) {
-        // TPR.TSR = PPR.PSR;   -- done prior to fetch_instr()
-        // TPR.TRR = PPR.PRR;   -- done prior to fetch_instr()
-        TPR.CA = ip->addr;
-        // TPR.is_value = 0;    // already set false above
-        TPR.TBR = 0;
+        // TPR.TSR = PPR.PSR;   -- Loading TPR is done prior to instruction
+        // TPR.TRR = PPR.PRR;   -- execution (see earlier comments)
+        // The code to load TPR.CA is now in decode_instr()
     } else {
         if (cu.instr_fetch) {
             log_msg(ERR_MSG, moi,
@@ -662,12 +659,18 @@ int addr_mod(const instr_t *ip)
                 "Turning on APPEND mode for PR based operand.\n");
             set_addr_mode(addr_mode = APPEND_mode);
         }
-        // AL39: Page 341, Figure 6-7 shows 3 bit PR & 15 bit offset
+        // The first page of AL-39, section 6 says the CA is loaded during
+        // instruction decode.  However, the the discussion of "the use of
+        // bit 29 in the instruction word" later in section 6 says that the
+        // "preliminary step" by the CU also handles using the PR register
+        // to set TPR.TSR and TPR.CA.  That seems to be a misstatement though
+        // because the CU may not have access to the TPR and because the
+        // initial part fig 8-1 shows that the APU handles the TPR.TSR.
         int32 offset = ip->addr & MASKBITS(15);
         int32 soffset = sign15(offset);
         uint pr = ip->addr >> 15;
-        TPR.TSR = AR_PR[pr].PR.snr;     // FIXME: see comment above re figure 6-10
-        TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR);
+        TPR.TSR = AR_PR[pr].PR.snr;
+        TPR.TRR = max3(AR_PR[pr].PR.rnr, TPR.TRR, PPR.PRR); // FIXME: Fig 8-1 excludes TPR
         TPR.CA = (AR_PR[pr].wordno + soffset) & MASK18;
         TPR.TBR = AR_PR[pr].PR.bitno;
         int err = (int) TPR.TBR < 0 || TPR.TBR > 35;
@@ -681,11 +684,10 @@ int addr_mod(const instr_t *ip)
                 TPR.TBR);
             cancel_run(STOP_BUG);
         }
-
-        // FIXME: Enter append mode & stay if execute a transfer -- fixed?
     }
 
     if (cu.instr_fetch) {
+        // Figure 8-1, below connector "L"
         uint p = is_priv_mode();    // Get priv bit from the SDW for TPR.TSR
         if (PPR.P != p)
             log_msg(INFO_MSG, moi, "PPR.P priv flag changing from %c to %c.\n",
@@ -697,6 +699,8 @@ int addr_mod(const instr_t *ip)
     int bit27 = op % 2;
     op >>= 1;
     if (bit27 == 0) {
+        // The following instructions assign special meanings to the tag field.
+        // Note that they still allow usage of PR registers though.
         if (op == opcode0_stca || op == opcode0_stcq)
             return 0;
         if (op == opcode0_stba || op == opcode0_stbq)
@@ -1294,22 +1298,21 @@ static int do_its_itp(const instr_t* ip, ca_temp_t *ca_tempp, t_uint64 word01)
         uint i_mod_tm = cu.IR.mods.single.tag >> 4;
         if(opt_debug>0) log_msg(DEBUG_MSG, "APU", "ITS: TPR.TSR = 0%o, rn=0%o, sdw.r1=0%o, TPR.TRR=0%o, TPR.TBR=0%o, tag=0%o(tm=0%o)\n",
             TPR.TSR, its_rn, sdw_r1, TPR.TRR, TPR.TBR, cu.IR.mods.single.tag, i_mod_tm);
-        uint r;
+        uint r; // type of "td" register mod to apply
         if (ca_tempp->special == atag_ir) {
             log_msg(DEBUG_MSG, "APU", "ITS: temp special is IR; Will use r from cu.CT_HOLD\n");
             r = cu.CT_HOLD;
         } else if (ca_tempp->special == atag_ri && (i_mod_tm == atag_r || i_mod_tm == atag_ri)) {
-            uint i_mod_td = cu.IR.mods.single.tag & MASKBITS(4);
+            // uint i_mod_td = cu.IR.mods.single.tag & MASKBITS(4);
             // r = i_mod_td;
-            r = 0;  // the tag will be used during the next cycle
-            log_msg(DEBUG_MSG, "APU", "ITS: temp special is RI; temp tag is r or ri; Will use r from special tag's td\n");
+            r = 0;  // do nothing now; the tag will be used during the next cycle
+            log_msg(DEBUG_MSG, "APU", "ITS: temp special is RI; temp tag is r or ri; Will use r from special tag's td (next cycle)\n");
         } else {
             log_msg(ERR_MSG, "APU", "ITS addr mod with undefined r-value (tm=0%o,new-tm=0%o)\n", ca_tempp->special, i_mod_tm);
             cancel_run(STOP_BUG);
-            r = 0;
+            r = 0;  // do nothing now; the tag will be used during the next cycle
         }
         uint i_wordno = getbits36(word2, 0, 18);
-        // TPR.CA = i_wordno + r;
         TPR.CA = i_wordno;
         uint r_temp = TPR.CA;
         reg_mod(r, r_temp);

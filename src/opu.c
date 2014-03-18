@@ -41,7 +41,7 @@ static inline uint min(uint a, uint b);
 static inline uint max(uint a, uint b);
 static inline uint max3(uint a, uint b, uint c);
 
-static int do_op(instr_t *ip);
+static int do_op(void);
 static void scu2words(t_uint64 *words);
 static void words2scu(const t_uint64 *words);
 static int op_add(instr_t *ip, t_uint64 *operand);
@@ -54,7 +54,7 @@ static int do_epp(int epp);
 static int do_eawp(int n);
 static int do_epbp(int n);
 static int do_easp(int n);
-static int do_an_op(instr_t *ip);   // todo: hack, fold into do_op
+static int do_an_op(void);   // todo: hack, fold into do_op
 static void spri_to_words(int reg, t_uint64* word0p, t_uint64 *word1p);
 static int do_spri(int n);
 static int do_spbp(int n);
@@ -83,7 +83,7 @@ void execute_instr(void)
     // execute whatever instruction is in the IR (not whatever the IC points at)
     // BUG: handle interrupt inhibit
 
-    do_op(&cu.IR);
+    do_op();
 }
 
 // ============================================================================
@@ -100,10 +100,11 @@ static int fetch_op(const instr_t *ip, t_uint64 *wordp)
 
 // ============================================================================
 
-static int do_op(instr_t *ip)
+static int do_op()
 {
     // Wrapper for do_an_op() with detection of change in address mode (for debugging).
 
+    instr_t *ip = &cu.IR;
     ++ sys_stats.n_instr;
 #if FEAT_INSTR_STATS
     ++ sys_stats.instr[ip->opcode].nexec;
@@ -124,7 +125,7 @@ static int do_op(instr_t *ip)
         ++opt_debug; ++ cpu_dev.dctrl;  // BUG
     }
 #endif
-    int ret = do_an_op(ip);
+    int ret = do_an_op();
 #if 0
     if (ip->is_eis_multiword) {
         extern DEVICE cpu_dev;
@@ -158,11 +159,13 @@ static int do_op(instr_t *ip)
 }
 
 
-static int do_an_op(instr_t *ip)
+static int do_an_op()
 {
     // Returns non-zero on error or non-group-7  fault
     // BUG: check for illegal modifiers
 
+//decode_i_addr();
+    instr_t *ip = &cu.IR;
     cpu.opcode = ip->opcode;
 
     uint op = ip->opcode;
@@ -199,10 +202,10 @@ static int do_an_op(instr_t *ip)
             case opcode0_epp2 + 0:
             case opcode0_epp4 + 0:
             case opcode0_epp6 + 0:
-                addr_mod(ip);       // note that ip == &cu.IR
+                addr_mod();
                 break;
             default:
-                addr_mod(ip);       // note that ip == &cu.IR
+                addr_mod();
         }
     } else {
         switch (op) {
@@ -218,10 +221,10 @@ static int do_an_op(instr_t *ip)
             case opcode1_epp3 + 0:
             case opcode1_epp5 + 0:
             case opcode1_epp7 + 0:
-                addr_mod(ip);       // note that ip == &cu.IR
+                addr_mod();
                 break;
             default:
-                addr_mod(ip);       // note that ip == &cu.IR
+                addr_mod();
         }
     }
     cpu.poa = 0;
@@ -2565,16 +2568,18 @@ static int do_an_op(instr_t *ip)
                         log_msg(NOTIFY_MSG, "opu::xec", "Breakpoint on target instruction pair at %#o\n", TPR.CA);
                         cancel_run(STOP_IBKPT);
                     }
-                uint ca_orig = TPR.CA;
+                if (get_addr_mode() == APPEND_mode)
+                    log_msg(DEBUG_MSG, "opu::xec", "Flags are set for exec of instruction at %#o|%#o\n", TPR.TSR, TPR.CA);
+                else
+                    log_msg(DEBUG_MSG, "opu::xec", "Flags are set for exec of instruction at %#o\n", TPR.CA);
                 if (cpu.ic_odd) {
                     cu.xdo = 1;
                     cu.IRODD = word0;
                     cpu.irodd_invalid = 0;
                 } else {
-                    decode_instr(&cu.IR, word0);
+                    decode_instr(word0);
                     cu.xde = 1;
                 }
-                log_msg(DEBUG_MSG, "opu::xec", "Flags are set for exec of instruction at %#o\n", ca_orig);
                 return 0;
             }
 
@@ -2592,7 +2597,7 @@ static int do_an_op(instr_t *ip)
                     log_msg(WARN_MSG, "OPU::opcode::xed", "fetch y-pair: error or fault\n");
                     return 1;   // faulted
                 }
-                decode_instr(&cu.IR, word0);
+                decode_instr(word0);
 #if 0
                 instr_t i_tmp;
                 decode_instr(&i_tmp, word1);
@@ -3656,7 +3661,9 @@ static void words2scu(const t_uint64 *words)
     cu.xdo = getbits36(words[5], 25, 1);
     cu.CT_HOLD = getbits36(words[5], 30, 6);
 
-    decode_instr(&cu.IR, words[6]);    // BUG: cu.IR isn't kept fully up-to-date
+    uint ca = TPR.CA;
+    decode_instr(words[6]);    // BUG: cu.IR isn't kept fully up-to-date
+    TPR.CA = ca;
 
     cu.IRODD = words[7];
 }
