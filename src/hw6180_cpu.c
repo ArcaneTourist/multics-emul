@@ -2634,11 +2634,33 @@ void word2instr(t_uint64 word, instr_t *ip)
 
 void decode_instr(t_uint64 word)
 {
+    const char* moi = "CU::decode";
     word2instr(word, &cu.IR);
     // Note that the CU doesn't do the bit 29 handling; that's done by the APU.
     TPR.CA = cu.IR.addr;
     TPR.is_value = 0;
     TPR.TBR = 0;
+
+    if (cu.rpt || cu.rd) {
+        instr_t* ip = &cu.IR;
+        // Special handling for repeat instructions
+        // TPR.TBR = 0;
+        if (cu.repeat_first) {
+            if (opt_debug)
+                log_msg((cu.rd) ? INFO_MSG : DEBUG_MSG, moi,
+                    "RP*: First repetition; incr will be 0%o(%d).\n",
+                    ip->addr, ip->addr);
+            // TPR.CA = ip->addr;
+        } else {
+            TPR.CA = 0;
+            if (opt_debug) {
+                uint td = cu.IR.mods.single.tag & 017;
+                int n = td & 07;
+                log_msg((cu.rd) ? INFO_MSG : DEBUG_MSG, moi,
+                    "RP*: X[%d] is 0%o(%d).\n", n, reg_X[n], reg_X[n]);
+            }
+        }
+    }
 }
 
 //=============================================================================

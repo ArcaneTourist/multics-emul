@@ -623,28 +623,7 @@ int addr_mod()
     // Figure 6-10 claims we update the TPR.TSR segno as instructed by a "PR"
     // bit 29 only if we're *not* doing a sequential instruction fetch.
 
-    if (cu.rpt || cu.rd) {
-        // Special handling for repeat instructions
-        TPR.TBR = 0;
-        uint td = cu.IR.mods.single.tag & 017;
-        int n = td & 07;
-        if (cu.repeat_first) {
-            if (opt_debug)
-                log_msg((cu.rd) ? INFO_MSG : DEBUG_MSG, moi,
-                    "RP*: First repetition; incr will be 0%o(%d).\n",
-                    ip->addr, ip->addr);
-            TPR.CA = ip->addr;
-        } else {
-            // Note that we don't add in a delta for X[n] here.   Instead the
-            // CPU increments X[n] after every instruction.  So, for
-            // instructions like cmpaq, the index register points to the entry
-            // after the one found.
-            TPR.CA = 0;
-            if(opt_debug)
-                log_msg((cu.rd) ? INFO_MSG : DEBUG_MSG, moi,
-                    "RP*: X[%d] is 0%o(%d).\n", n, reg_X[n], reg_X[n]);
-        }
-    } else if (ptr_reg_flag == 0) {
+    if (ptr_reg_flag == 0) {
         // TPR.TSR = PPR.PSR;   -- Loading TPR is done prior to instruction
         // TPR.TRR = PPR.PRR;   -- execution (see earlier comments)
         // The code to load TPR.CA is now in decode_instr()
