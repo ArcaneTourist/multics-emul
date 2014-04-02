@@ -220,8 +220,13 @@ UNIT cpu_unit = {
 extern int iom_show_mbx(FILE *st, UNIT *uptr, int val, void *desc); // FIXME
 static int cpu_set_fault_base(UNIT *uptr, int32 val, char *cptr, void *desc);
 static int cpu_show_fault_base(FILE *st, UNIT *uptr, int32 val, void *desc);
+static int cpu_set_model(UNIT *uptr, int32 val, char *cptr, void *desc);
+static int cpu_show_model(FILE *st, UNIT *uptr, int32 val, void *desc);
 static MTAB cpu_mod[] = {
     // for SIMH "show" and "set" commands
+    { MTAB_XTD | MTAB_VDV | MTAB_NC,
+      0, "MODEL", "MODEL", 
+      cpu_set_model, cpu_show_model, NULL },
     { MTAB_XTD | MTAB_VDV | MTAB_NMO | MTAB_SHP | MTAB_NC,
       0, "HISTORY", "HISTORY",
       cpu_set_history, cpu_show_history, NULL },
@@ -1688,8 +1693,7 @@ static t_stat control_unit(void)
                 if (cpu.irodd_invalid) {
                     cpu.irodd_invalid = 0;
                     if (cpu.cycle != FETCH_cycle) {
-                        reason = STOP_IBKPT;    /* stop simulation */
-                        log_msg(NOTIFY_MSG, "CU", "Invalidating cached odd instruction; auto breakpoint\n");
+                        log_msg(INFO_MSG, "CU", "Invalidating cached odd instruction\n");
                         cpu.cycle = FETCH_cycle;
                     }
                     break;
@@ -2250,35 +2254,37 @@ int fetch_abs_word(uint addr, t_uint64 *wordp)
             return 1;
     }
 
+    cpu.read_addr = addr;   // Should probably be in scu
+
+#if FEAT_MEM_CHECK_UNINIT
+    {
+    if (Mem[addr] == ~ (t_uint64) 0) {      // absolute memory reference
+        *wordp = 0;
+        if (sys_opts.warn_uninit)
+            log_msg(WARN_MSG, "CU::fetch", "Fetch from uninitialized absolute location %#o.\n", addr);
+    } else
+        *wordp = Mem[addr];
+    }
+#else
+    *wordp = Mem[addr]; // absolute memory reference
+#endif
+
+    if (get_addr_mode() == BAR_mode)
+        log_msg(DEBUG_MSG, "CU::fetch-abs", "fetched word at %#o\n", addr);
+
     if (sim_brk_summ) {
         // Check for absolute mode breakpoints.  Note that fetch_appended()
         // has its own test for appending mode breakpoints.
         t_uint64 simh_addr = addr_emul_to_simh(ABSOLUTE_mode, 0, addr);
         if (cpu.cycle != FETCH_cycle && sim_brk_test (simh_addr, SWMASK ('D'))) {
-            out_sym(0, simh_addr, &Mem[addr], &cpu_unit, SWMASK('M') | SWMASK('A'));
+            out_sym(0, simh_addr, wordp, &cpu_unit, SWMASK('M') | SWMASK('A'));
         }
         if (sim_brk_test (simh_addr, SWMASK ('M'))) {
-            log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address %#o.  Fetched value %012llo\n", addr, Mem[addr]);
+            log_msg(WARN_MSG, "CU::fetch", "Memory Breakpoint, address %#o.  Fetched value %012llo\n", addr, *wordp);
             (void) cancel_run(STOP_IBKPT);
         }
     }
 
-    cpu.read_addr = addr;   // Should probably be in scu
-#if FEAT_MEM_CHECK_UNINIT
-    {
-    t_uint64 word = Mem[addr];  // absolute memory reference
-    if (word == ~ (t_uint64) 0) {
-        word = 0;
-        if (sys_opts.warn_uninit)
-            log_msg(WARN_MSG, "CU::fetch", "Fetch from uninitialized absolute location %#o.\n", addr);
-    }
-    *wordp = word;
-    }
-#else
-    *wordp = Mem[addr]; // absolute memory reference
-#endif
-    if (get_addr_mode() == BAR_mode)
-        log_msg(DEBUG_MSG, "CU::fetch-abs", "fetched word at %#o\n", addr);
     return 0;
 }
 
@@ -2364,9 +2370,9 @@ int store_abs_word(uint addr, t_uint64 word)
         // has its own test for appending mode breakpoints.
         t_uint64 simh_addr = addr_emul_to_simh(ABSOLUTE_mode, 0, addr);
         uint mask;
-        if ((mask = sim_brk_test(simh_addr, SWMASK('W') | SWMASK('M') | SWMASK('E'))) != 0) {
-            if (sim_brk_test (simh_addr, SWMASK ('D'))) {
-                out_sym(1, simh_addr, &Mem[addr], &cpu_unit, SWMASK('M') | SWMASK('A'));
+        if ((mask = sim_brk_test(simh_addr, SWMASK('W') | SWMASK('M') | SWMASK('E') | SWMASK('D')) != 0)) {
+            if ((mask & SWMASK ('D')) != 0) {
+                out_sym(1, simh_addr, &word, &cpu_unit, SWMASK('M') | SWMASK('A'));
             }
             if ((mask & SWMASK ('W')) != 0) {
                 log_msg(NOTIFY_MSG, "CU::store", "Memory Write Breakpoint, address %#o\n", addr);
@@ -2376,17 +2382,25 @@ int store_abs_word(uint addr, t_uint64 word)
                 (void) cancel_run(STOP_IBKPT);
             } else if ((mask & SWMASK ('E')) != 0) {
                 log_msg(NOTIFY_MSG, "CU::store", "Write to a location that has an execution breakpoint, address %#o\n", addr);
+            } else if ((mask & SWMASK ('D')) != 0) {
+                // already done
+            } else if ((mask & SWMASK ('A')) != 0) {
+                // TODO: Where the heck is this 'A' bit coming from?  We only use that as a format flag...
+                //log_msg(NOTIFY_MSG, "CU::store", "Write to a location that undefined 'A' breakpoint, address %#o\n", addr);
             } else {
-                log_msg(NOTIFY_MSG, "CU::store", "Write to a location that has an unknown type of breakpoint, address %#o\n", addr);
+                log_msg(NOTIFY_MSG, "CU::store", "Write to a location that has an unknown type of breakpoint, address %#o, breakpoint %o\n", addr, mask);
                 (void) cancel_run(STOP_IBKPT);
             }
-            log_msg(INFO_MSG, "CU::store", "Address %08o: value was %012llo, storing %012llo\n", addr, Mem[addr], word);
+            t_uint64 old = Mem[addr];
+            if (old == ~ (t_uint64) 0)
+                old = 0;
+            log_msg(INFO_MSG, "CU::store", "Address %08o: value was %012llo, storing %012llo\n", addr, old, word);
         }
     }
 
     Mem[addr] = word;   // absolute memory reference
     if (addr == cpu.IC_abs) {
-        log_msg(NOTIFY_MSG, "CU::store", "Flagging cached odd instruction from %o as invalidated.\n", addr);
+        log_msg(INFO_MSG, "CU::store", "Flagging cached odd instruction from %o as invalidated.\n", addr);
         cpu.irodd_invalid = 1;
     }
     if (get_addr_mode() == BAR_mode)
@@ -2847,6 +2861,7 @@ static int read72(FILE* fp, t_uint64* word0p, t_uint64* word1p)
 }
 
 //=============================================================================
+
 static int cpu_show_fault_base(FILE *st, UNIT *uptr, int32 val, void *desc)
 {
     // FIXME: use FILE *st
@@ -2883,6 +2898,42 @@ static int cpu_set_fault_base(UNIT *uptr, int32 val, char *cptr, void *desc)
         return SCPE_ARG;
     }
     switches.FLT_BASE = n;
+
+    return 0;
+}
+
+//=============================================================================
+
+static int cpu_show_model(FILE *st, UNIT *uptr, int32 val, void *desc)
+{
+    // FIXME: use FILE *st
+    // FIXME: use uptr to find one of multiple CPUs
+
+    if (switches.dps8_model)
+        out_msg("Model: DPS8");
+    else
+        out_msg("Model: L68");
+    return 0;
+}
+
+//=============================================================================
+
+static int cpu_set_model(UNIT *uptr, int32 val, char *cptr, void *desc)
+{
+    const char* sw_name = "model";
+    if (cptr == NULL) {
+        out_msg("Error, usage is set cpu %s=<value>\n", sw_name);
+        return SCPE_ARG;
+    }
+    cptr += strspn(cptr, "   ");
+    if (strcasecmp(cptr, "l68") == 0)
+        switches.dps8_model = 0;
+    else if (strcasecmp(cptr, "dps8") == 0 || strcasecmp(cptr, "dps") == 0)
+        switches.dps8_model = 1;
+    else {
+        out_msg("Error, usage is set cpu %s={ L68 | DPS8 }\n", sw_name);
+        return SCPE_ARG;
+    }
 
     return 0;
 }

@@ -37,6 +37,9 @@ static int scan_seg_defs(uint segno, AR_PR_t *defsp, int name_only, int msgs);
 
 // =============================================================================
 
+
+// ============================================================================
+
 int scan_seg(uint segno, int msgs)
 {
     // See descripton at _scan_seg().

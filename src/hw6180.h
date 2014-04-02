@@ -306,6 +306,9 @@ typedef struct {
 } events_t;
 
 
+
+
+
 /* Control unit data (288 bits) */
 typedef struct {
     /*
@@ -342,7 +345,7 @@ typedef struct {
     uint PPR_PSR;       /* Procedure segment register; 15 bits @ 0[3..17] */
     uint PPR_P;         /* Privileged bit; 1 bit @ 0[18] */
     // uint64 word0bits; /* Word 0, bits 18..32 (all for the APU) */
-    uint FCT;           /* Fault counter; 3 bits at 0[33..35]; */
+    uint FCT;           // Fault counter; 3 bits at word 0 [33..35]
 
     /* word 1 */
     //uint64 word1bits; /* Word1, bits [0..19] and [35] */
@@ -378,8 +381,8 @@ typedef struct {
      */
 
     /* word 0, continued */
-    flag_t SD_ON;   // SDWAM enabled
-    flag_t PT_ON;   // PTWAM enabled
+    flag_t SD_ON;       // SDWAM enabled
+    flag_t PT_ON;       // PTWAM enabled
 
     /* word 1, continued  */
     struct {
@@ -499,11 +502,12 @@ typedef struct {
     DSBR_t DSBR;            // Descriptor Segment Base Register (51 bits)
 } cpu_t;
 
-// Physical Switches
+// Physical Switches & Characteristics
 typedef struct {
     // Switches on the Processor's maintenance and configuration panels
     int FLT_BASE;   // normally 7 MSB of 12bit fault base addr
     int cpu_num;    // zero for CPU 'A', one for 'B' etc.
+    flag_t dps8_model;  // false if L68; true if DPS8
 } switches_t;
 
 // Physical ports on the CPU
@@ -730,6 +734,7 @@ extern int cpu_show_stack(FILE *st, UNIT *uptr, int val, void *desc);
 extern void show_variables(unsigned segno, int ic);
 extern int seginfo_show_all(int seg, int first);
 extern int cmd_stats(int32 arg, char *buf);
+extern void trace_init();
 
 /* hw6180_cpu.c */
 extern void cancel_run(enum sim_stops reason);

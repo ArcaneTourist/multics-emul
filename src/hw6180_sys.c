@@ -80,7 +80,7 @@ static struct sim_ctab sim_cmds[] =  {
     { "XDEBUG",   cmd_xdebug, 0,       "xdebug seg <#> {on|default|off}  finer grained debugging\n" },
     { "XFIND",    cmd_find, 0,         "xfind <string> <range>           search memory for string\n" },
     { "XLIST",    cmd_load_listing, 0, "xlist <addr> <source>            load pl1 listing\n" },
-    { "XSYMTAB",  cmd_symtab_parse, 0, "xsymtab [...]                    define symtab entries\n" },
+    { "XSYMTAB",  cmd_symtab_parse, 0, "xsymtab {help|dump|...}          manipulate symtab entries\n" },
     { "XSTATS",   cmd_stats, 0,        "xstats                           display statistics\n" },
 #if 0
     // replaced by "show" modifiers
@@ -194,6 +194,7 @@ static void hw6180_init(void)
     switches.FLT_BASE = 2;  // 2<<5 == 0100
     // At one time, it seemed that the diag tape required using different
     // fault base switch settings.  However, that no longer seems to be the case.
+    switches.dps8_model = 0;  // Most of our code assumes L68
 
     // Only one SCU
     memset(&scu, 0, sizeof(scu));
@@ -344,16 +345,25 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
         /* Next, we always output the numeric value */
         t_addr alow = abs_addr;
         t_addr ahi = abs_addr;
-        fprintf(ofile, "%012llo", Mem[abs_addr]);
+        t_uint64 word;
+        word = Mem[abs_addr];
+        if (word == ~ (t_uint64) 0)
+            word = 0;
+        fprintf(ofile, "%012llo", word);
         if (sw & SWMASK('S') || (sw & SWMASK('X'))) {
             // SDWs are two words
             ++ ahi;
-            fprintf(ofile, " %012llo", Mem[ahi]);
+            t_uint64 hiword = Mem[ahi];
+            if (hiword == ~ (t_uint64) 0)
+                hiword = 0;
+            fprintf(ofile, " %012llo", hiword);
         }
         /* User may request (A)scii in addition to another format */
         if (sw & SWMASK('A')) {
             for (t_addr a = alow; a <= ahi; ++ a) {
                 t_uint64 word = Mem[a];
+                if (word == ~ (t_uint64) 0)
+                    word = 0;
                 fprintf(ofile, " ");
                 for (int i = 0; i < 4; ++i) {
                     uint c = word >> 27;
@@ -376,15 +386,18 @@ t_stat fprint_sym (FILE *ofile, t_addr simh_addr, t_value *val, UNIT *uptr, int3
             fprintf(ofile, " %s", print_lpw(abs_addr));
         } else if (sw & SWMASK('M')) {
             // M -> instr
-            char *instr = print_instr(Mem[abs_addr]);
+            char *instr = print_instr(word);
             fprintf(ofile, " %s", instr);
         } else if (sw & SWMASK('P') || (sw & SWMASK('Y'))) {
             // P/Y -> PTW
-            char *s = print_ptw(Mem[abs_addr]);
+            char *s = print_ptw(word);
             fprintf(ofile, " %s", s);
         } else if (sw & SWMASK('S') || (sw & SWMASK('X'))) {
             // S/X -> SDW
-            char *s = print_sdw(Mem[abs_addr], Mem[abs_addr+1]);
+            t_uint64 hiword = Mem[ahi];
+            if (hiword == ~ (t_uint64) 0)
+                hiword = 0;
+            char *s = print_sdw(word, hiword);
             fprintf(ofile, " %s", s);
         } else if (sw & SWMASK('W')) {
             // W -> DCW

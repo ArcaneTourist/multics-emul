@@ -3083,10 +3083,36 @@ static int do_an_op()
                         reg_A = setbits36(reg_A, 33, 3, switches.cpu_num);
 #else
                         // from AL39
-                        reg_A = setbits36(0, 0, 6, 0);  // 0..5 are zero for L68 or DPS
-                        reg_A = setbits36(reg_A, 6, 7, switches.FLT_BASE);  // 7 MSB bits of 12bit addr
-                        reg_A = setbits36(reg_A, 23, 11, 016);  // 1110b=>L68 re start_cpu.pl1
-                        reg_A = setbits36(reg_A, 34, 2, switches.cpu_num);
+                        reg_A = 0;
+                        if (switches.dps8_model) {
+                            //for (int i = 0; i < 4; ++i)
+                            //  reg_A = setbits36(reg_A, i, 1, cpu_ports.ports[i] != -1 .. 2-word or 4-word);
+                            reg_A = setbits36(reg_A, 4, 2, 1); // dps8m
+                            reg_A = setbits36(reg_A, 6, 7, switches.FLT_BASE);  // 7 MSB bits of 12bit addr
+                            reg_A = setbits36(reg_A, 13, 1, 1); // idprom installed
+                            reg_A = setbits36(reg_A, 18, 1, 1); // bcd option
+                            reg_A = setbits36(reg_A, 19, 1, 1); // dps option
+                            reg_A = setbits36(reg_A, 20, 1, 1); // 8k cache instaled
+                            reg_A = setbits36(reg_A, 23, 1, 1); // DPS 8/xxM
+                            reg_A = setbits36(reg_A, 24, 1, 1); // not GCOS - TODO: proc mode switch
+                            reg_A = setbits36(reg_A, 25, 1, 1); // "new" line peripheral, not "current"
+                            reg_A = setbits36(reg_A, 29, 4, 0); // speed 8/70
+                            reg_A = setbits36(reg_A, 33, 3, switches.cpu_num);
+                        } else {
+                            reg_A = setbits36(reg_A, 0, 6, 0);  // 0..5 are zero for L68 or DPS
+                            reg_A = setbits36(reg_A, 6, 7, switches.FLT_BASE);  // 7 MSB bits of 12bit addr
+                            // WARNING: In AL-39, register description & rsw description differ
+#ifdef BY_REGISTER_DESC
+                            reg_A = setbits36(reg_A, 27, 1, 1);  // cache enabled
+                            reg_A = setbits36(reg_A, 28, 1, 0);  // gcos extended memory disabled
+                            reg_A = setbits36(reg_A, 29, 4, 014);  // 1110b=>L68 re start_cpu.pl1
+                            reg_A = setbits36(reg_A, 33, 3, switches.cpu_num);
+#else
+                            //reg_A = setbits36(reg_A, 23, 11, 016);  // 1110b=>L68 re start_cpu.pl1
+                            reg_A = setbits36(reg_A, 23, 11, 014);  // 1110b=>L68 re start_cpu.pl1
+                            reg_A = setbits36(reg_A, 34, 2, switches.cpu_num);
+#endif
+                        }
 #endif
                         log_msg(INFO_MSG, "OPU::opcode::rsw", "function xxx%o returns A=%012llo.\n", low, reg_A);
                         break;
@@ -3237,15 +3263,16 @@ static int do_an_op()
                 if (opt_debug) log_msg(DEBUG_MSG, "OPU::absa", "Getting segment translation (DSBR.bound = %#o).\n", cpup->DSBR.bound);
                 uint addr;
                 int ret;
-                if ((ret = get_seg_addr(TPR.CA, 0, &addr)) == 0)
-                    reg_A = (t_uint64) addr << 12;  // upper 24 bits
-                else
+                if ((ret = get_seg_addr(TPR.CA, 0, &addr)) != 0)
                     log_msg(WARN_MSG, "OPU::absa", "Unable to translate segment offset into absolute address.\n");
-                if (opt_debug) {
+                else {
+                    reg_A = (t_uint64) addr << 12;  // upper 24 bits
                     if (addr == TPR.CA)
                         log_msg(DEBUG_MSG, "OPU::absa", "Using segment portion of PR register yields no change -- %#llo\n", reg_A);
                     else
                         log_msg(DEBUG_MSG, "OPU::absa", "Using segment portion of PR register yields %#llo instead of %#llo.\n", reg_A, (t_uint64) TPR.CA << 12);
+                    IR.zero = reg_A == 0;
+                    IR.neg = bit36_is_neg(reg_A);
                 }
                 return ret;
             }

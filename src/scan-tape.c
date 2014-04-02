@@ -186,7 +186,7 @@ int doit(const char *fname)
                 } else if (nread == 0) {
                     printf("Unexpected EOF\n");
                 } else {
-                    printf("Short read of %u bytes (expecting %u)\n", nread, n);
+                    printf("Short read of %lu bytes (expecting %u)\n", nread, n);
                 }
                 close(fd);
                 return STOP_BUG;
@@ -209,7 +209,7 @@ int doit(const char *fname)
                     printf("EOF at index %d\n", i);
                 } else {
                     perror("byte read");    // BUG
-                    printf("error at byte %d; return was %d\n", i, nread);
+                    printf("error at byte %d; return was %ld\n", i, nread);
                 }
                 close(fd);
                 return STOP_BUG;

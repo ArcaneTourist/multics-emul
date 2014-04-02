@@ -1623,7 +1623,7 @@ static int page_in(uint offset, uint perm_mode, uint *addrp, uint *minaddrp, uin
 {
     const char *moi = "APU::append::page-in";
     uint segno = TPR.TSR;   // Should be been loaded with PPR.PSR if this is an instr fetch...
-    if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Starting for Segno=0%o, offset=0%o.  (PPR.PSR is 0%o)\n", segno, offset, PPR.PSR);
+    // if(opt_debug>0) log_msg(DEBUG_MSG, moi, "Starting for Segno=0%o, offset=0%o.  (PPR.PSR is 0%o)\n", segno, offset, PPR.PSR);
 
     // ERROR: Validate that all PTWAM & SDWAM entries are always "full" and that use fields are always sane
     SDWAM_t* SDWp = page_in_sdw();
@@ -2014,6 +2014,13 @@ static void decode_PTW(t_uint64 word, PTW_t *ptwp)
     ptwp->m = getbits36(word, 29, 1);
     ptwp->f = getbits36(word, 33, 1);
     ptwp->fc = getbits36(word, 34, 2);
+    
+    // AL-39, last page of chapter 5 - ignore low PTW bits
+    const unsigned nbits = (page_size == 1024) ? 4 : 18;    // 1024 only
+    if ((ptwp->addr & MASKBITS(nbits)) != 0) {
+        log_msg(NOTIFY_MSG, "APU::PTW", "Clearing the %d low bits of PTW address %#o\n", nbits, ptwp->addr);
+        ptwp->addr &= ~ MASKBITS(nbits);
+    }
 }
 
 //=============================================================================
@@ -2061,6 +2068,7 @@ static void decode_SDW(t_uint64 word0, t_uint64 word1, SDW_t *sdwp)
     sdwp->g = getbits36(word1, 20, 1);
     sdwp->c = getbits36(word1, 21, 1);
     sdwp->cl = getbits36(word1, 22, 14);
+
 }
 
 //=============================================================================

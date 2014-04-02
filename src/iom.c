@@ -354,7 +354,9 @@ void iom_interrupt()
 
     extern DEVICE cpu_dev;
     ++ opt_debug; ++ cpu_dev.dctrl;
-    log_msg(DEBUG_MSG, "IOM::CIOC::intr", "Starting\n");
+    unsigned n_instr = sys_stats.total_instr + sys_stats.n_instr;
+    log_msg(DEBUG_MSG, "IOM::CIOC::intr", "Starting [%u]\n", n_instr);
+
     do_connect_chan();
     log_msg(DEBUG_MSG, "IOM::CIOC::intr", "Finished\n");
     if (0 && iom_dev.dctrl) {
@@ -1112,9 +1114,11 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
     t_uint64 word;
     (void) fetch_abs_word(addr, &word);
     int cp = getbits36(word, 18, 3);
-    if (cp == 7) {
+    int did_idcw = cp == 7;
+    if (did_idcw) {
         // BUG: update idcw fld of lpw
         log_msg(NOTIFY_MSG, moi, "Not updating idcw field of LPW\n");
+        
     }
 
     // int ret;
@@ -1171,8 +1175,7 @@ static int list_service(int chan, int first_list, int *ptro, int *addrp)
         write_any = 0;
     }
 
-int did_idcw = 0;   // BUG
-int did_tdcw = 0;   // BUG
+    int did_tdcw = 0;   // FIXME: one day we'll support transfers, so this flag will need to track that
     if (lpwp->nc == 0) {
         write_lpw = 1;
         if (did_idcw || first_list)
@@ -1245,7 +1248,9 @@ static int do_dcw(channel_t *chanp, int addr)
             log_msg(DEBUG_MSG, moi, "dev-send-pcw returns %d.\n", ret);
         log_msg(DEBUG_MSG, moi, "Chan cmd is %0o\n", dcw.fields.instr.chan_cmd);
         if (dcw.fields.instr.chan_cmd != 02) {
-            if (chanp != NULL && dcw.fields.instr.control == 0 && chanp->have_status && Mem[addr+1] == 0) {
+            t_uint64 tmp_word;
+            (void) fetch_abs_word(addr+1, &tmp_word);
+            if (chanp != NULL && dcw.fields.instr.control == 0 && chanp->have_status && tmp_word == 0) {
                 // This is no longer seen...
                 log_msg(WARN_MSG, moi, "Ignoring need to set channel xfer-running flag because next dcw is zero.\n");
                 // cancel_run(STOP_BUG);
@@ -1539,7 +1544,9 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
     if (chanp == NULL)
         return 1;
 
-    log_msg(INFO_MSG, "IOM::DDCW", "%012llo: %s\n", Mem[addr], dcw2text(dcwp));
+    t_uint64 tmp_word;
+    (void) fetch_abs_word(addr, &tmp_word);
+    log_msg(INFO_MSG, "IOM::DDCW", "%012llo: %s\n", tmp_word, dcw2text(dcwp));
 
     // impossible for (cp == 7); see do_dcw
 
@@ -1550,19 +1557,33 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
     uint type = dcwp->fields.ddcw.type;
     uint daddr = dcwp->fields.ddcw.daddr;
     uint tally = dcwp->fields.ddcw.tally;   // FIXME?
-    t_uint64 word = 0;
-    t_uint64 *wordp = (type == 3) ? &word : Mem + daddr;    // 2 impossible; see do_dcw
+    // type 2 impossible; see do_dcw
     if (type == 3 && tally != 1)
         log_msg(ERR_MSG, "IOM::DDCW", "Type is 3, but tally is %d\n", tally);
-    int ret;
     if (tally == 0) {
         log_msg(DEBUG_MSG, "IOM::DDCW", "Tally of zero interpreted as 010000(4096)\n");
         tally = 4096;
-        log_msg(DEBUG_MSG, "IOM::DDCW", "I/O Request(s) starting at addr 0%o; tally = zero->%d\n", daddr, tally);
+        log_msg(INFO_MSG, "IOM::DDCW", "I/O Request(s) starting at addr 0%o; tally = zero->%d\n", daddr, tally);
     } else
-        log_msg(DEBUG_MSG, "IOM::DDCW", "I/O Request(s) starting at addr 0%o; tally = %d\n", daddr, tally);
+        log_msg(INFO_MSG, "IOM::DDCW", "I/O Request(s) starting at addr 0%o; tally = %d\n", daddr, tally);
+    int ret;
+    t_uint64 buf = 0;
+    t_uint64 temp = 0;
     for (;;) {
-        ret = dev_io(chan, wordp);
+        if (type != 3) {
+            buf = Mem[daddr];
+            temp = buf;
+            if (buf == ~ (t_uint64) 0)
+                buf = 0;
+        }
+        ret = dev_io(chan, &buf);
+        // For now, let dev_io() and children tell us if we should stroe the
+        // any transferred data.  However, we should really validate that the
+        // we can instead base the decision on the return status.  The current
+        // comparison fails to trigger breakpoints when the new value is a rewrite
+        // of the prior value.
+        if (type != 3 && buf != temp)
+            (void) store_abs_word(daddr, buf);
         if (ret != 0)
             log_msg(DEBUG_MSG, "IOM::DDCW", "Device for chan 0%o(%d) returns non zero (out of band return)\n", chan, chan);
         if (ret != 0 || chanp->status.major != 0)
@@ -1571,13 +1592,11 @@ static int do_ddcw(int chan, int addr, dcw_t *dcwp, int *control)
         // transfer, e.g. when the console operator is "distracted".  This
         // is because dev_io() returns zero on failed transfers
         // -- fixed in dev_io()
-        ++daddr;    // todo: remove from loop
-        if (type != 3)
-            ++wordp;
+        ++daddr;
         if (--tally <= 0)
             break;
     }
-    log_msg(DEBUG_MSG, "IOM::DDCW", "Last I/O Request was to/from addr 0%o; tally now %d\n", daddr, tally);
+    log_msg(INFO_MSG, "IOM::DDCW", "Last I/O Request was to/from addr 0%o; tally now %d\n", daddr, tally);
     // set control ala PCW as method to indicate terminate or proceed
     if (type == 0) {
         // This DCW is an IOTD -- do I/O and disconnect.  So, we'll 
@@ -1854,7 +1873,9 @@ char* print_lpw(t_addr addr)
 
 static int lpw_write(int chan, int chanloc, const lpw_t* p)
 {
-    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o had %012llo %012llo\n", chan, chanloc, Mem[chanloc], Mem[chanloc+1]);
+    t_uint64 tmp_word[2];
+    (void) fetch_abs_pair(chanloc, tmp_word, tmp_word + 1);
+    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o had %012llo %012llo\n", chan, chanloc, tmp_word[0], tmp_word[1]);
     lpw_t temp;
     parse_lpw(&temp, chanloc, chan == IOM_CONNECT_CHAN);
     //log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o had: %s\n", chan, chanloc, lpw2text(&temp, chan == IOM_CONNECT_CHAN));
@@ -1879,7 +1900,8 @@ static int lpw_write(int chan, int chanloc, const lpw_t* p)
         word1 = setbits36(word1, 18, 18, p->idcw);
         (void) store_abs_word(chanloc+1, word1);
     }
-    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o now %012llo %012llo\n", chan, chanloc, Mem[chanloc], Mem[chanloc+1]);
+    (void) fetch_abs_pair(chanloc, tmp_word, tmp_word + 1);
+    log_msg(DEBUG_MSG, "IOM::lpw_write", "Chan 0%o: Addr 0%o now %012llo %012llo\n", chan, chanloc, tmp_word[0], tmp_word[1]);
     return 0;
 }
 
@@ -1931,7 +1953,9 @@ static int status_service(int chan)
     word1 = setbits36(word1, 1, 1, chanp->status.power_off);
     word1 = setbits36(word1, 2, 4, chanp->status.major);
     word1 = setbits36(word1, 6, 6, chanp->status.substatus);
+
     word1 = setbits36(word1, 12, 1, 0); // BUG: PSI channels could set "odd"
+
     // BUG: terminate/initiate/marker controls M(13) and I(16)
     word1 = setbits36(word1, 13, 1, 1); // BUG: marker int
     word1 = setbits36(word1, 14, 2, 0);

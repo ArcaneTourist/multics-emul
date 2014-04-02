@@ -488,15 +488,25 @@ int cmd_symtab_parse(int32 arg, char *buf)
         seginfo_dump();
     else if (strcmp(buf, "dump") == 0)
         seginfo_dump();
-    else {
+    else if (strcmp(buf, "help") == 0) {
+        out_msg("xsymtab commands:\n");
+        out_msg("    xsymtab dump\n");
+        out_msg("        Display data previously loaded via 'xlist'\n");
+        out_msg("    xsymtab source <file> <first offset> <last offset>\n");
+        out_msg("    xsymtab source <file> <segment>|<offset> <last offset>\n");
+        out_msg("        Record (only) the existance of a source file that covers the given addresses.\n");
+        out_msg("    xsymtab where <offset>\n");
+        out_msg("    xsymtab where <segment>|<offset>\n");
+        out_msg("        Display what file and/or entry point contains the given address.\n");
+    } else {
         char *p = buf;
-        char fname[1024];   // BUG: WARNING: buffer overflow possible
+        char fname[1024];
         int first, last;
         char dummy;
         int seg;
-        if (sscanf(buf, "source %s %i %i %c", fname, &first, &last, &dummy) == 3) {
+        if (sscanf(buf, "source %1023s %i %i %c", fname, &first, &last, &dummy) == 3) {
             seginfo_add_source_file(-1, first, last, fname);
-        } else if (sscanf(buf, "source %s %i|%i %i %c", fname, &seg, &first, &last, &dummy) == 4) {
+        } else if (sscanf(buf, "source %1023s %i|%i %i %c", fname, &seg, &first, &last, &dummy) == 4) {
             seginfo_add_source_file(seg, first, last, fname);
 #if 0
         } else if (sscanf(buf, "entry %s %i %i %c", fname, &first, &last, &dummy) == 3) {
@@ -510,10 +520,13 @@ int cmd_symtab_parse(int32 arg, char *buf)
             seginfo_show_all(-1, first);
         } else if (sscanf(buf, "where %i|%i %c", &seg, &first, &dummy) == 2) {
             seginfo_show_all(seg,first);
+#if 1
+        // Deprecated, "find" renamed "where"
         } else if (sscanf(buf, "find %i %c", &first, &dummy) == 1) {
             seginfo_show_all(-1, first);
         } else if (sscanf(buf, "find %i|%i %c", &seg, &first, &dummy) == 2) {
             seginfo_show_all(seg,first);
+#endif
         } else
             fprintf(stderr, "xsymtab: cannot parse '%s'\n", buf);
     }
@@ -659,3 +672,4 @@ int get_addr(uint segno, uint offset, uint *addrp)
 }
 #endif
 
+// =============================================================================

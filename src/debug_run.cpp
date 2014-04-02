@@ -600,6 +600,7 @@ int show_location(int show_source_lines)
 
     // Display IC
     if (opt_debug || (source_changed && show_source_changes)) {
+        unsigned n_instr = sys_stats.total_instr + sys_stats.n_instr;
         const char *name = where.entry ? where.entry : where.file_name;
         char icbuf[80];
         ic2text(icbuf, amode, PPR.PSR, PPR.IC);
@@ -621,7 +622,7 @@ int show_location(int show_source_lines)
             old = name;
         } else
             if (opt_debug)
-                log_msg(DEBUG_MSG, "MAIN", "IC: %s\n", icbuf);  // source unchanged
+                log_msg(DEBUG_MSG, "MAIN", "IC: %s [%u]\n", icbuf, n_instr);  // source unchanged
     }
 
 #if 0
@@ -980,6 +981,7 @@ static int walk_stack(int output, list<seg_addr_t>* frame_listp)
         out_msg("stack trace: ");
         out_msg("Current Location:\n");
         out_msg("stack trace: ");
+        // TODO: We show the IR as it currently exists, not as it was fetched.  Maybe show both?
         print_src_loc("\t", get_addr_mode(), PPR.PSR, PPR.IC, &cu.IR);
 
         log_any_io(0);      // Output of source/location info doesn't count towards requiring re-display of source
