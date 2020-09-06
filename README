@@ -4,7 +4,7 @@ multics-emul
 An emulator for the hardware that ran the Multics operating system.
 
 Most documentation is on the project wiki at
-https://github.com/MichaelMondy/multics-emul/wiki
+https://github.com/ArcaneTourist/multics-emul/wiki
 
 See also the short README files in the ./data, ./listings/, and ./sample/
 sub-dirs.
